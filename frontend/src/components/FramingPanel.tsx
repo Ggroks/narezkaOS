@@ -1,0 +1,321 @@
+import { useEffect, useMemo, useState } from "react";
+import { api, type Framing, type FramingState } from "../api";
+
+type Props = {
+  videoId: string;
+  /** Рендер идёт — менять кадрирование в этот момент бессмысленно. */
+  busy: boolean;
+  /** Настройки сохранены: пора перерендерить ролики. */
+  onSaved: () => void;
+};
+
+const ANCHORS: { value: Framing["anchor"]; label: string }[] = [
+  { value: "left", label: "Слева" },
+  { value: "center", label: "По центру" },
+  { value: "right", label: "Справа" },
+];
+
+/** Задержка перед запросом кадра: пока тянут ползунок, запросы не нужны. */
+const PREVIEW_DELAY_MS = 350;
+
+const percent = (value: number) => `${Math.round(value * 100)}%`;
+
+/**
+ * Настройка вертикального кадра ([§61](BAZA.md#61)).
+ *
+ * Главное, что должен показывать этот экран, — связь между обрезкой по бокам
+ * и высотой содержимого: это один параметр, а не два. Поэтому у каждого
+ * варианта подписаны оба числа, а рядом всегда висит настоящий кадр из этого
+ * же видео: настраивать рамку по описанию словами невозможно.
+ */
+export function FramingPanel({ videoId, busy, onSaved }: Props) {
+  const [state, setState] = useState<FramingState | null>(null);
+  const [draft, setDraft] = useState<Framing | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .framing(videoId)
+      .then((data) => {
+        if (!alive) return;
+        setState(data);
+        setDraft(data.current);
+      })
+      .catch((exc) => alive && setError(exc instanceof Error ? exc.message : String(exc)));
+    return () => {
+      alive = false;
+    };
+  }, [videoId]);
+
+  // Предпросмотр обновляется с задержкой — иначе каждый шаг ползунка
+  // запускал бы отдельный вызов ffmpeg.
+  useEffect(() => {
+    if (!draft) return;
+    const timer = window.setTimeout(() => {
+      setPreviewLoading(true);
+      setPreviewUrl(api.framingPreviewUrl(videoId, draft));
+    }, PREVIEW_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [videoId, draft]);
+
+  const chosen = useMemo(() => {
+    if (!state || !draft) return null;
+    if (draft.preset === "custom") return null;
+    return state.presets.find((p) => p.preset === draft.preset) ?? null;
+  }, [state, draft]);
+
+  if (error && !state) {
+    return (
+      <section className="card">
+        <h2>Кадрирование</h2>
+        <div className="error" role="alert">
+          {error}
+        </div>
+      </section>
+    );
+  }
+
+  if (!state || !draft) {
+    return (
+      <section className="card">
+        <h2>Кадрирование</h2>
+        <p className="empty">Загрузка…</p>
+      </section>
+    );
+  }
+
+  const update = (patch: Partial<Framing>) => setDraft({ ...draft, ...patch });
+
+  // При custom доля обрезки задаётся вручную, иначе берётся у пресета.
+  const sideCrop = draft.preset === "custom" ? draft.side_crop : (chosen?.side_crop ?? 0);
+  const fullBleed = draft.preset === "custom" ? false : (chosen?.full_bleed ?? false);
+  const changed = JSON.stringify(draft) !== JSON.stringify(state.current);
+
+  async function save() {
+    if (!draft) return;
+    setSaving(true);
+    setError(null);
+    try {
+      setState(await api.setFraming(videoId, draft));
+      onSaved();
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : String(exc));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function reset() {
+    setSaving(true);
+    setError(null);
+    try {
+      const data = await api.resetFraming(videoId);
+      setState(data);
+      setDraft(data.current);
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : String(exc));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="card" aria-labelledby="framing-heading">
+      <h2 id="framing-heading">Кадрирование</h2>
+      <p className="small dim" style={{ marginTop: -4 }}>
+        Исходник {state.source.width}×{state.source.height} вписывается в{" "}
+        {state.output.width}×{state.output.height}. Чем больше отрезано по бокам, тем крупнее
+        содержимое и тем уже полосы сверху и снизу — это один параметр, а не два.
+      </p>
+
+      {error && (
+        <div className="error" role="alert">
+          {error}
+        </div>
+      )}
+
+      <div className="framing">
+        <div className="framing-preview">
+          {previewUrl && (
+            <img
+              src={previewUrl}
+              alt="Предпросмотр кадра с текущими настройками"
+              onLoad={() => setPreviewLoading(false)}
+              onError={() => setPreviewLoading(false)}
+            />
+          )}
+          {previewLoading && (
+            <span className="framing-preview-note small dim" role="status">
+              обновляется…
+            </span>
+          )}
+        </div>
+
+        <div className="framing-controls">
+          <fieldset>
+            <legend>Сколько видно</legend>
+            <div className="framing-presets">
+              {state.presets.map((preset) => (
+                <label key={preset.preset} className="framing-option">
+                  <input
+                    type="radio"
+                    name="framing-preset"
+                    value={preset.preset}
+                    checked={draft.preset === preset.preset}
+                    disabled={busy}
+                    onChange={() => update({ preset: preset.preset })}
+                  />
+                  <span className="grow">{preset.label}</span>
+                  <span className="small dim tnum">
+                    видно {percent(preset.content_share)} · срез {percent(preset.side_crop)}
+                  </span>
+                </label>
+              ))}
+
+              <label className="framing-option">
+                <input
+                  type="radio"
+                  name="framing-preset"
+                  value="custom"
+                  checked={draft.preset === "custom"}
+                  disabled={busy}
+                  onChange={() => update({ preset: "custom", side_crop: sideCrop })}
+                />
+                <span className="grow">Вручную</span>
+                <span className="small dim tnum">срез {percent(draft.side_crop)}</span>
+              </label>
+            </div>
+
+            {draft.preset === "custom" && (
+              <div className="framing-slider">
+                <label htmlFor="side-crop">Обрезка по бокам</label>
+                <input
+                  id="side-crop"
+                  type="range"
+                  min={0}
+                  max={95}
+                  step={1}
+                  value={Math.round(draft.side_crop * 100)}
+                  disabled={busy}
+                  onChange={(e) => update({ side_crop: Number(e.target.value) / 100 })}
+                />
+                <output htmlFor="side-crop" className="tnum">
+                  {percent(draft.side_crop)}
+                </output>
+              </div>
+            )}
+          </fieldset>
+
+          <fieldset>
+            <legend>Какую часть кадра оставить</legend>
+            <div className="framing-row" role="radiogroup" aria-label="Какую часть кадра оставить">
+              {ANCHORS.map((anchor) => (
+                <label key={anchor.value} className="framing-chip">
+                  <input
+                    type="radio"
+                    name="framing-anchor"
+                    value={anchor.value}
+                    checked={draft.anchor === anchor.value}
+                    disabled={busy || sideCrop === 0}
+                    onChange={() => update({ anchor: anchor.value })}
+                  />
+                  <span>{anchor.label}</span>
+                </label>
+              ))}
+            </div>
+            {sideCrop === 0 && (
+              <p className="small dim">Ничего не отрезается — выбирать нечего.</p>
+            )}
+          </fieldset>
+
+          <fieldset disabled={fullBleed}>
+            <legend>Полосы сверху и снизу</legend>
+            {fullBleed ? (
+              <p className="small dim">
+                Содержимое заполняет кадр целиком — полос нет, подложка не видна.
+              </p>
+            ) : (
+              <>
+                <div className="framing-row" role="radiogroup" aria-label="Чем заполнить полосы">
+                  <label className="framing-chip">
+                    <input
+                      type="radio"
+                      name="framing-background"
+                      value="blur"
+                      checked={draft.background === "blur"}
+                      disabled={busy}
+                      onChange={() => update({ background: "blur" })}
+                    />
+                    <span>Кадр из видео</span>
+                  </label>
+                  <label className="framing-chip">
+                    <input
+                      type="radio"
+                      name="framing-background"
+                      value="color"
+                      checked={draft.background === "color"}
+                      disabled={busy}
+                      onChange={() => update({ background: "color" })}
+                    />
+                    <span>Однотонная</span>
+                  </label>
+                </div>
+
+                {draft.background === "blur" ? (
+                  <div className="framing-slider">
+                    <label htmlFor="blur-sigma">Размытие</label>
+                    <input
+                      id="blur-sigma"
+                      type="range"
+                      min={0}
+                      max={80}
+                      step={1}
+                      value={draft.blur_sigma}
+                      disabled={busy}
+                      onChange={(e) => update({ blur_sigma: Number(e.target.value) })}
+                    />
+                    <output htmlFor="blur-sigma" className="tnum">
+                      {draft.blur_sigma === 0 ? "выключено" : draft.blur_sigma}
+                    </output>
+                  </div>
+                ) : (
+                  <div className="framing-slider">
+                    <label htmlFor="bg-color">Цвет</label>
+                    <input
+                      id="bg-color"
+                      type="color"
+                      value={`#${draft.color.replace(/^0x|^#/, "")}`}
+                      disabled={busy}
+                      onChange={(e) => update({ color: `0x${e.target.value.slice(1)}` })}
+                    />
+                    <output htmlFor="bg-color" className="mono small dim">
+                      {draft.color}
+                    </output>
+                  </div>
+                )}
+              </>
+            )}
+          </fieldset>
+
+          <div className="row wrap">
+            <button className="primary" disabled={busy || saving || !changed} onClick={save}>
+              {saving ? "Сохранение…" : "Сохранить"}
+            </button>
+            <button disabled={busy || saving || !state.custom} onClick={reset}>
+              Вернуть как в конфиге
+            </button>
+            <span className="small dim grow">
+              {changed
+                ? "Не сохранено. Ролики перерендерятся при следующем запуске."
+                : state.plan.summary}
+            </span>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}

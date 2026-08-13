@@ -31,6 +31,21 @@ output:
     min_duration: 15
     optimal_duration: 60
     max_duration: 90
+  # Как исходный кадр вписывается в вертикальный (§17, §61).
+  # Обрезка по бокам и высота содержимого — один параметр: чем уже кадр после
+  # обрезки, тем выше он выглядит. Для 16:9 в 9:16:
+  #   full     0% обрезки  → содержимое занимает 32% высоты
+  #   balanced 25%         → 42%
+  #   focus    50%         → 63%
+  #   fill     68%         → 100%, кадр заполнен целиком
+  framing:
+    preset: balanced       # full | balanced | focus | fill | custom
+    side_crop: 0.25        # используется при preset: custom
+    anchor: center         # center | left | right
+    background: blur       # blur | color
+    blur_sigma: 28         # 0 отключает размытие
+    color: "0x14171c"
+
   loudness_target_lufs: -14
   crf: 20
   pix_fmt: yuv420p

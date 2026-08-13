@@ -84,8 +84,39 @@ export type ShortFile = {
 export type ShortsIndex = {
   width: number;
   height: number;
-  background: "blur" | "solid";
+  background: "blur" | "solid" | "sharp" | "none";
+  framing: (Framing & { content_share: number; lost_share: number; summary: string }) | null;
   files: ShortFile[];
+};
+
+export type FramingPreset = "full" | "balanced" | "focus" | "fill" | "custom";
+
+export type Framing = {
+  preset: FramingPreset;
+  side_crop: number;
+  anchor: "center" | "left" | "right";
+  background: "blur" | "color";
+  blur_sigma: number;
+  color: string;
+};
+
+export type PresetPreview = {
+  preset: FramingPreset;
+  label: string;
+  side_crop: number;
+  content_share: number;
+  full_bleed: boolean;
+  summary: string;
+};
+
+export type FramingState = {
+  current: Framing;
+  /** Настройки заданы вручную для этого видео, а не взяты из конфига. */
+  custom: boolean;
+  source: { width: number; height: number };
+  output: { width: number; height: number };
+  plan: { content_share: number; lost_share: number; full_bleed: boolean; summary: string };
+  presets: PresetPreview[];
 };
 
 export type HealthCheck = { name: string; ok: boolean; detail: string; critical: boolean };
@@ -129,6 +160,21 @@ export const api = {
       body: JSON.stringify(payload),
     }),
   mediaUrl: (id: string) => `/api/videos/${id}/media`,
+  framing: (id: string) => request<FramingState>(`/api/videos/${id}/framing`),
+  setFraming: (id: string, payload: Framing) =>
+    request<FramingState>(`/api/videos/${id}/framing`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+  resetFraming: (id: string) =>
+    request<FramingState>(`/api/videos/${id}/framing`, { method: "DELETE" }),
+  /** Кадр в готовой рамке — предпросмотр до полного рендера. */
+  framingPreviewUrl: (id: string, framing: Framing) => {
+    const query = new URLSearchParams(
+      Object.entries(framing).map(([key, value]) => [key, String(value)]),
+    );
+    return `/api/videos/${id}/framing/preview?${query}`;
+  },
 };
 
 /**

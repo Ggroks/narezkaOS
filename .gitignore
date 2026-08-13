@@ -24,3 +24,6 @@ frontend/dist/
 
 # личные настройки Claude Code
 .claude/settings.local.json
+
+# Кэш инкрементальной сборки TypeScript — меняется при каждой сборке
+frontend/tsconfig.tsbuildinfo

@@ -250,6 +250,119 @@ def pipeline(
 
 
 @app.command()
+def framing(
+    video_id: Annotated[str, typer.Option("--video-id", "-i")],
+    project: Annotated[str, typer.Option("--project", "-p")] = "default",
+    preset: Annotated[
+        str | None,
+        typer.Option("--preset", help="full | balanced | focus | fill | custom"),
+    ] = None,
+    side_crop: Annotated[
+        float | None,
+        typer.Option("--side-crop", help="Доля обрезки по бокам при --preset custom, 0..0.95"),
+    ] = None,
+    anchor: Annotated[
+        str | None, typer.Option("--anchor", help="center | left | right")
+    ] = None,
+    background: Annotated[
+        str | None, typer.Option("--background", help="blur | color")
+    ] = None,
+    blur_sigma: Annotated[
+        float | None, typer.Option("--blur", help="Сила размытия, 0 отключает")
+    ] = None,
+    color: Annotated[str | None, typer.Option("--color", help="Цвет полос, например 0x14171c")] = None,
+    reset: Annotated[bool, typer.Option("--reset", help="Вернуть настройки из конфига")] = False,
+    config_path: Annotated[Path | None, typer.Option("--config")] = None,
+) -> None:
+    """Кадрирование вертикального ролика: обрезка по бокам, полосы, размытие.
+
+    Без параметров показывает текущие настройки и что дадут готовые варианты
+    на этом исходнике.
+    """
+    from narezka.core.config import FramingConfig  # noqa: PLC0415
+    from narezka.core.framing import (  # noqa: PLC0415
+        PRESET_LABELS,
+        Framing,
+        describe,
+        plan_frame,
+        preview_presets,
+    )
+    from narezka.stages.render import load_framing, source_size  # noqa: PLC0415
+
+    ctx = _build_context(video_id, project, None, config_path)
+
+    if reset:
+        ctx.paths.framing.unlink(missing_ok=True)
+        console.print("[green]Настройки кадрирования сброшены к конфигу.[/green]")
+
+    changes = {
+        key: value
+        for key, value in {
+            "preset": preset,
+            "side_crop": side_crop,
+            "anchor": anchor,
+            "background": background,
+            "blur_sigma": blur_sigma,
+            "color": color,
+        }.items()
+        if value is not None
+    }
+    if changes:
+        try:
+            updated = FramingConfig(**{**load_framing(ctx).__dict__, **changes})
+        except ValueError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(1) from None
+        Artifact(ctx.paths.framing).write_json(updated.model_dump())
+        console.print("[green]Сохранено. Ролики перерендерятся при следующем запуске render.[/green]")
+
+    current = load_framing(ctx)
+    metadata = Artifact(ctx.paths.metadata)
+    src_w, src_h = source_size(metadata.read_json() if metadata.exists() else {})
+    short = ctx.config.output.short
+
+    table = Table(title=f"Кадрирование {src_w}x{src_h} → {short.width}x{short.height}")
+    table.add_column("")
+    table.add_column("Вариант", style="bold")
+    table.add_column("Видно", justify="right")
+    table.add_column("Срез по бокам", justify="right")
+    for entry in preview_presets(src_w, src_h, short.width, short.height):
+        chosen = entry["preset"] == current.preset
+        table.add_row(
+            "→" if chosen else "",
+            entry["label"],
+            f"{entry['content_share'] * 100:.0f}%",
+            f"{entry['side_crop'] * 100:.0f}%",
+        )
+    if current.preset == "custom":
+        plan = plan_frame(src_w, src_h, short.width, short.height, current)
+        table.add_row(
+            "→",
+            PRESET_LABELS["custom"],
+            f"{plan.content_share * 100:.0f}%",
+            f"{plan.lost_share * 100:.0f}%",
+        )
+    console.print(table)
+
+    plan = plan_frame(src_w, src_h, short.width, short.height, current)
+    backdrop = (
+        "кадр заполнен целиком"
+        if plan.full_bleed
+        else f"однотонная {current.color}"
+        if current.background == "color"
+        else "кадр без размытия"
+        if current.blur_sigma == 0
+        else f"размытый кадр, сила {current.blur_sigma:g}"
+    )
+    console.print(
+        f"Сейчас: [bold]{PRESET_LABELS.get(current.preset, current.preset)}[/bold]"
+        f", {describe(plan)}. Полосы: {backdrop}."
+    )
+    if not Artifact(ctx.paths.framing).exists():
+        console.print("[dim]Настройки берутся из конфига — вручную для этого видео не заданы.[/dim]")
+
+
+@app.command()
 def status(
     video_id: Annotated[str | None, typer.Option("--video-id", "-i")] = None,
     project: Annotated[str, typer.Option("--project", "-p")] = "default",

@@ -8,6 +8,7 @@ import {
   type Transcript,
   type VideoDetail as Detail,
 } from "../api";
+import { FramingPanel } from "./FramingPanel";
 import { ShortsView } from "./ShortsView";
 import { TranscriptView } from "./TranscriptView";
 
@@ -215,6 +216,16 @@ export function VideoDetail({ videoId, onBack }: Props) {
           </div>
         )}
       </section>
+
+      {meta.has_video !== false && (
+        <FramingPanel
+          videoId={videoId}
+          busy={running}
+          // Кадрирование входит в ключ кэша, поэтому пересчёта всего пайплайна
+          // не нужно — достаточно перерендерить ролики.
+          onSaved={() => start("render", true)}
+        />
+      )}
 
       {shorts && shorts.files.length > 0 && <ShortsView videoId={videoId} shorts={shorts} />}
 

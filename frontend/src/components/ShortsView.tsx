@@ -2,6 +2,13 @@ import { formatDuration, type ShortsIndex } from "../api";
 
 type Props = { videoId: string; shorts: ShortsIndex };
 
+const BACKGROUND_LABEL: Record<string, string> = {
+  blur: "размытый кадр",
+  sharp: "кадр без размытия",
+  solid: "однотонный",
+  none: "кадр заполнен целиком",
+};
+
 /**
  * Готовые вертикальные ролики.
  *
@@ -17,7 +24,10 @@ export function ShortsView({ videoId, shorts }: Props) {
         <span className="tnum">
           {shorts.width}×{shorts.height}
         </span>
-        <span>фон: {shorts.background === "blur" ? "размытый кадр" : "однотонный"}</span>
+        <span>фон: {BACKGROUND_LABEL[shorts.background] ?? shorts.background}</span>
+        {/* С какими настройками рамки это отрендерено: после правки видно,
+            относится показанное к новым настройкам или ещё к старым. */}
+        {shorts.framing && <span>{shorts.framing.summary}</span>}
       </div>
 
       <div className="shorts-grid">

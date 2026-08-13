@@ -4,10 +4,11 @@ BAZA.md §37 и §59. Нарезка идёт с перекодирование�
 копирование режет по ключевым кадрам с ошибкой в несколько секунд, что для
 клипа неприемлемо.
 
-Кадрирование на этом этапе — блюр-подложка ([§61](BAZA.md#61)): исходный кадр
-целиком вписывается по ширине, фон заполняется его же размытой увеличенной
-копией. Это не нарушает запрет §39 на статичный центральный кроп, потому что
-ничего не отрезается. Слежение за объектом появится на этапе 4.
+Кадрирование настраивается ([§61](BAZA.md#61)) — см. narezka/core/framing.py.
+По умолчанию часть кадра отрезается по бокам, остальное вписывается по ширине
+на размытую подложку. Это не статичный центральный кроп из §39: величина
+обрезки задаётся пользователем и может быть нулевой, а точка привязки
+выбирается. Автоматическое слежение за объектом появится на этапе 4.
 """
 
 from __future__ import annotations
@@ -15,6 +16,8 @@ from __future__ import annotations
 from typing import Any
 
 from narezka.core.artifacts import Artifact
+from narezka.core.config import FramingConfig
+from narezka.core.framing import Framing, build_filter, describe, plan_frame
 from narezka.core.media import find_source, run_tool
 from narezka.core.stage import Device, Stage, StageContext, StageSkipped
 from narezka.stages.candidates import CANDIDATES_NAME
@@ -22,13 +25,46 @@ from narezka.stages.subtitles import INDEX_NAME
 
 SHORTS_INDEX = "index.json"
 
-#: Фон для источников без картинки. Тёмный, чтобы белые субтитры читались.
-AUDIO_BACKGROUND = "0x14171c"
+#: Если ffprobe не отдал размеры, считаем исходник обычным 16:9 — при этом
+#: пресеты дают предсказуемый результат, а не падение.
+FALLBACK_SIZE = (1920, 1080)
+
+
+def load_framing(ctx: StageContext) -> Framing:
+    """Настройки кадрирования: конфиг, поверх него — ручная правка для видео.
+
+    Правка хранится отдельным файлом, а не в общем конфиге, потому что
+    подходящее кадрирование зависит от конкретной записи: у стрима с вебкой
+    в углу и у записи экрана оно разное.
+    """
+    data = ctx.config.output.framing.model_dump()
+
+    override = Artifact(ctx.paths.framing)
+    if override.exists():
+        try:
+            stored = override.read_json()
+        except ValueError:
+            stored = {}
+        if isinstance(stored, dict):
+            data.update({key: value for key, value in stored.items() if key in data})
+
+    # Через pydantic — чтобы правка, пришедшая из файла или по API, проходила
+    # ту же проверку диапазонов, что и конфиг.
+    return Framing(**FramingConfig(**data).model_dump())
+
+
+def source_size(metadata: dict[str, Any]) -> tuple[int, int]:
+    video = metadata.get("video") or {}
+    width, height = video.get("width"), video.get("height")
+    if isinstance(width, int) and isinstance(height, int) and width > 0 and height > 0:
+        return width, height
+    return FALLBACK_SIZE
 
 
 class RenderStage(Stage):
     name = "render"
-    version = 1
+    #: v2 — кадрирование стало настраиваемым (§61).
+    version = 2
     device = Device.ANY
     description = "Вертикальные ролики 9:16 с вшитыми субтитрами"
 
@@ -50,8 +86,11 @@ class RenderStage(Stage):
         return artifacts
 
     def config_slice(self, ctx: StageContext) -> dict[str, Any]:
+        # Ручная правка кадрирования входит в ключ кэша наравне с конфигом:
+        # изменил настройку — ролики перерендерятся, не изменил — нет.
         return {
             **ctx.config.output.model_dump(),
+            "framing": load_framing(ctx).__dict__,
             "subtitle_style": ctx.config.subtitles.style,
         }
 
@@ -66,10 +105,20 @@ class RenderStage(Stage):
             raise StageSkipped("нет файлов субтитров")
 
         source = find_source(ctx.paths.source)
-        metadata = Artifact(ctx.paths.metadata)
-        has_video = bool(metadata.read_json().get("has_video")) if metadata.exists() else True
+        metadata_artifact = Artifact(ctx.paths.metadata)
+        metadata = metadata_artifact.read_json() if metadata_artifact.exists() else {}
+        has_video = bool(metadata.get("has_video", True))
 
-        if not has_video:
+        framing = load_framing(ctx)
+        src_w, src_h = source_size(metadata)
+        plan = plan_frame(src_w, src_h, short.width, short.height, framing)
+
+        if has_video:
+            ctx.log.info(
+                "кадрирование «%s»: %s (из %dx%d)",
+                framing.preset, describe(plan), src_w, src_h,
+            )
+        else:
             ctx.log.warning(
                 "в источнике нет картинки — ролик собирается на однотонном фоне. "
                 "Кадрирование проверяется только на видео"
@@ -97,6 +146,8 @@ class RenderStage(Stage):
                         subtitle_name=name,
                         output=tmp,
                         has_video=has_video,
+                        framing=framing,
+                        plan=plan,
                         width=short.width,
                         height=short.height,
                         crf=out.crf,
@@ -127,12 +178,31 @@ class RenderStage(Stage):
             {
                 "width": short.width,
                 "height": short.height,
-                "background": "blur" if has_video else "solid",
+                "framing": {
+                    **framing.__dict__,
+                    "content_share": round(plan.content_share, 4),
+                    "lost_share": round(plan.lost_share, 4),
+                    "full_bleed": plan.full_bleed,
+                    "summary": describe(plan),
+                }
+                if has_video
+                else None,
+                "background": self._background_kind(framing, plan, has_video),
                 "files": rendered,
             }
         )
         total_mb = sum(f["size_bytes"] for f in rendered) / 1024**2
         ctx.log.info("готово роликов %d, суммарно %.1f МБ", len(rendered), total_mb)
+
+    @staticmethod
+    def _background_kind(framing: Framing, plan, has_video: bool) -> str:
+        if not has_video:
+            return "solid"
+        if plan.full_bleed:
+            return "none"
+        if framing.background == "color":
+            return "solid"
+        return "blur" if framing.blur_sigma > 0 else "sharp"
 
     def _command(
         self,
@@ -143,6 +213,8 @@ class RenderStage(Stage):
         subtitle_name: str,
         output,
         has_video: bool,
+        framing: Framing,
+        plan,
         width: int,
         height: int,
         crf: int,
@@ -164,20 +236,12 @@ class RenderStage(Stage):
 
         if has_video:
             args += ["-ss", f"{start:.3f}", "-i", str(source), "-t", f"{duration:.3f}"]
-            # Подложка — размытая увеличенная копия кадра, поверх неё исходник
-            # целиком по ширине. Ничего не отрезается (§39).
-            video_filter = (
-                f"[0:v]scale={width}:{height}:force_original_aspect_ratio=increase,"
-                f"crop={width}:{height},gblur=sigma=28[bg];"
-                f"[0:v]scale={width}:-2[fg];"
-                f"[bg][fg]overlay=(W-w)/2:(H-h)/2[base];"
-                f"[base]subtitles={subtitle_name}[v]"
-            )
+            video_filter = build_filter(plan, framing, width, height, subtitle_name)
             args += ["-filter_complex", video_filter, "-map", "[v]", "-map", "0:a:0"]
         else:
             args += [
                 "-f", "lavfi",
-                "-i", f"color=c={AUDIO_BACKGROUND}:s={width}x{height}:r=30:d={duration:.3f}",
+                "-i", f"color=c={framing.color}:s={width}x{height}:r=30:d={duration:.3f}",
                 "-ss", f"{start:.3f}", "-i", str(source), "-t", f"{duration:.3f}",
                 "-filter_complex", f"[0:v]subtitles={subtitle_name}[v]",
                 "-map", "[v]", "-map", "1:a:0",

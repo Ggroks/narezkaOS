@@ -22,16 +22,25 @@ from narezka.api import jobs
 from narezka.api.media import serve_file
 from narezka.core import env
 from narezka.core.artifacts import Artifact
-from narezka.core.config import load_config
+from narezka.core.config import FramingConfig, load_config
 from narezka.core.device import detect_device
 from narezka.core.logging import get_logger
-from narezka.core.media import find_source
+from narezka.core.framing import (
+    Framing,
+    build_filter,
+    describe,
+    plan_frame,
+    preview_presets,
+)
+from narezka.core.media import find_source, run_tool
 from narezka.core.paths import list_videos, video_paths
 from narezka.core.runner import run_pipeline, run_stage
 from narezka.core.stage import StageContext
 from narezka.stages import PIPELINE, get_stage
+from narezka.stages.render import load_framing, source_size
 
 app = FastAPI(title="Narezka OS", version="0.1.0")
+log = get_logger("api")
 
 # Дев-режим: фронтенд поднимается отдельным сервером Vite.
 app.add_middleware(
@@ -67,7 +76,7 @@ def _context(video_id: str, project: str, profile: str | None = None) -> StageCo
         paths=paths,
         config=config,
         device=device,
-        log=get_logger("api"),
+        log=log,
     )
 
 
@@ -327,6 +336,188 @@ def short_media(
     # Имя строится из индекса, а не берётся из запроса: путь не должен
     # собираться из пользовательского ввода (§66).
     return serve_file(paths.shorts / f"{index:02d}.mp4", range_header)
+
+
+#: Высота картинки предпросмотра. Хватает, чтобы оценить рамку и читаемость,
+#: но кодируется мгновенно.
+PREVIEW_HEIGHT = 640
+
+
+class FramingPayload(FramingConfig):
+    """Настройки кадрирования, присланные из интерфейса.
+
+    Наследует проверки диапазонов у конфига — отдельную схему держать незачем.
+    """
+
+
+def _framing_state(video_id: str, project: str) -> tuple[Any, Any, Framing, int, int]:
+    paths, _ = _paths(video_id, project)
+    ctx = _context(video_id, project)
+    metadata_artifact = Artifact(paths.metadata)
+    metadata = metadata_artifact.read_json() if metadata_artifact.exists() else {}
+    width, height = source_size(metadata)
+    return paths, ctx, load_framing(ctx), width, height
+
+
+@app.get("/api/videos/{video_id}/framing")
+def framing(video_id: str, project: str = "default") -> dict[str, Any]:
+    """Текущее кадрирование и что дадут готовые варианты на этом исходнике."""
+    paths, ctx, current, src_w, src_h = _framing_state(video_id, project)
+    short = ctx.config.output.short
+    plan = plan_frame(src_w, src_h, short.width, short.height, current)
+
+    return {
+        "current": current.__dict__,
+        "custom": Artifact(paths.framing).exists(),
+        "source": {"width": src_w, "height": src_h},
+        "output": {"width": short.width, "height": short.height},
+        "plan": {
+            "content_share": round(plan.content_share, 4),
+            "lost_share": round(plan.lost_share, 4),
+            "full_bleed": plan.full_bleed,
+            "summary": describe(plan),
+        },
+        "presets": preview_presets(src_w, src_h, short.width, short.height),
+    }
+
+
+@app.put("/api/videos/{video_id}/framing")
+def set_framing(video_id: str, payload: FramingPayload, project: str = "default") -> dict[str, Any]:
+    paths, _ = _paths(video_id, project)
+    Artifact(paths.framing).write_json(payload.model_dump())
+    # Кадрирование входит в ключ кэша стадии render, поэтому отдельно ничего
+    # сбрасывать не нужно: следующий запуск увидит другой ключ и перерендерит.
+    log.info("видео %s: кадрирование «%s»", video_id, payload.preset)
+    return framing(video_id, project)
+
+
+@app.delete("/api/videos/{video_id}/framing")
+def reset_framing(video_id: str, project: str = "default") -> dict[str, Any]:
+    paths, _ = _paths(video_id, project)
+    paths.framing.unlink(missing_ok=True)
+    return framing(video_id, project)
+
+
+@app.get("/api/videos/{video_id}/framing/preview")
+def framing_preview(
+    video_id: str,
+    project: str = "default",
+    at: float | None = Query(default=None, ge=0),
+    preset: str | None = None,
+    side_crop: float | None = Query(default=None, ge=0, le=0.95),
+    anchor: str | None = None,
+    background: str | None = None,
+    blur_sigma: float | None = Query(default=None, ge=0, le=200),
+    color: str | None = None,
+):
+    """Один кадр в готовой рамке — чтобы настраивать глазами, а не наугад.
+
+    Параметры перекрывают сохранённые: интерфейс показывает результат ещё до
+    того, как пользователь нажал «Сохранить». Полный рендер ради проверки
+    геометрии занимает минуты, один кадр — доли секунды.
+    """
+    paths, ctx, current, src_w, src_h = _framing_state(video_id, project)
+
+    overrides = {
+        key: value
+        for key, value in {
+            "preset": preset,
+            "side_crop": side_crop,
+            "anchor": anchor,
+            "background": background,
+            "blur_sigma": blur_sigma,
+            "color": color,
+        }.items()
+        if value is not None
+    }
+    try:
+        requested = Framing(**FramingConfig(**{**current.__dict__, **overrides}).model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    try:
+        source = find_source(paths.source)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    metadata_artifact = Artifact(paths.metadata)
+    metadata = metadata_artifact.read_json() if metadata_artifact.exists() else {}
+    if not metadata.get("has_video", True):
+        raise HTTPException(status_code=409, detail="в источнике нет картинки")
+
+    position = at if at is not None else _preview_position(paths, metadata)
+    short = ctx.config.output.short
+    plan = plan_frame(src_w, src_h, short.width, short.height, requested)
+
+    # Имя от параметров: несколько вкладок с разными настройками не затрут
+    # предпросмотр друг друга.
+    slug = hashlib.sha256(
+        json.dumps({**requested.__dict__, "at": round(position, 2)}, sort_keys=True).encode()
+    ).hexdigest()[:12]
+    target = paths.base / "meta" / f"preview-{slug}.jpg"
+
+    # Предпросмотр смотрят в браузере на небольшой карточке — полный размер
+    # 1080x1920 тут не нужен. Уменьшение встраивается в саму цепочку: -vf
+    # нельзя применить к потоку, который уже пришёл из -filter_complex.
+    chain = build_filter(plan, requested, short.width, short.height)
+    chain = chain.removesuffix("[v]") + f",scale=-2:{PREVIEW_HEIGHT}[v]"
+
+    if not target.exists():
+        try:
+            run_tool(
+                [
+                    "ffmpeg", "-nostdin", "-v", "error", "-y",
+                    "-ss", f"{position:.3f}",
+                    "-i", str(source.resolve()),
+                    "-frames:v", "1",
+                    "-filter_complex", chain,
+                    "-map", "[v]",
+                    "-q:v", "4",
+                    "-f", "mjpeg",
+                    str(target),
+                ],
+                timeout=60,
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    _trim_previews(paths)
+    return serve_file(target, None)
+
+
+#: Сколько картинок предпросмотра держать на видео. Они служат кэшем — при
+#: возврате к уже опробованной настройке кадр появляется мгновенно, — но расти
+#: без предела не должны.
+PREVIEW_KEEP = 20
+
+
+def _trim_previews(paths) -> None:
+    files = sorted(
+        (paths.base / "meta").glob("preview-*.jpg"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    for stale in files[PREVIEW_KEEP:]:
+        stale.unlink(missing_ok=True)
+
+
+def _preview_position(paths, metadata: dict[str, Any]) -> float:
+    """Момент, по которому судить о кадрировании.
+
+    Первый отобранный кандидат нагляднее середины записи: это реальный кадр
+    будущего ролика, а не случайная заставка.
+    """
+    candidates_artifact = Artifact(paths.analysis / "candidates.json")
+    if candidates_artifact.exists():
+        try:
+            found = candidates_artifact.read_json().get("candidates", [])
+            if found:
+                start, end = found[0]["start"], found[0]["end"]
+                return start + min(2.0, (end - start) / 2)
+        except (ValueError, KeyError, TypeError):
+            pass
+    duration = metadata.get("duration_seconds")
+    return float(duration) / 2 if duration else 0.0
 
 
 @app.get("/api/videos/{video_id}/media")

@@ -56,6 +56,27 @@ class DetectorConfig(BaseModel):
     backend: Literal["mediapipe", "yolox", "ultralytics"] = "mediapipe"
 
 
+class FramingConfig(BaseModel):
+    """Как исходный кадр вписывается в вертикальный (§17, §61).
+
+    Обрезка по бокам и высота содержимого — один параметр: чем уже кадр
+    после обрезки, тем выше он выглядит при вписывании по ширине.
+    """
+
+    #: full — ничего не терять; balanced — 25% по бокам; focus — 50%;
+    #: fill — заполнить кадр целиком; custom — значение из side_crop.
+    preset: Literal["full", "balanced", "focus", "fill", "custom"] = "balanced"
+    side_crop: float = Field(default=0.25, ge=0.0, le=0.95)
+    #: Какую часть кадра оставлять при обрезке. auto появится вместе
+    #: с детекцией содержимого на этапе 4.
+    anchor: Literal["center", "left", "right"] = "center"
+    #: Чем заполняются полосы, когда содержимое не заполняет кадр.
+    background: Literal["blur", "color"] = "blur"
+    #: 0 отключает размытие — подложка остаётся, но резкая.
+    blur_sigma: float = Field(default=28.0, ge=0.0, le=200.0)
+    color: str = "0x14171c"
+
+
 class ShortOutput(BaseModel):
     width: int = 1080
     height: int = 1920
@@ -66,6 +87,7 @@ class ShortOutput(BaseModel):
 
 class OutputConfig(BaseModel):
     short: ShortOutput = Field(default_factory=ShortOutput)
+    framing: FramingConfig = Field(default_factory=FramingConfig)
     loudness_target_lufs: float = -14.0
     crf: int = 20
     pix_fmt: str = "yuv420p"

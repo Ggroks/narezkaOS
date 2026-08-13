@@ -49,6 +49,11 @@ class VideoPaths:
         return self.base / "meta" / "metadata.json"
 
     @property
+    def framing(self) -> Path:
+        """Настройки кадрирования, заданные для этого видео вручную (§61)."""
+        return self.base / "meta" / "framing.json"
+
+    @property
     def cost(self) -> Path:
         return self.base / "meta" / "cost.json"
 

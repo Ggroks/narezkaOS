@@ -26,6 +26,7 @@
       "Bash(node *)",
 
       "Bash(git *)",
+      "Bash(git push origin *)",
 
       "Bash(ls *)",
       "Bash(cat *)",
@@ -68,7 +69,13 @@
       "Bash(rm -rf /*)",
       "Bash(rm -rf ~*)",
       "Bash(rm -rf .git*)",
-      "Bash(git push*)",
+      "Bash(git push --force*)",
+      "Bash(git push -f *)",
+      "Bash(git push --mirror*)",
+      "Bash(git push --delete*)",
+      "Bash(git push http*)",
+      "Bash(git push git@*)",
+      "Bash(git push ssh://*)",
       "Bash(git reset --hard*)",
       "Bash(git clean -*fd*)",
       "Bash(dd *)",

@@ -40,12 +40,17 @@ KNOWN_HALLUCINATIONS = (
 #: Маркеры музыки, которые модель ставит вместо текста.
 MUSIC_MARKERS = ("♪", "♫", "[музыка]", "[music]", "(музыка)", "(music)")
 
-_PUNCT = re.compile(r"[^\w\s]", re.UNICODE)
+#: Дефис не считается пунктуацией: «ха-ха-ха» и «а-а-а» — одно слово,
+#: звукоподражание. Если разбить их по дефисам, смех и крик выглядят как
+#: зацикливание модели — а это ровно те моменты, ради которых всё строится (§13).
+_PUNCT = re.compile(r"[^\w\s-]", re.UNICODE)
 _SPACES = re.compile(r"\s+")
 
 
 def normalize(text: str) -> str:
-    return _SPACES.sub(" ", _PUNCT.sub(" ", text.lower())).strip()
+    cleaned = _SPACES.sub(" ", _PUNCT.sub(" ", text.lower())).strip()
+    # Дефисы на краях слов убираем, внутренние оставляем.
+    return " ".join(token.strip("-") for token in cleaned.split() if token.strip("-"))
 
 
 @dataclass(frozen=True)

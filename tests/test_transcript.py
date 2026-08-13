@@ -70,6 +70,32 @@ def test_many_repeats_are_a_loop_regardless_of_length() -> None:
     assert is_loop(words)
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Ха-ха-ха-ха-ха!",
+        "А-а-а!",
+        "А? А-а-а!",
+        "Хе-хе-хе",
+        "Ого-го-го!",
+    ],
+)
+def test_laughter_and_screams_are_not_hallucinations(text: str) -> None:
+    """Настоящие случаи из видеофикстуры.
+
+    Смех и крик — ровно то, что ищет отбор моментов (§13). Первая версия
+    фильтра рвала «ха-ха-ха» по дефисам и объявляла зацикливанием, то есть
+    вырезала лучшее. Звукоподражание — одно слово, а не повтор фразы.
+    """
+    verdict = check_segment(segment(text), **THRESHOLDS)
+    assert not verdict.suspect, f"вырезано как галлюцинация: {text} ({verdict.reason})"
+
+
+def test_hyphenated_word_stays_one_token() -> None:
+    assert normalize("Ха-ха-ха!") == "ха-ха-ха"
+    assert normalize("что-то, где-то") == "что-то где-то"
+
+
 def test_embedded_repetition_is_not_a_loop() -> None:
     """Реальный случай из фикстуры: звукоподражание внутри обычной фразы.
 

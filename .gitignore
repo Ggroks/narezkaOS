@@ -25,5 +25,9 @@ frontend/dist/
 # личные настройки Claude Code
 .claude/settings.local.json
 
+# навыки из маркетплейса — инструменты для работы, а не часть программы.
+# Ставятся отдельно и лицензированы своими авторами.
+.agents/
+
 # Кэш инкрементальной сборки TypeScript — меняется при каждой сборке
 frontend/tsconfig.tsbuildinfo

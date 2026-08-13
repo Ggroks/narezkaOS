@@ -23,7 +23,7 @@ INDEX_NAME = "index.json"
 
 class SubtitlesStage(Stage):
     name = "subtitles"
-    version = 1
+    version = 2
     device = Device.ANY
     description = "Файлы ASS с подсветкой слова для каждого кандидата"
 

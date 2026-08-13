@@ -17,6 +17,7 @@ from typing import Any
 
 from narezka.core.artifacts import Artifact
 from narezka.core.config import FramingConfig
+from narezka.core.fonts import escape_for_filter, fonts_dir
 from narezka.core.framing import Framing, build_filter, describe, plan_frame
 from narezka.core.media import find_source, run_tool
 from narezka.core.stage import Device, Stage, StageContext, StageSkipped
@@ -63,8 +64,9 @@ def source_size(metadata: dict[str, Any]) -> tuple[int, int]:
 
 class RenderStage(Stage):
     name = "render"
-    #: v2 — кадрирование стало настраиваемым (§61).
-    version = 2
+    #: v3 — шрифт субтитров берётся из поставки, а не подбирается
+    #: fontconfig на машине рендера (§60).
+    version = 3
     device = Device.ANY
     description = "Вертикальные ролики 9:16 с вшитыми субтитрами"
 
@@ -236,14 +238,18 @@ class RenderStage(Stage):
 
         if has_video:
             args += ["-ss", f"{start:.3f}", "-i", str(source), "-t", f"{duration:.3f}"]
-            video_filter = build_filter(plan, framing, width, height, subtitle_name)
+            video_filter = build_filter(
+                plan, framing, width, height, subtitle_name,
+                fonts_dir=escape_for_filter(fonts_dir()),
+            )
             args += ["-filter_complex", video_filter, "-map", "[v]", "-map", "0:a:0"]
         else:
             args += [
                 "-f", "lavfi",
                 "-i", f"color=c={framing.color}:s={width}x{height}:r=30:d={duration:.3f}",
                 "-ss", f"{start:.3f}", "-i", str(source), "-t", f"{duration:.3f}",
-                "-filter_complex", f"[0:v]subtitles={subtitle_name}[v]",
+                "-filter_complex",
+                f"[0:v]subtitles={subtitle_name}:fontsdir={escape_for_filter(fonts_dir())}[v]",
                 "-map", "[v]", "-map", "1:a:0",
             ]
 

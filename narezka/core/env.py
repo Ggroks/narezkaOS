@@ -14,6 +14,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from narezka.core import fonts
 from narezka.core.device import DeviceInfo, cpu_count, detect_device
 
 #: Один 8-часовой VOD 1080p60 занимает 15–30 ГБ (§65).
@@ -121,6 +122,19 @@ def run_checks(storage_root: Path, device_setting: str = "auto") -> tuple[list[C
         checks.append(
             Check(module, found, "установлен" if found else f"не установлен — нужен для: {purpose}", critical=False)
         )
+
+    # Шрифты идут в поставке (§60): без них libass подставит что найдёт
+    # на машине, и кириллица может выйти пустыми прямоугольниками — видно
+    # это только на готовом ролике, когда рендер уже потрачен.
+    absent = fonts.missing_files()
+    checks.append(
+        Check(
+            "шрифты субтитров",
+            not absent,
+            f"{fonts.fonts_dir()}" if not absent else f"нет файлов: {', '.join(absent)}",
+            critical=True,
+        )
+    )
 
     device: DeviceInfo | None = None
     try:

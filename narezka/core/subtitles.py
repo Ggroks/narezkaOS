@@ -16,6 +16,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from narezka.core.fonts import resolve_family
+
 #: Интерфейсы TikTok, Shorts и Reels перекрывают низ кадра подписями и кнопками,
 #: а правый край — панелью действий (§60). Значения приблизительные: они меняются
 #: вместе с приложениями платформ, поэтому вынесены в стиль.
@@ -52,7 +54,7 @@ STYLES: dict[str, SubtitleStyle] = {
     "STYLE_1": SubtitleStyle(name="STYLE_1"),
     "STYLE_2": SubtitleStyle(
         name="STYLE_2",
-        font="Liberation Sans",
+        font="DejaVu Sans",
         font_size=72,
         highlight="&H004CFF4C",
         outline=4.0,
@@ -189,7 +191,7 @@ def build_ass(
         "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
         # SecondaryColour — цвет ещё не прозвучавшей части при караоке,
         # PrimaryColour — уже прозвучавшей. Подсветка идёт в Primary.
-        f"Style: Main,{style.font},{style.font_size},{style.highlight},{style.primary},"
+        f"Style: Main,{resolve_family(style.font)},{style.font_size},{style.highlight},{style.primary},"
         f"{style.outline_colour},{style.back_colour},{-1 if style.bold else 0},0,0,0,"
         f"100,100,0,0,1,{style.outline},{style.shadow},2,"
         f"{margin_h},{margin_h},{margin_v},1",

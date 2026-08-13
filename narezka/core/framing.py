@@ -161,12 +161,16 @@ def build_filter(
     out_w: int,
     out_h: int,
     subtitle_name: str | None = None,
+    fonts_dir: str | None = None,
 ) -> str:
     """Строка filter_complex для ffmpeg.
 
     Без `subtitle_name` цепочка та же, но без вшивания субтитров — так
     предпросмотр кадра в интерфейсе показывает ровно ту же геометрию, что
     получится при рендере, и не требует готовых файлов субтитров.
+
+    `fonts_dir` передаётся libass, чтобы шрифт брался из поставки, а не
+    подбирался fontconfig на машине рендера (§60).
 
     Когда содержимое заполняет кадр, подложка не строится вовсе: считать
     размытие, которого не будет видно, — впустую потраченное время кодирования.
@@ -196,7 +200,11 @@ def build_filter(
 
     if subtitle_name is None:
         return f"{base}[v]"
-    return f"{base}[base];[base]subtitles={subtitle_name}[v]"
+
+    subtitles = f"subtitles={subtitle_name}"
+    if fonts_dir:
+        subtitles += f":fontsdir={fonts_dir}"
+    return f"{base}[base];[base]{subtitles}[v]"
 
 
 def preview_presets(source_w: int, source_h: int, out_w: int, out_h: int) -> list[dict[str, Any]]:

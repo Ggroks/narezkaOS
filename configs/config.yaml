@@ -36,6 +36,14 @@ output:
   pix_fmt: yuv420p
   faststart: true
 
+candidates:
+  window_seconds: 1.0
+  loudness_weight: 0.6      # вклад всплеска громкости
+  density_weight: 0.4       # вклад плотности речи
+  min_peak_score: 0.8       # порог локального максимума, в единицах устойчивого z
+  min_gap_seconds: 20       # чтобы один всплеск не дал десяток кандидатов
+  max_coverage: 0.3         # потолок доли материала в кандидатах
+
 funnel:
   max_candidates: 200
   max_clips: 30

@@ -72,6 +72,25 @@ class OutputConfig(BaseModel):
     faststart: bool = True
 
 
+class CandidatesConfig(BaseModel):
+    """Первый проход воронки (§11): дешёвые сигналы по всему материалу."""
+
+    window_seconds: float = 1.0
+    #: Вклад всплеска громкости и плотности речи в предварительную оценку.
+    loudness_weight: float = 0.6
+    density_weight: float = 0.4
+    #: Порог отсечки для локального максимума, в единицах устойчивого z.
+    min_peak_score: float = 0.8
+    #: Минимальное расстояние между пиками, чтобы один всплеск не породил
+    #: десяток кандидатов вокруг одного события.
+    min_gap_seconds: float = 20.0
+    #: Потолок доли материала, попадающей в кандидаты. Оценка всплеска
+    #: считается относительно самого материала, поэтому на однородной записи
+    #: «пики» находятся там, где их нет. Потолок оставляет только сильнейшие
+    #: и делает видимым, что различающего сигнала не нашлось.
+    max_coverage: float = 0.3
+
+
 class FunnelConfig(BaseModel):
     max_candidates: int = 200
     max_clips: int = 30
@@ -111,6 +130,7 @@ class Config(BaseModel):
     stt: SttConfig = Field(default_factory=SttConfig)
     llm: LlmConfig = Field(default_factory=LlmConfig)
     detector: DetectorConfig = Field(default_factory=DetectorConfig)
+    candidates: CandidatesConfig = Field(default_factory=CandidatesConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
     funnel: FunnelConfig = Field(default_factory=FunnelConfig)
     score: ScoreConfig = Field(default_factory=ScoreConfig)

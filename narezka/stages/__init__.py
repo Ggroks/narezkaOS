@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from narezka.core.stage import Stage
+from narezka.stages.candidates import CandidatesStage
 from narezka.stages.download import DownloadStage
 from narezka.stages.extract_audio import ExtractAudioStage
 from narezka.stages.probe import ProbeStage
@@ -18,6 +19,7 @@ PIPELINE: list[Stage] = [
     ProbeStage(),
     ExtractAudioStage(),
     TranscribeStage(),
+    CandidatesStage(),
 ]
 
 REGISTRY: dict[str, Stage] = {stage.name: stage for stage in PIPELINE}

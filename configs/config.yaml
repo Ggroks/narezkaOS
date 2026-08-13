@@ -36,6 +36,9 @@ output:
   pix_fmt: yuv420p
   faststart: true
 
+subtitles:
+  style: STYLE_1          # STYLE_1 | STYLE_2 | STYLE_3 (§18)
+
 candidates:
   window_seconds: 1.0
   loudness_weight: 0.6      # вклад всплеска громкости

@@ -27,10 +27,22 @@ class MediaError(RuntimeError):
     pass
 
 
-def run_tool(args: list[str], *, timeout: int = 600) -> subprocess.CompletedProcess[str]:
-    """Запуск внешнего инструмента списком аргументов, без оболочки."""
+def run_tool(
+    args: list[str],
+    *,
+    timeout: int = 600,
+    cwd: Path | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Запуск внешнего инструмента списком аргументов, без оболочки.
+
+    `cwd` нужен фильтру субтитров: libass принимает путь как часть строки
+    фильтра, и экранирование двоеточий и обратных слэшей там своё. Проще
+    перейти в каталог и передать одно имя файла.
+    """
     try:
-        result = subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=False)
+        result = subprocess.run(
+            args, capture_output=True, text=True, timeout=timeout, check=False, cwd=cwd
+        )
     except FileNotFoundError as exc:
         raise MediaError(f"не найден исполняемый файл: {args[0]}") from exc
     except subprocess.TimeoutExpired as exc:

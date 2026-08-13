@@ -11,6 +11,8 @@ from narezka.stages.candidates import CandidatesStage
 from narezka.stages.download import DownloadStage
 from narezka.stages.extract_audio import ExtractAudioStage
 from narezka.stages.probe import ProbeStage
+from narezka.stages.render import RenderStage
+from narezka.stages.subtitles import SubtitlesStage
 from narezka.stages.transcribe import TranscribeStage
 
 #: Порядок соответствует BAZA.md §44. Наполняется по мере реализации этапов.
@@ -20,6 +22,8 @@ PIPELINE: list[Stage] = [
     ExtractAudioStage(),
     TranscribeStage(),
     CandidatesStage(),
+    SubtitlesStage(),
+    RenderStage(),
 ]
 
 REGISTRY: dict[str, Stage] = {stage.name: stage for stage in PIPELINE}

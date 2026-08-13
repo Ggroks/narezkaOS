@@ -298,6 +298,37 @@ def transcript(video_id: str, project: str = "default", include_suspect: bool = 
     return data
 
 
+@app.get("/api/videos/{video_id}/candidates")
+def candidates(video_id: str, project: str = "default") -> dict[str, Any]:
+    paths, _ = _paths(video_id, project)
+    artifact = Artifact(paths.analysis / "candidates.json")
+    if not artifact.exists():
+        raise HTTPException(status_code=404, detail="кандидаты ещё не отобраны")
+    return artifact.read_json()
+
+
+@app.get("/api/videos/{video_id}/shorts")
+def shorts(video_id: str, project: str = "default") -> dict[str, Any]:
+    paths, _ = _paths(video_id, project)
+    artifact = Artifact(paths.shorts / "index.json")
+    if not artifact.exists():
+        raise HTTPException(status_code=404, detail="ролики ещё не отрендерены")
+    return artifact.read_json()
+
+
+@app.get("/api/videos/{video_id}/shorts/{index}/media")
+def short_media(
+    video_id: str,
+    index: int,
+    project: str = "default",
+    range_header: Annotated[str | None, Header(alias="range")] = None,
+):
+    paths, _ = _paths(video_id, project)
+    # Имя строится из индекса, а не берётся из запроса: путь не должен
+    # собираться из пользовательского ввода (§66).
+    return serve_file(paths.shorts / f"{index:02d}.mp4", range_header)
+
+
 @app.get("/api/videos/{video_id}/media")
 def media(
     video_id: str,

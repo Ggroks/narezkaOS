@@ -166,3 +166,23 @@ video { width: 100%; border-radius: var(--radius); background: #000; display: bl
 }
 
 .empty { color: var(--text-dim); padding: 28px 0; text-align: center; }
+
+/* Готовые ролики показываются в реальной пропорции 9:16 — так же, как их
+   увидит зритель, включая положение субтитров относительно интерфейса. */
+.shorts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 16px;
+}
+.short { margin: 0; }
+.short video {
+  aspect-ratio: 9 / 16;
+  object-fit: contain;
+}
+.short figcaption {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-top: 8px;
+}

@@ -72,6 +72,22 @@ export type JobSnapshot = {
   events: JobEvent[];
 };
 
+export type ShortFile = {
+  index: number;
+  file: string;
+  start: number;
+  end: number;
+  duration: number;
+  size_bytes: number;
+};
+
+export type ShortsIndex = {
+  width: number;
+  height: number;
+  background: "blur" | "solid";
+  files: ShortFile[];
+};
+
 export type HealthCheck = { name: string; ok: boolean; detail: string; critical: boolean };
 export type Health = {
   ok: boolean;
@@ -103,6 +119,7 @@ export const api = {
   videos: () => request<VideoSummary[]>("/api/videos"),
   video: (id: string) => request<VideoDetail>(`/api/videos/${id}`),
   transcript: (id: string) => request<Transcript>(`/api/videos/${id}/transcript`),
+  shorts: (id: string) => request<ShortsIndex>(`/api/videos/${id}/shorts`),
   addVideo: (payload: { url?: string; file?: string }) =>
     request<{ video_id: string }>("/api/videos", { method: "POST", body: JSON.stringify(payload) }),
   deleteVideo: (id: string) => request<{ status: string }>(`/api/videos/${id}`, { method: "DELETE" }),

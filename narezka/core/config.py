@@ -72,6 +72,11 @@ class OutputConfig(BaseModel):
     faststart: bool = True
 
 
+class SubtitlesConfig(BaseModel):
+    #: Пресет оформления (§18). Пользовательские стили — в backlog.
+    style: str = "STYLE_1"
+
+
 class CandidatesConfig(BaseModel):
     """Первый проход воронки (§11): дешёвые сигналы по всему материалу."""
 
@@ -131,6 +136,7 @@ class Config(BaseModel):
     llm: LlmConfig = Field(default_factory=LlmConfig)
     detector: DetectorConfig = Field(default_factory=DetectorConfig)
     candidates: CandidatesConfig = Field(default_factory=CandidatesConfig)
+    subtitles: SubtitlesConfig = Field(default_factory=SubtitlesConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
     funnel: FunnelConfig = Field(default_factory=FunnelConfig)
     score: ScoreConfig = Field(default_factory=ScoreConfig)

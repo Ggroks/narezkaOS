@@ -4,9 +4,11 @@ import {
   formatDuration,
   subscribeToJob,
   type JobEvent,
+  type ShortsIndex,
   type Transcript,
   type VideoDetail as Detail,
 } from "../api";
+import { ShortsView } from "./ShortsView";
 import { TranscriptView } from "./TranscriptView";
 
 type Props = { videoId: string; onBack: () => void };
@@ -28,6 +30,7 @@ const OUTCOME_LABEL: Record<string, string> = {
 export function VideoDetail({ videoId, onBack }: Props) {
   const [detail, setDetail] = useState<Detail | null>(null);
   const [transcript, setTranscript] = useState<Transcript | null>(null);
+  const [shorts, setShorts] = useState<ShortsIndex | null>(null);
   const [events, setEvents] = useState<JobEvent[]>([]);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -44,6 +47,11 @@ export function VideoDetail({ videoId, onBack }: Props) {
         setTranscript(await api.transcript(videoId));
       } catch {
         setTranscript(null); // транскрипта ещё нет — это нормально
+      }
+      try {
+        setShorts(await api.shorts(videoId));
+      } catch {
+        setShorts(null); // роликов ещё нет
       }
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : String(exc));
@@ -190,6 +198,8 @@ export function VideoDetail({ videoId, onBack }: Props) {
           </div>
         )}
       </div>
+
+      {shorts && shorts.files.length > 0 && <ShortsView videoId={videoId} shorts={shorts} />}
 
       {transcript && (
         <TranscriptView transcript={transcript} onSeek={seek} currentTime={currentTime} />

@@ -52,6 +52,9 @@ export function App() {
 
   return (
     <div className="app">
+      <a href="#content" className="sr-only">
+        Перейти к содержимому
+      </a>
       <header className="top">
         <h1>Narezka OS</h1>
         {health && (
@@ -61,13 +64,19 @@ export function App() {
         )}
       </header>
 
-      {error && <div className="error">{error}</div>}
-
-      {videoId ? (
-        <VideoDetail videoId={videoId} onBack={() => navigate(null)} />
-      ) : (
-        <VideoList videos={videos} onOpen={(id) => navigate(id)} onChanged={refresh} />
+      {error && (
+        <div className="error" role="alert">
+          {error}
+        </div>
       )}
+
+      <main id="content">
+        {videoId ? (
+          <VideoDetail videoId={videoId} onBack={() => navigate(null)} />
+        ) : (
+          <VideoList videos={videos} onOpen={(id) => navigate(id)} onChanged={refresh} />
+        )}
+      </main>
     </div>
   );
 }

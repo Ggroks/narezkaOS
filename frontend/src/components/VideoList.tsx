@@ -29,81 +29,108 @@ export function VideoList({ videos, onOpen, onChanged }: Props) {
     }
   }
 
+  async function remove(video: VideoSummary) {
+    if (!confirm(`Удалить «${video.title}» и все артефакты обработки?`)) return;
+    try {
+      await api.deleteVideo(video.video_id);
+      onChanged();
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : String(exc));
+    }
+  }
+
   return (
     <>
-      {error && <div className="error">{error}</div>}
+      {error && (
+        <div className="error" role="alert">
+          {error}
+        </div>
+      )}
 
-      <div className="card">
-        <h2>Добавить видео</h2>
+      <section className="card" aria-labelledby="add-heading">
+        <h2 id="add-heading">Добавить видео</h2>
+
         <div className="row" style={{ marginBottom: 10 }}>
-          <input
-            className="grow"
-            placeholder="Ссылка на YouTube или Twitch VOD"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && url.trim() && add({ url: url.trim() })}
-          />
+          <label className="grow">
+            <span className="sr-only">Ссылка на YouTube или Twitch VOD</span>
+            <input
+              type="url"
+              inputMode="url"
+              placeholder="Ссылка на YouTube или Twitch VOD"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && url.trim() && add({ url: url.trim() })}
+            />
+          </label>
           <button className="primary" disabled={busy || !url.trim()} onClick={() => add({ url: url.trim() })}>
             Добавить
           </button>
         </div>
+
         <div className="row">
-          <input
-            className="grow"
-            placeholder="Либо путь к локальному файлу: /home/…/stream.mp4"
-            value={file}
-            onChange={(e) => setFile(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && file.trim() && add({ file: file.trim() })}
-          />
+          <label className="grow">
+            <span className="sr-only">Путь к локальному файлу</span>
+            <input
+              placeholder="Либо путь к локальному файлу: /home/…/stream.mp4"
+              value={file}
+              onChange={(e) => setFile(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && file.trim() && add({ file: file.trim() })}
+            />
+          </label>
           <button disabled={busy || !file.trim()} onClick={() => add({ file: file.trim() })}>
             Добавить файл
           </button>
         </div>
-      </div>
+      </section>
 
-      <div className="card">
-        <h2>Видео ({videos.length})</h2>
+      <section className="card" aria-labelledby="list-heading">
+        <h2 id="list-heading">Видео ({videos.length})</h2>
+
         {videos.length === 0 ? (
-          <div className="empty">Пока пусто. Добавьте ссылку или файл выше.</div>
+          <p className="empty">Пока пусто. Добавьте ссылку или путь к файлу выше.</p>
         ) : (
-          <div className="video-list">
+          <ul className="video-list" style={{ listStyle: "none", margin: 0, padding: 0 }}>
             {videos.map((video) => (
-              <button key={video.video_id} className="video-item" onClick={() => onOpen(video.video_id)}>
-                <div className="grow">
-                  <div style={{ fontWeight: 600 }}>{video.title}</div>
-                  <div className="small dim mono">{video.video_id}</div>
-                </div>
-                <div className="small dim">{formatDuration(video.duration_seconds)}</div>
+              <li key={video.video_id} className="video-item">
+                {/* Ссылка, а не кнопка: открытие видео — навигация, и она
+                    должна работать средней кнопкой и «в новой вкладке». */}
+                <a
+                  className="open grow"
+                  href={`#/video/${video.video_id}`}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    onOpen(video.video_id);
+                  }}
+                >
+                  <span className="title">{video.title}</span>
+                  <span className="small dim mono" style={{ display: "block" }}>
+                    {video.video_id}
+                  </span>
+                </a>
+
+                <span className="small dim tnum">{formatDuration(video.duration_seconds)}</span>
                 {video.video?.width && (
-                  <div className="small dim">
+                  <span className="small dim tnum">
                     {video.video.width}×{video.video.height}
-                  </div>
+                  </span>
                 )}
                 <span className={`badge ${video.origin === "url" ? "" : "ok"}`}>
                   {video.origin === "url" ? "ссылка" : "файл"}
                 </span>
                 {video.job_status === "running" && <span className="badge run">идёт обработка</span>}
+
                 <button
-                  className="danger"
-                  title="Удалить видео и все его артефакты"
-                  onClick={async (e) => {
-                    e.stopPropagation();
-                    if (!confirm(`Удалить ${video.title} и все артефакты?`)) return;
-                    try {
-                      await api.deleteVideo(video.video_id);
-                      onChanged();
-                    } catch (exc) {
-                      setError(exc instanceof Error ? exc.message : String(exc));
-                    }
-                  }}
+                  className="icon danger"
+                  aria-label={`Удалить «${video.title}»`}
+                  onClick={() => remove(video)}
                 >
-                  ✕
+                  <span aria-hidden="true">✕</span>
                 </button>
-              </button>
+              </li>
             ))}
-          </div>
+          </ul>
         )}
-      </div>
+      </section>
     </>
   );
 }

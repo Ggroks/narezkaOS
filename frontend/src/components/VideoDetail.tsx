@@ -100,7 +100,13 @@ export function VideoDetail({ videoId, onBack }: Props) {
   if (!detail) {
     return (
       <div className="card">
-        {error ? <div className="error">{error}</div> : <div className="empty">Загрузка…</div>}
+        {error ? (
+          <div className="error" role="alert">
+            {error}
+          </div>
+        ) : (
+          <p className="empty">Загрузка…</p>
+        )}
         <button onClick={onBack}>← К списку</button>
       </div>
     );
@@ -113,7 +119,11 @@ export function VideoDetail({ videoId, onBack }: Props) {
 
   return (
     <>
-      {error && <div className="error">{error}</div>}
+      {error && (
+        <div className="error" role="alert">
+          {error}
+        </div>
+      )}
 
       <div className="row" style={{ marginBottom: 16 }}>
         <button onClick={onBack}>← К списку</button>
@@ -129,8 +139,8 @@ export function VideoDetail({ videoId, onBack }: Props) {
         </button>
       </div>
 
-      <div className="card">
-        <h2>Исходник</h2>
+      <section className="card" aria-labelledby="source-heading">
+        <h2 id="source-heading">Исходник</h2>
         <video
           ref={videoRef}
           controls
@@ -139,19 +149,19 @@ export function VideoDetail({ videoId, onBack }: Props) {
           onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
         />
         <div className="row wrap small dim" style={{ marginTop: 10, gap: 14 }}>
-          <span>{formatDuration(meta.duration_seconds)}</span>
+          <span className="tnum">{formatDuration(meta.duration_seconds)}</span>
           {meta.video?.width && (
-            <span>
+            <span className="tnum">
               {meta.video.width}×{meta.video.height} @ {meta.video.fps} fps
             </span>
           )}
           {meta.audio?.codec && <span>звук: {meta.audio.codec}</span>}
-          {meta.size_bytes && <span>{(meta.size_bytes / 1024 ** 3).toFixed(2)} ГБ</span>}
+          {meta.size_bytes && <span className="tnum">{(meta.size_bytes / 1024 ** 3).toFixed(2)} ГБ</span>}
         </div>
-      </div>
+      </section>
 
-      <div className="card">
-        <h2>Стадии</h2>
+      <section className="card" aria-labelledby="stages-heading">
+        <h2 id="stages-heading">Стадии</h2>
         <div className="stages">
           {detail.stages.map((stage) => {
             const event = [...events].reverse().find((e) => e.stage === stage.name && e.event === "finished");
@@ -170,9 +180,16 @@ export function VideoDetail({ videoId, onBack }: Props) {
                 {!isActive && !outcome && stage.status === "done" && (
                   <span className="badge ok">выполнено</span>
                 )}
-                {stage.duration != null && <span className="small dim">{stage.duration.toFixed(1)} с</span>}
-                <button disabled={running} onClick={() => start(stage.name, true)} title="Запустить только эту стадию">
-                  ▶
+                {stage.duration != null && (
+                  <span className="small dim tnum">{stage.duration.toFixed(1)} с</span>
+                )}
+                <button
+                  className="icon"
+                  disabled={running}
+                  aria-label={`Запустить только стадию ${stage.name}`}
+                  onClick={() => start(stage.name, true)}
+                >
+                  <span aria-hidden="true">▶</span>
                 </button>
               </div>
             );
@@ -180,7 +197,7 @@ export function VideoDetail({ videoId, onBack }: Props) {
         </div>
 
         {events.length > 0 && (
-          <div className="log" style={{ marginTop: 12 }}>
+          <div className="log" style={{ marginTop: 12 }} role="log" aria-live="polite" aria-label="Журнал обработки">
             {events.map((event) => (
               <div key={event.seq}>
                 <span className="dim">{event.at.slice(11, 19)}</span>{" "}
@@ -197,7 +214,7 @@ export function VideoDetail({ videoId, onBack }: Props) {
             ))}
           </div>
         )}
-      </div>
+      </section>
 
       {shorts && shorts.files.length > 0 && <ShortsView videoId={videoId} shorts={shorts} />}
 

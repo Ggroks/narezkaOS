@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { formatDuration, type Transcript } from "../api";
 
 type Props = {
@@ -16,6 +16,7 @@ type Props = {
  */
 export function TranscriptView({ transcript, onSeek, currentTime }: Props) {
   const [showSuspect, setShowSuspect] = useState(true);
+  const toggleId = useId();
 
   const segments = useMemo(
     () => (showSuspect ? transcript.segments : transcript.segments.filter((s) => !s.suspect)),
@@ -25,59 +26,72 @@ export function TranscriptView({ transcript, onSeek, currentTime }: Props) {
   const { segments_total, segments_suspect, words_usable } = transcript.stats;
 
   return (
-    <div className="card">
-      <h2>Транскрипт</h2>
+    <section className="card" aria-labelledby="transcript-heading">
+      <h2 id="transcript-heading">Транскрипт</h2>
 
       <div className="row wrap small dim" style={{ marginBottom: 12, gap: 14 }}>
         <span>
           язык <b style={{ color: "var(--text)" }}>{transcript.language}</b>{" "}
-          ({Math.round(transcript.language_probability * 100)}%)
+          <span className="tnum">({Math.round(transcript.language_probability * 100)}%)</span>
         </span>
         <span>модель {transcript.model}</span>
-        <span>сегментов {segments_total}</span>
+        <span className="tnum">сегментов {segments_total}</span>
         {segments_suspect > 0 && (
-          <span className="badge warn">подозрительных {segments_suspect}</span>
+          <span className="badge warn tnum">подозрительных {segments_suspect}</span>
         )}
-        <span>слов {words_usable}</span>
-        <label className="row small" style={{ marginLeft: "auto", gap: 6, cursor: "pointer", width: "auto" }}>
+        <span className="tnum">слов {words_usable}</span>
+
+        <label
+          htmlFor={toggleId}
+          className="row small"
+          style={{ marginInlineStart: "auto", gap: 6, cursor: "pointer", width: "auto" }}
+        >
           <input
+            id={toggleId}
             type="checkbox"
             checked={showSuspect}
             onChange={(e) => setShowSuspect(e.target.checked)}
-            style={{ width: "auto" }}
+            style={{ width: "auto", flex: "none" }}
           />
           показывать подозрительные
         </label>
       </div>
 
       {segments.length === 0 ? (
-        <div className="empty">
+        <p className="empty">
           {segments_total === 0
-            ? "Речь не найдена. Для синтетического звука это правильно — VAD отсёк не-речь."
+            ? "Речь не найдена. Для записи без голоса это правильно — определение речи отсекло не-речь до распознавания."
             : "Все сегменты отфильтрованы."}
-        </div>
+        </p>
       ) : (
         <div className="segments">
           {segments.map((segment) => {
-            const active = currentTime >= segment.start && currentTime < segment.end;
+            const current = currentTime >= segment.start && currentTime < segment.end;
             return (
-              <div
+              <button
                 key={segment.id}
-                className={`segment${segment.suspect ? " suspect" : ""}`}
-                style={active ? { background: "var(--surface-2)", borderColor: "var(--accent)" } : undefined}
+                type="button"
+                className={`segment${segment.suspect ? " suspect" : ""}${current ? " current" : ""}`}
                 onClick={() => onSeek(segment.start)}
-                title="Перейти к этому месту"
+                aria-current={current ? "true" : undefined}
               >
-                <div className="time">{formatDuration(segment.start)}</div>
-                <div>
-                  <div>{segment.text}</div>
-                  {segment.suspect && <div className="reason">⚠ {segment.suspect_reason}</div>}
-                </div>
-              </div>
+                <span className="time">{formatDuration(segment.start)}</span>
+                <span>
+                  <span className="text">{segment.text}</span>
+                  {segment.suspect && (
+                    <span className="reason" style={{ display: "block" }}>
+                      {/* Значок дублируется словом: смысл не должен держаться
+                          на одном цвете или символе. */}
+                      <span aria-hidden="true">⚠ </span>
+                      Подозрительно: {segment.suspect_reason}
+                    </span>
+                  )}
+                </span>
+              </button>
             );
           })}
         </div>
       )}
-    </div>
+    </section>
   );
 }

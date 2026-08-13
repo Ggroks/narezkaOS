@@ -1,0 +1,76 @@
+# Конфигурация Narezka OS — BAZA.md §46
+#
+# Профиль это пресет «скорость против качества», а не описание железа:
+# оба профиля запускаются на любой машине, отличается время выполнения (§62).
+
+profile: auto            # auto | dev | batch
+device: auto             # auto | cpu | cuda
+degrade_gracefully: true # нет ускорителя → меньшая модель, пропуск опциональных стадий
+storage_root: storage
+default_project: default
+
+stt:
+  model: large-v3
+  compute_type: auto     # auto подбирает int8 / float16 под устройство
+  language: auto
+  batch_size: 8
+
+llm:
+  provider: api          # api | local
+  model: null            # задаётся при подключении провайдера
+  batch_mode: true       # пакетная обработка кандидатов — вдвое дешевле (§25)
+  cache_prefix: true     # общий префикс промпта в кэше (§25)
+
+detector:
+  backend: mediapipe     # mediapipe | yolox | ultralytics — выбор после сравнения (§17)
+
+output:
+  short:
+    width: 1080
+    height: 1920
+    min_duration: 15
+    optimal_duration: 60
+    max_duration: 90
+  loudness_target_lufs: -14
+  crf: 20
+  pix_fmt: yuv420p
+  faststart: true
+
+funnel:
+  max_candidates: 200
+  max_clips: 30
+  dedup_overlap: 0.5     # перекрытие, при котором кандидат отбрасывается
+  chunk_seconds: 1200
+  chunk_overlap_seconds: 60
+
+score:
+  schema_version: 2
+  weights:
+    semantic: 0.25
+    emotion: 0.20
+    context: 0.20
+    completeness: 0.15
+    audio: 0.10
+    novelty: 0.05
+    visual: 0.05
+
+compilation:
+  target_minutes: 20
+
+# Переопределения профилей накладываются поверх значений выше.
+profiles:
+  dev:
+    stt:
+      # Замерено на фикстурах: base даёт RTF 0.12, но на русском ошибается так,
+      # что текст становится бессмысленным («Осень в столице» → «80 лица»).
+      # small — RTF 0.28 и разборчивый текст; для цикла разработки это
+      # правильный размен (§62).
+      model: small
+      compute_type: int8
+      batch_size: 4
+
+  batch:
+    stt:
+      model: large-v3
+      compute_type: auto
+      batch_size: 16

@@ -1,0 +1,80 @@
+{
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "allow": [
+      "Read",
+      "Edit",
+      "Write",
+      "Glob",
+      "Grep",
+      "WebSearch",
+      "WebFetch",
+      "TodoWrite",
+
+      "Bash(uv *)",
+      "Bash(.venv/bin/*)",
+      "Bash(python3 *)",
+      "Bash(pytest *)",
+      "Bash(ruff *)",
+
+      "Bash(ffmpeg *)",
+      "Bash(ffprobe *)",
+      "Bash(yt-dlp *)",
+
+      "Bash(npm *)",
+      "Bash(npx *)",
+      "Bash(node *)",
+
+      "Bash(git *)",
+
+      "Bash(ls *)",
+      "Bash(cat *)",
+      "Bash(head *)",
+      "Bash(tail *)",
+      "Bash(grep *)",
+      "Bash(rg *)",
+      "Bash(find *)",
+      "Bash(wc *)",
+      "Bash(du *)",
+      "Bash(df *)",
+      "Bash(stat *)",
+      "Bash(file *)",
+      "Bash(tree *)",
+      "Bash(which *)",
+      "Bash(echo *)",
+      "Bash(jq *)",
+      "Bash(sed *)",
+      "Bash(awk *)",
+      "Bash(sort *)",
+      "Bash(uniq *)",
+      "Bash(diff *)",
+      "Bash(md5sum *)",
+      "Bash(sha256sum *)",
+
+      "Bash(mkdir *)",
+      "Bash(cp *)",
+      "Bash(mv *)",
+      "Bash(touch *)",
+      "Bash(chmod *)",
+      "Bash(ln *)",
+      "Bash(rm *)",
+
+      "Bash(curl *)",
+      "Bash(tar *)",
+      "Bash(unzip *)"
+    ],
+    "deny": [
+      "Bash(sudo *)",
+      "Bash(rm -rf /*)",
+      "Bash(rm -rf ~*)",
+      "Bash(rm -rf .git*)",
+      "Bash(git push*)",
+      "Bash(git reset --hard*)",
+      "Bash(git clean -*fd*)",
+      "Bash(dd *)",
+      "Bash(mkfs*)",
+      "Bash(shutdown *)",
+      "Bash(reboot *)"
+    ]
+  }
+}

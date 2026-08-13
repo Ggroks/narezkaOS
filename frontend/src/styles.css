@@ -88,7 +88,11 @@ button.icon::after {
   inset: -6px;
 }
 
-input, select {
+/* Только поля ввода текста. Раньше правило било по всем input, и радиокнопка
+   растягивалась во всю ширину карточки, выдавливая подписи наружу: рамка,
+   отступы и width: 100% переключателям не нужны вовсе. */
+input:not([type="radio"], [type="checkbox"], [type="range"], [type="color"], [type="file"]),
+select {
   font: inherit;
   /* 16px на мобильных: ниже этого размера iOS Safari масштабирует страницу. */
   font-size: 16px;
@@ -100,6 +104,12 @@ input, select {
   width: 100%;
 }
 input:focus-visible, select:focus-visible { border-color: var(--accent); }
+
+input[type="radio"], input[type="checkbox"] {
+  flex: none;
+  margin: 0;
+  accent-color: var(--accent);
+}
 
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
@@ -183,7 +193,14 @@ header.top .env { color: var(--text-dim); font-size: 13px; margin-inline-start: 
   border: 1px solid var(--border);
   border-radius: var(--radius-inner);
 }
+/* Перенос обязателен: на узком экране строка стадии не помещалась целиком
+   и растягивала страницу по горизонтали. */
+.stage { flex-wrap: wrap; }
 .stage .name { font-weight: 600; min-width: 130px; }
+
+@media (max-width: 620px) {
+  .stage .name, .stage .grow { flex-basis: 100%; min-width: 0; }
+}
 .stage.active { border-color: var(--accent); }
 
 .log {
@@ -319,20 +336,24 @@ a.sr-only:focus-visible {
 }
 
 /* --- кадрирование ---------------------------------------------------------
-   Настраивать рамку по описанию словами нельзя, поэтому предпросмотр и
-   органы управления стоят рядом и видны одновременно. */
+   Настраивать рамку по описанию словами нельзя, поэтому предпросмотр и органы
+   управления стоят рядом и видны одновременно. Колонки заданы в конкретных
+   ширинах, а не в долях: растянутый на весь монитор ряд переключателей
+   разносит подпись и число по разным краям экрана, и связь между ними
+   перестаёт читаться. */
+
+/* Строка текста над блоком не должна быть длиннее самого блока: иначе
+   абзац уезжает через весь монитор, а органы управления жмутся слева. */
+.framing-intro {
+  max-inline-size: 752px;
+  margin: -4px 0 16px;
+}
 
 .framing {
   display: grid;
-  grid-template-columns: minmax(180px, 260px) 1fr;
-  gap: var(--pad);
+  grid-template-columns: 288px minmax(0, 440px);
+  gap: 24px;
   align-items: start;
-}
-
-/* На узком экране кадр уходит наверх: он важнее, чем ползунки. */
-@media (max-width: 720px) {
-  .framing { grid-template-columns: 1fr; }
-  .framing-preview { max-width: 220px; }
 }
 
 .framing-preview {
@@ -355,15 +376,16 @@ a.sr-only:focus-visible {
   position: absolute;
   inset-block-end: 8px;
   inset-inline-start: 8px;
-  padding: 2px 8px;
+  padding: 3px 9px;
   border-radius: 999px;
-  background: color-mix(in oklch, var(--bg) 80%, transparent);
+  background: color-mix(in oklch, var(--bg) 78%, transparent);
+  backdrop-filter: blur(6px);
 }
 
 .framing-controls {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 18px;
   min-width: 0;
 }
 
@@ -375,8 +397,11 @@ a.sr-only:focus-visible {
 }
 
 .framing legend {
-  padding: 0 0 6px;
-  font-size: 13px;
+  padding: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   color: var(--text-dim);
 }
 
@@ -385,14 +410,14 @@ a.sr-only:focus-visible {
 .framing-presets {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
 }
 
 .framing-option {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 7px 10px;
+  padding: 8px 10px;
   border-radius: var(--radius-inner);
   cursor: pointer;
 }
@@ -414,6 +439,59 @@ a.sr-only:focus-visible {
   outline-offset: 2px;
 }
 
+.framing-option .name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Числа стоят в двух собственных колонках, а не одной строкой справа: иначе
+   «срез 0%» и «срез 68%» разной ширины разъезжают доли и сравнить варианты
+   между собой глазом нельзя. */
+.framing-option .figure {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.framing-option .figure .share {
+  min-inline-size: 4ch;
+  text-align: end;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.framing-option .figure .crop { min-inline-size: 9ch; }
+
+/* Тот же кадр 9:16 в миниатюре: закрашенная полоса — доля, которую займёт
+   содержимое. Компромисс виден раньше, чем прочитано число. */
+.framing-glyph {
+  flex: none;
+  position: relative;
+  inline-size: 13px;
+  block-size: 23px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.framing-glyph::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  inset-block-start: calc((100% - var(--share)) / 2);
+  block-size: var(--share);
+  background: var(--accent);
+}
+
+.framing-option:has(input:checked) .framing-glyph { border-color: var(--accent); }
+
 .framing-row {
   display: flex;
   flex-wrap: wrap;
@@ -423,17 +501,20 @@ a.sr-only:focus-visible {
 .framing-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
+  gap: 7px;
+  padding: 7px 13px;
   border: 1px solid var(--border);
   border-radius: 999px;
   cursor: pointer;
   font-size: 14px;
+  white-space: nowrap;
 }
+
+.framing-chip:hover:not(:has(input:disabled)) { background: var(--surface-2); }
 
 .framing-chip:has(input:checked) {
   border-color: var(--accent);
-  background: color-mix(in oklch, var(--accent) 14%, transparent);
+  background: color-mix(in oklch, var(--accent) 16%, transparent);
 }
 
 .framing-chip:has(input:disabled) {
@@ -442,36 +523,76 @@ a.sr-only:focus-visible {
 }
 
 .framing-slider {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
   align-items: center;
-  gap: 10px;
-  margin-top: 10px;
+  gap: 12px;
+  margin-top: 12px;
 }
 
+/* Общая ширина подписи: иначе дорожки двух ползунков начинаются в разных
+   местах и блок выглядит собранным наспех. */
 .framing-slider label {
+  min-inline-size: 130px;
   font-size: 13px;
   color: var(--text-dim);
   white-space: nowrap;
 }
 
 .framing-slider input[type="range"] {
-  flex: 1;
   min-width: 0;
   accent-color: var(--accent);
 }
 
+/* Внутренний образец у input[type=color] Chrome рисует сам и по умолчанию
+   белым: без правил ниже видно белый прямоугольник вместо выбранного цвета. */
 .framing-slider input[type="color"] {
-  inline-size: 40px;
-  block-size: 28px;
-  padding: 0;
+  inline-size: 44px;
+  block-size: 30px;
+  padding: 3px;
   border: 1px solid var(--border);
   border-radius: var(--radius-inner);
-  background: none;
+  background: var(--surface-2);
+  cursor: pointer;
+}
+
+.framing-slider input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+
+.framing-slider input[type="color"]::-webkit-color-swatch {
+  border: 1px solid oklch(1 0 0 / 0.14);
+  border-radius: 4px;
+}
+
+.framing-slider input[type="color"]::-moz-color-swatch {
+  border: 1px solid oklch(1 0 0 / 0.14);
+  border-radius: 4px;
 }
 
 .framing-slider output {
-  min-width: 6ch;
+  min-inline-size: 8ch;
   text-align: end;
   font-size: 13px;
   color: var(--text-dim);
+}
+
+.framing-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
+
+/* Пояснение всегда отдельной строкой: рядом с кнопками оно то помещается,
+   то нет, и блок прыгает при каждом изменении настроек. */
+.framing-actions .status {
+  flex-basis: 100%;
+  min-width: 0;
+}
+
+/* На узком экране кадр уходит наверх: он важнее, чем ползунки. */
+@media (max-width: 700px) {
+  .framing { grid-template-columns: minmax(0, 1fr); }
+  .framing-preview { max-inline-size: 200px; }
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { api, type Framing, type FramingState } from "../api";
 
 type Props = {
@@ -19,6 +19,63 @@ const ANCHORS: { value: Framing["anchor"]; label: string }[] = [
 const PREVIEW_DELAY_MS = 350;
 
 const percent = (value: number) => `${Math.round(value * 100)}%`;
+
+/**
+ * Доля высоты кадра, которую займёт содержимое при заданной обрезке.
+ *
+ * Повторяет расчёт сервера, чтобы подпись у ползунка «Вручную» менялась
+ * сразу, а не после ответа. Округление до чётных сторон здесь опущено —
+ * на долю оно влияет меньше чем на 0.2%, а истина всё равно на сервере.
+ */
+function contentShare(
+  source: { width: number; height: number },
+  output: { width: number; height: number },
+  sideCrop: number,
+): number {
+  const keptWidth = source.width * (1 - sideCrop);
+  if (keptWidth <= 0) return 1;
+  return Math.min((output.width * source.height) / keptWidth / output.height, 1);
+}
+
+type OptionProps = {
+  label: string;
+  checked: boolean;
+  disabled: boolean;
+  contentShare: number;
+  sideCrop: number;
+  onChange: () => void;
+};
+
+/**
+ * Строка выбора обрезки.
+ *
+ * Миниатюра слева — тот же кадр 9:16, закрашенная полоса в ней равна доле
+ * содержимого. Компромисс между «видно больше» и «теряем края» виден
+ * раньше, чем прочитаны числа.
+ */
+function Option({ label, checked, disabled, contentShare, sideCrop, onChange }: OptionProps) {
+  return (
+    <label className="framing-option">
+      <input
+        type="radio"
+        name="framing-preset"
+        checked={checked}
+        disabled={disabled}
+        onChange={onChange}
+      />
+      <span
+        className="framing-glyph"
+        aria-hidden="true"
+        style={{ "--share": percent(contentShare) } as CSSProperties}
+      />
+      <span className="name">{label}</span>
+      <span className="figure tnum">
+        <span className="share">{percent(contentShare)}</span>
+        <span className="crop">срез {percent(sideCrop)}</span>
+      </span>
+    </label>
+  );
+}
 
 /**
  * Настройка вертикального кадра ([§61](BAZA.md#61)).
@@ -93,6 +150,7 @@ export function FramingPanel({ videoId, busy, onSaved }: Props) {
   // При custom доля обрезки задаётся вручную, иначе берётся у пресета.
   const sideCrop = draft.preset === "custom" ? draft.side_crop : (chosen?.side_crop ?? 0);
   const fullBleed = draft.preset === "custom" ? false : (chosen?.full_bleed ?? false);
+  const customShare = contentShare(state.source, state.output, draft.side_crop);
   const changed = JSON.stringify(draft) !== JSON.stringify(state.current);
 
   async function save() {
@@ -126,10 +184,10 @@ export function FramingPanel({ videoId, busy, onSaved }: Props) {
   return (
     <section className="card" aria-labelledby="framing-heading">
       <h2 id="framing-heading">Кадрирование</h2>
-      <p className="small dim" style={{ marginTop: -4 }}>
+      <p className="small dim framing-intro">
         Исходник {state.source.width}×{state.source.height} вписывается в{" "}
-        {state.output.width}×{state.output.height}. Чем больше отрезано по бокам, тем крупнее
-        содержимое и тем уже полосы сверху и снизу — это один параметр, а не два.
+        {state.output.width}×{state.output.height} по ширине. Чем больше отрезано по бокам,
+        тем крупнее содержимое и тем уже полосы — это один параметр, а не два.
       </p>
 
       {error && (
@@ -160,34 +218,25 @@ export function FramingPanel({ videoId, busy, onSaved }: Props) {
             <legend>Сколько видно</legend>
             <div className="framing-presets">
               {state.presets.map((preset) => (
-                <label key={preset.preset} className="framing-option">
-                  <input
-                    type="radio"
-                    name="framing-preset"
-                    value={preset.preset}
-                    checked={draft.preset === preset.preset}
-                    disabled={busy}
-                    onChange={() => update({ preset: preset.preset })}
-                  />
-                  <span className="grow">{preset.label}</span>
-                  <span className="small dim tnum">
-                    видно {percent(preset.content_share)} · срез {percent(preset.side_crop)}
-                  </span>
-                </label>
+                <Option
+                  key={preset.preset}
+                  label={preset.label}
+                  checked={draft.preset === preset.preset}
+                  disabled={busy}
+                  contentShare={preset.content_share}
+                  sideCrop={preset.side_crop}
+                  onChange={() => update({ preset: preset.preset })}
+                />
               ))}
 
-              <label className="framing-option">
-                <input
-                  type="radio"
-                  name="framing-preset"
-                  value="custom"
-                  checked={draft.preset === "custom"}
-                  disabled={busy}
-                  onChange={() => update({ preset: "custom", side_crop: sideCrop })}
-                />
-                <span className="grow">Вручную</span>
-                <span className="small dim tnum">срез {percent(draft.side_crop)}</span>
-              </label>
+              <Option
+                label="Вручную"
+                checked={draft.preset === "custom"}
+                disabled={busy}
+                contentShare={customShare}
+                sideCrop={draft.side_crop}
+                onChange={() => update({ preset: "custom", side_crop: sideCrop })}
+              />
             </div>
 
             {draft.preset === "custom" && (
@@ -301,17 +350,15 @@ export function FramingPanel({ videoId, busy, onSaved }: Props) {
             )}
           </fieldset>
 
-          <div className="row wrap">
+          <div className="framing-actions">
             <button className="primary" disabled={busy || saving || !changed} onClick={save}>
-              {saving ? "Сохранение…" : "Сохранить"}
+              {saving ? "Сохранение…" : "Сохранить и перерендерить"}
             </button>
             <button disabled={busy || saving || !state.custom} onClick={reset}>
               Вернуть как в конфиге
             </button>
-            <span className="small dim grow">
-              {changed
-                ? "Не сохранено. Ролики перерендерятся при следующем запуске."
-                : state.plan.summary}
+            <span className="small dim status">
+              {changed ? "Не сохранено — ролики пока со старой рамкой." : state.plan.summary}
             </span>
           </div>
         </div>

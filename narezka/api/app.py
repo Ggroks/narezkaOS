@@ -338,9 +338,9 @@ def short_media(
     return serve_file(paths.shorts / f"{index:02d}.mp4", range_header)
 
 
-#: Высота картинки предпросмотра. Хватает, чтобы оценить рамку и читаемость,
-#: но кодируется мгновенно.
-PREVIEW_HEIGHT = 640
+#: Высота картинки предпросмотра. С запасом под экраны с двойной плотностью:
+#: карточка в интерфейсе около 400 px, и кадр ровно в её размер выглядит мылом.
+PREVIEW_HEIGHT = 960
 
 
 class FramingPayload(FramingConfig):

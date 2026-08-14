@@ -16,10 +16,27 @@ stt:
   batch_size: 8
 
 llm:
-  provider: api          # api | local
-  model: null            # задаётся при подключении провайдера
+  provider: openrouter   # openrouter | local
+  # Имя модели меняется вместе с каталогом провайдера — актуальные бесплатные
+  # варианты показывает `narezka models`. Ключ берётся из OPENROUTER_API_KEY
+  # (файл .env, он в .gitignore).
+  #
+  # Выбрано под нашу задачу: разбор русского транскрипта с ответом по схеме.
+  # Gemma 4 31B — плотная модель Google с сильной многоязычностью, окном 262K
+  # и режимом рассуждения; отбор моментов это приоритет №1 (§53), поэтому
+  # качество суждения важнее скорости.
+  model: google/gemma-4-31b-it:free
+  # Куда переключиться, если основная исчезла или упёрлась в дневной лимит.
+  # У бесплатных моделей это норма, а не исключение.
+  # Namely: nemotron-3-super — 120B MoE с тем же окном; gemma-4-26b — быстрее
+  # при близком качестве.
+  fallback_models:
+    - nvidia/nemotron-3-super-120b-a12b:free
+    - google/gemma-4-26b-a4b-it:free
   batch_mode: true       # пакетная обработка кандидатов — вдвое дешевле (§25)
   cache_prefix: true     # общий префикс промпта в кэше (§25)
+  timeout_seconds: 120
+  max_retries: 3
 
 detector:
   backend: mediapipe     # mediapipe | yolox | ultralytics — выбор после сравнения (§17)

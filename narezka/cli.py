@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+from dotenv import load_dotenv
 from rich.console import Console
 from rich.table import Table
 
@@ -97,6 +98,9 @@ def _place_source(src: Path, dst: Path) -> str:
 @app.callback()
 def main(verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Подробный лог")] = False) -> None:
     setup_logging("DEBUG" if verbose else "INFO")
+    # Ключи читаются из .env до всего остального: без них часть команд
+    # просто не сможет ничего сделать, и узнать об этом лучше сразу.
+    load_dotenv(Path(".env"), override=False)
     for note in env.normalize_proxy_env():
         get_logger().debug("прокси — %s", note)
 
@@ -360,6 +364,82 @@ def framing(
     )
     if not Artifact(ctx.paths.framing).exists():
         console.print("[dim]Настройки берутся из конфига — вручную для этого видео не заданы.[/dim]")
+
+
+@app.command()
+def models(
+    check: Annotated[bool, typer.Option("--check", help="Пробный запрос выбранной моделью")] = False,
+    all_models: Annotated[bool, typer.Option("--all", help="Показать и платные тоже")] = False,
+    limit: Annotated[int, typer.Option("--limit", help="Сколько строк показать")] = 15,
+    config_path: Annotated[Path | None, typer.Option("--config")] = None,
+) -> None:
+    """Модели у провайдера: какие доступны и работает ли ключ.
+
+    Список бесплатных моделей меняется — они появляются, исчезают
+    и переименовываются. Поэтому имя модели живёт в конфиге, а актуальные
+    варианты смотрят этой командой, а не по памяти.
+    """
+    from narezka.core import llm  # noqa: PLC0415
+
+    config = load_config(config_path)
+    key = llm.api_key()
+
+    if check:
+        if not key:
+            console.print(
+                f"[red]Нет ключа.[/red] Положите его в .env как "
+                f"[bold]{llm.API_KEY_ENV}[/bold] — образец в .env.example."
+            )
+            raise typer.Exit(1)
+        if not config.llm.model:
+            console.print("[red]В конфиге не выбрана модель[/red] (llm.model). "
+                          "Посмотрите варианты: narezka models")
+            raise typer.Exit(1)
+        try:
+            result = llm.check_key(key, config.llm.model, timeout=config.llm.timeout_seconds)
+        except llm.LlmError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(1) from None
+        console.print(f"[green]Работает.[/green] Модель [bold]{result['model']}[/bold] ответила: "
+                      f"«{result['reply']}»")
+        if result["usage"]:
+            console.print(f"[dim]токенов: {result['usage']}[/dim]")
+        return
+
+    try:
+        available = llm.fetch_models(key)
+    except llm.LlmError as exc:
+        console.print(f"[red]{exc}[/red]")
+        console.print("[dim]Если сеть за прокси — проверьте ALL_PROXY и HTTPS_PROXY.[/dim]")
+        raise typer.Exit(1) from None
+
+    shown = available if all_models else llm.rank_free(available)
+    table = Table(title="Бесплатные модели OpenRouter" if not all_models else "Модели OpenRouter")
+    table.add_column("")
+    table.add_column("Модель", style="bold")
+    table.add_column("Контекст", justify="right")
+    table.add_column("Ответ по схеме")
+    table.add_column("Инструменты")
+
+    for model in shown[:limit]:
+        chosen = model.id == config.llm.model
+        table.add_row(
+            "→" if chosen else "",
+            model.id,
+            f"{model.context_length // 1000}K" if model.context_length else "?",
+            "[green]да[/green]" if model.structured else "[yellow]нет[/yellow]",
+            "да" if model.tools else "нет",
+        )
+    console.print(table)
+    console.print(
+        f"[dim]Всего моделей {len(available)}, из них бесплатных "
+        f"{sum(1 for m in available if m.is_free)}. "
+        f"Порядок: сначала те, что умеют отвечать по схеме JSON.[/dim]"
+    )
+    if not key:
+        console.print(f"[yellow]Ключа нет.[/yellow] Положите его в .env как {llm.API_KEY_ENV}.")
+    if not config.llm.model:
+        console.print("[yellow]Модель не выбрана.[/yellow] Впишите её в configs/config.yaml → llm.model")
 
 
 @app.command()

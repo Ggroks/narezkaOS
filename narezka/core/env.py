@@ -136,6 +136,20 @@ def run_checks(storage_root: Path, device_setting: str = "auto") -> tuple[list[C
         )
     )
 
+    # Ключ LLM — не критично: без него пайплайн доходит до готовых роликов,
+    # не работает только отбор моделью (§43, мягкая деградация).
+    from narezka.core import llm  # noqa: PLC0415 — тянет httpx
+
+    has_key = llm.api_key() is not None
+    checks.append(
+        Check(
+            "ключ LLM",
+            has_key,
+            "задан" if has_key else f"нет {llm.API_KEY_ENV} — стадии llm_select и metadata пропустятся",
+            critical=False,
+        )
+    )
+
     device: DeviceInfo | None = None
     try:
         device = detect_device(device_setting)

@@ -46,10 +46,18 @@ class SttConfig(BaseModel):
 
 
 class LlmConfig(BaseModel):
-    provider: str = "api"
+    provider: str = "openrouter"
+    #: Имя модели живёт в конфиге, а не в коде: список бесплатных моделей
+    #: у провайдера меняется, и захардкоженное имя протухает (§49).
+    #: Актуальные варианты показывает `narezka models`.
     model: str | None = None
+    #: Куда переключаться, если основная модель исчезла или упёрлась в лимит.
+    #: У бесплатных моделей это обычное дело, а не исключение.
+    fallback_models: list[str] = Field(default_factory=list)
     batch_mode: bool = True
     cache_prefix: bool = True
+    timeout_seconds: float = Field(default=120.0, gt=0)
+    max_retries: int = Field(default=3, ge=0)
 
 
 class DetectorConfig(BaseModel):

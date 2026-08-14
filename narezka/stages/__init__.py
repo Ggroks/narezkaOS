@@ -10,6 +10,7 @@ from narezka.core.stage import Stage
 from narezka.stages.candidates import CandidatesStage
 from narezka.stages.download import DownloadStage
 from narezka.stages.extract_audio import ExtractAudioStage
+from narezka.stages.llm_select import LlmSelectStage
 from narezka.stages.probe import ProbeStage
 from narezka.stages.render import RenderStage
 from narezka.stages.subtitles import SubtitlesStage
@@ -22,6 +23,7 @@ PIPELINE: list[Stage] = [
     ExtractAudioStage(),
     TranscribeStage(),
     CandidatesStage(),
+    LlmSelectStage(),
     SubtitlesStage(),
     RenderStage(),
 ]

@@ -14,6 +14,7 @@ OpenRouter выбран потому, что говорит на протоко�
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -41,6 +42,21 @@ MEDIA_OUTPUTS = frozenset({"audio", "image", "video"})
 
 class LlmError(RuntimeError):
     """Провайдер недоступен или ответил отказом."""
+
+
+class RateLimited(LlmError):
+    """Модель занята. Отдельный класс: это временно и лечится ожиданием
+    или переходом на другую модель, а не правкой запроса."""
+
+
+#: Коды, при которых имеет смысл повторить попытку. 429 у бесплатных моделей
+#: означает не исчерпанную квоту ключа, а занятость общего пула провайдера.
+RETRIABLE = frozenset({408, 429, 500, 502, 503, 504})
+
+#: Пауза перед повтором удваивается, начиная с этого значения. Держится
+#: небольшой намеренно: когда занят общий пул провайдера, перейти к другой
+#: модели быстрее, чем досидеть очередь к этой.
+RETRY_BASE_DELAY = 2.0
 
 
 @dataclass(frozen=True)
@@ -165,44 +181,115 @@ def fetch_models(key: str | None = None, timeout: float = 30.0) -> list[ModelInf
         raise LlmError(f"каталог моделей вернул не JSON: {exc}") from exc
 
 
-def check_key(key: str, model: str, timeout: float = 60.0) -> dict[str, Any]:
-    """Пробный запрос: работает ли ключ и отвечает ли выбранная модель.
+def _post_once(client: httpx.Client, model: str, payload: dict[str, Any]) -> dict[str, Any]:
+    try:
+        response = client.post("/chat/completions", json={**payload, "model": model})
+    except httpx.HTTPError as exc:
+        raise LlmError(f"запрос не прошёл: {exc}") from exc
+
+    if response.status_code == 200:
+        return response.json()
+
+    detail = f"{model}: {_error_text(response)}"
+    if response.status_code in RETRIABLE:
+        raise RateLimited(detail)
+    raise LlmError(detail)
+
+
+def chat(
+    key: str,
+    models: list[str],
+    payload: dict[str, Any],
+    *,
+    timeout: float = 120.0,
+    max_retries: int = 3,
+    on_attempt: Any = None,
+) -> dict[str, Any]:
+    """Запрос к модели с повторами и переходом на запасные.
+
+    У бесплатных моделей отказ по занятости — обычное состояние, а не сбой:
+    пул делится между всеми пользователями провайдера. Поэтому сначала
+    ждём и повторяем, а исчерпав попытки, берём следующую модель из списка.
+
+    Возвращает ответ провайдера. Какая модель на самом деле ответила, видно
+    в поле `model` — записывать нужно именно её (§63), а не ту, что просили.
+    """
+    if not models:
+        raise LlmError("не задано ни одной модели")
+
+    failures: list[str] = []
+    with _client(key, timeout) as client:
+        for model in models:
+            for attempt in range(max_retries + 1):
+                try:
+                    if on_attempt:
+                        on_attempt(model, attempt)
+                    return _post_once(client, model, payload)
+                except RateLimited as exc:
+                    failures.append(str(exc))
+                    if attempt < max_retries:
+                        time.sleep(RETRY_BASE_DELAY * (2**attempt))
+                except LlmError as exc:
+                    # Не временная ошибка — повторять бессмысленно,
+                    # сразу к следующей модели.
+                    failures.append(str(exc))
+                    break
+
+    raise LlmError("ни одна модель не ответила:\n  " + "\n  ".join(dict.fromkeys(failures)))
+
+
+def check_key(
+    key: str,
+    models: list[str],
+    timeout: float = 60.0,
+    max_retries: int = 2,
+    on_attempt: Any = None,
+) -> dict[str, Any]:
+    """Пробный запрос: работает ли ключ и отвечает ли хоть одна модель.
 
     Проверять до запуска стадии дешевле, чем узнать об отказе на середине
     восьмичасового прогона.
     """
-    try:
-        with _client(key, timeout) as client:
-            response = client.post(
-                "/chat/completions",
-                json={
-                    "model": model,
-                    "messages": [{"role": "user", "content": "Ответь одним словом: работает"}],
-                    "max_tokens": 16,
-                },
-            )
-    except httpx.HTTPError as exc:
-        raise LlmError(f"запрос не прошёл: {exc}") from exc
-
-    if response.status_code != 200:
-        raise LlmError(f"провайдер вернул {response.status_code}: {_error_text(response)}")
-
-    data = response.json()
+    data = chat(
+        key,
+        models,
+        {
+            "messages": [{"role": "user", "content": "Ответь одним словом: работает"}],
+            "max_tokens": 16,
+        },
+        timeout=timeout,
+        max_retries=max_retries,
+        on_attempt=on_attempt,
+    )
     choices = data.get("choices") or []
     text = choices[0].get("message", {}).get("content", "") if choices else ""
     return {
-        "model": data.get("model", model),
+        "model": data.get("model") or models[0],
         "reply": (text or "").strip(),
         "usage": data.get("usage") or {},
     }
 
 
 def _error_text(response: httpx.Response) -> str:
+    """Человекочитаемая причина отказа.
+
+    Поле `message` у OpenRouter обычно бесполезно («Provider returned
+    error»), а настоящее объяснение лежит в `metadata.raw` — например,
+    что модель занята в общем пуле провайдера. Без него ошибка выглядит
+    как поломка ключа, хотя ключ в порядке.
+    """
     try:
         body = response.json()
     except ValueError:
-        return response.text[:200]
+        return response.text[:300]
+
     error = body.get("error")
-    if isinstance(error, dict):
-        return str(error.get("message") or error)
-    return str(error or body)[:200]
+    if not isinstance(error, dict):
+        return str(error or body)[:300]
+
+    metadata = error.get("metadata") or {}
+    parts = [str(metadata.get("raw") or error.get("message") or "отказ без объяснения")]
+    provider = metadata.get("provider_name")
+    if provider:
+        parts.append(f"провайдер: {provider}")
+    return " · ".join(parts)[:400]

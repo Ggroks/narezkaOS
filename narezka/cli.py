@@ -395,15 +395,41 @@ def models(
             console.print("[red]В конфиге не выбрана модель[/red] (llm.model). "
                           "Посмотрите варианты: narezka models")
             raise typer.Exit(1)
+
+        chain = [config.llm.model, *config.llm.fallback_models]
+
+        def report(model: str, attempt: int) -> None:
+            suffix = f" (попытка {attempt + 1})" if attempt else ""
+            console.print(f"[dim]пробую {model}{suffix}…[/dim]")
+
         try:
-            result = llm.check_key(key, config.llm.model, timeout=config.llm.timeout_seconds)
+            result = llm.check_key(
+                key, chain, timeout=config.llm.timeout_seconds, on_attempt=report
+            )
         except llm.LlmError as exc:
             console.print(f"[red]{exc}[/red]")
+            console.print(
+                "\n[dim]429 у бесплатной модели — это занятость общего пула провайдера,\n"
+                "а не проблема с ключом. Помогает подождать, взять другую модель\n"
+                "(narezka models) или подключить свой ключ провайдера в настройках\n"
+                "OpenRouter: https://openrouter.ai/settings/integrations[/dim]"
+            )
             raise typer.Exit(1) from None
-        console.print(f"[green]Работает.[/green] Модель [bold]{result['model']}[/bold] ответила: "
+
+        console.print(f"[green]Работает.[/green] Ответила [bold]{result['model']}[/bold]: "
                       f"«{result['reply']}»")
-        if result["usage"]:
-            console.print(f"[dim]токенов: {result['usage']}[/dim]")
+        if result["model"] != config.llm.model:
+            console.print(
+                f"[yellow]Основная модель {config.llm.model} не ответила — сработала запасная.[/yellow]"
+            )
+        usage = result["usage"]
+        if usage:
+            # Показываем только счётчики: полный словарь провайдера занимает
+            # пять строк и ничего не добавляет.
+            console.print(
+                f"[dim]токенов: {usage.get('prompt_tokens', '?')} на запрос, "
+                f"{usage.get('completion_tokens', '?')} в ответе[/dim]"
+            )
         return
 
     try:

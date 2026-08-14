@@ -57,7 +57,9 @@ class LlmConfig(BaseModel):
     batch_mode: bool = True
     cache_prefix: bool = True
     timeout_seconds: float = Field(default=120.0, gt=0)
-    max_retries: int = Field(default=3, ge=0)
+    #: Повторов на модель до перехода к запасной. Немного намеренно: при
+    #: занятом общем пуле смена модели быстрее, чем ожидание очереди.
+    max_retries: int = Field(default=2, ge=0)
 
 
 class DetectorConfig(BaseModel):

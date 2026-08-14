@@ -183,3 +183,121 @@ def test_blank_key_is_treated_as_absent() -> None:
     как «ключа нет», а не как ключ из пробелов."""
     assert llm.api_key({llm.API_KEY_ENV: "   "}) is None
     assert llm.api_key({}) is None
+
+
+# --- повторы и переход на запасные ----------------------------------------
+
+
+class FakeResponse:
+    def __init__(self, status: int, payload: dict) -> None:
+        self.status_code = status
+        self._payload = payload
+        self.text = str(payload)
+
+    def json(self) -> dict:
+        return self._payload
+
+
+class FakeClient:
+    """Подменяет httpx: последовательность ответов задаётся заранее."""
+
+    def __init__(self, responses: dict[str, list[FakeResponse]]) -> None:
+        self.responses = responses
+        self.calls: list[str] = []
+
+    def post(self, _path: str, json: dict) -> FakeResponse:
+        model = json["model"]
+        self.calls.append(model)
+        queue = self.responses.get(model)
+        if not queue:
+            return FakeResponse(404, {"error": {"message": "нет такой модели"}})
+        return queue.pop(0) if len(queue) > 1 else queue[0]
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return False
+
+
+def ok(model: str) -> FakeResponse:
+    return FakeResponse(200, {"model": model, "choices": [{"message": {"content": "работает"}}]})
+
+
+def busy(model: str) -> FakeResponse:
+    return FakeResponse(
+        429,
+        {
+            "error": {
+                "message": "Provider returned error",
+                "metadata": {
+                    "raw": f"{model} is temporarily rate-limited upstream.",
+                    "provider_name": "Google AI Studio",
+                },
+            }
+        },
+    )
+
+
+def run_chat(monkeypatch, responses, models, **kwargs):
+    client = FakeClient(responses)
+    monkeypatch.setattr(llm, "_client", lambda *_a, **_k: client)
+    monkeypatch.setattr(llm.time, "sleep", lambda _s: None)
+    return client, llm.chat("k", models, {"messages": []}, **kwargs)
+
+
+def test_busy_model_is_retried(monkeypatch) -> None:
+    """429 у бесплатной модели — занятость общего пула, а не отказ навсегда."""
+    responses = {"a": [busy("a"), busy("a"), ok("a")]}
+    client, result = run_chat(monkeypatch, responses, ["a"], max_retries=2)
+    assert result["model"] == "a"
+    assert client.calls == ["a", "a", "a"]
+
+
+def test_falls_back_to_the_next_model(monkeypatch) -> None:
+    responses = {"a": [busy("a")], "b": [ok("b")]}
+    client, result = run_chat(monkeypatch, responses, ["a", "b"], max_retries=1)
+    assert result["model"] == "b"
+    assert client.calls == ["a", "a", "b"]
+
+
+def test_permanent_error_skips_retries(monkeypatch) -> None:
+    """404 «нет доступа» повтором не лечится — время тратить незачем."""
+    responses = {"a": [FakeResponse(404, {"error": {"message": "нет доступа"}})], "b": [ok("b")]}
+    client, result = run_chat(monkeypatch, responses, ["a", "b"], max_retries=3)
+    assert result["model"] == "b"
+    assert client.calls == ["a", "b"]
+
+
+def test_all_models_failing_reports_every_reason(monkeypatch) -> None:
+    """Сообщение должно объяснять, что произошло с каждой моделью:
+    иначе «не работает» неотличимо от «занято»."""
+    import pytest
+
+    responses = {"a": [busy("a")], "b": [busy("b")]}
+    client = FakeClient(responses)
+    monkeypatch.setattr(llm, "_client", lambda *_a, **_k: client)
+    monkeypatch.setattr(llm.time, "sleep", lambda _s: None)
+
+    with pytest.raises(llm.LlmError) as exc:
+        llm.chat("k", ["a", "b"], {"messages": []}, max_retries=0)
+
+    assert "rate-limited" in str(exc.value)
+    assert "a" in str(exc.value) and "b" in str(exc.value)
+
+
+def test_empty_model_list_is_rejected() -> None:
+    import pytest
+
+    with pytest.raises(llm.LlmError):
+        llm.chat("k", [], {"messages": []})
+
+
+def test_error_text_prefers_the_real_reason() -> None:
+    """У OpenRouter в `message` лежит бесполезное «Provider returned error»,
+    а настоящая причина — в metadata.raw. Без неё занятость пула выглядит
+    как поломка ключа."""
+    text = llm._error_text(busy("gemma"))
+    assert "rate-limited" in text
+    assert "Google AI Studio" in text
+    assert "Provider returned error" not in text

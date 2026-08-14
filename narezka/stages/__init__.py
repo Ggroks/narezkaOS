@@ -11,6 +11,7 @@ from narezka.stages.candidates import CandidatesStage
 from narezka.stages.download import DownloadStage
 from narezka.stages.extract_audio import ExtractAudioStage
 from narezka.stages.llm_select import LlmSelectStage
+from narezka.stages.metadata import MetadataStage
 from narezka.stages.probe import ProbeStage
 from narezka.stages.render import RenderStage
 from narezka.stages.subtitles import SubtitlesStage
@@ -26,6 +27,7 @@ PIPELINE: list[Stage] = [
     LlmSelectStage(),
     SubtitlesStage(),
     RenderStage(),
+    MetadataStage(),
 ]
 
 REGISTRY: dict[str, Stage] = {stage.name: stage for stage in PIPELINE}

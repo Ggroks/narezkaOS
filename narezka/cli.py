@@ -541,10 +541,28 @@ def serve(
     port: Annotated[int, typer.Option("--port")] = 8000,
     reload: Annotated[bool, typer.Option("--reload", help="Перезапуск при правке кода")] = False,
 ) -> None:
-    """Поднять API для веб-интерфейса."""
+    """Поднять сайт: интерфейс и API на одном адресе.
+
+    Если фронтенд собран, он отдаётся отсюда же — одной команды достаточно.
+    Пока не собран, поднимается только API, а рядом печатается, что сделать.
+    """
     import uvicorn  # noqa: PLC0415
 
-    console.print(f"API: [bold]http://{host}:{port}[/bold]  ·  документация: /docs")
+    from narezka.api.app import mount_frontend  # noqa: PLC0415
+
+    address = f"http://{host}:{port}"
+    if mount_frontend():
+        console.print(f"Сайт: [bold]{address}[/bold]  ·  API там же, документация: {address}/docs")
+    else:
+        console.print(f"API: [bold]{address}[/bold]  ·  документация: {address}/docs")
+        console.print(
+            "[yellow]Интерфейс не собран.[/yellow] Соберите один раз — "
+            "[bold]cd frontend && npm install && npm run build[/bold] — "
+            "и он будет открываться по тому же адресу.\n"
+            "[dim]Для разработки фронтенда: cd frontend && npm run dev (порт 5173, "
+            "правки видны сразу).[/dim]"
+        )
+
     uvicorn.run("narezka.api.app:app", host=host, port=port, reload=reload, log_level="warning")
 
 

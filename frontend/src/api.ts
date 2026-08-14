@@ -79,12 +79,18 @@ export type ShortFile = {
   end: number;
   duration: number;
   size_bytes: number;
+  interest_score?: number | null;
+  rank?: number | null;
+  clip_type?: string | null;
+  explanation?: string | null;
 };
 
 export type ShortsIndex = {
   width: number;
   height: number;
   background: "blur" | "solid" | "sharp" | "none";
+  /** Откуда взяты клипы: отбор моделью или сырые кандидаты. */
+  source?: "selection" | "candidates" | "none";
   framing: (Framing & { content_share: number; lost_share: number; summary: string }) | null;
   files: ShortFile[];
 };
@@ -121,6 +127,10 @@ export type FramingState = {
 
 export type Verdict = "accept" | "reject";
 
+export type ClipType =
+  | "hook" | "emotional_peak" | "revelation" | "conflict" | "victory"
+  | "failure" | "quotable" | "story" | "practical" | "other" | "unknown";
+
 export type ReviewClip = {
   index: number;
   start: number;
@@ -135,6 +145,35 @@ export type ReviewClip = {
   /** Границы, предложенные автоматикой, — до правок человеком. */
   original?: { start: number; end: number };
   edited: boolean;
+  /** Ниже — от стадии llm_select; отсутствует, если она не выполнялась. */
+  selected: boolean;
+  interest_score?: number | null;
+  rank?: number | null;
+  clip_type?: ClipType;
+  explanation?: string;
+  /** null означает «не измерено», а не «ноль» — см. §54. */
+  factors?: Record<string, number | null>;
+  penalties?: Record<string, number | null>;
+};
+
+export type PublishEntry = {
+  index: number;
+  clip_id: string | null;
+  start: number;
+  end: number;
+  title: string;
+  title_variants: { title: string; problems: string[] }[];
+  description: string;
+  hashtags: string[];
+  /** Описание вместе с хэштегами — то, что копируют в поле публикации. */
+  ready: string;
+};
+
+export type PublishTexts = {
+  video_id: string;
+  models: string[];
+  clips: PublishEntry[];
+  stats: { clips: number; written: number; titles_rejected: number };
 };
 
 export type ReviewStats = {
@@ -143,6 +182,8 @@ export type ReviewStats = {
   rejected: number;
   undecided: number;
   edited: number;
+  /** Сколько клипов оценила модель. Ноль — стадия llm_select не выполнялась. */
+  scored: number;
 };
 
 export type Review = { video_id: string; clips: ReviewClip[]; stats: ReviewStats };
@@ -189,6 +230,7 @@ export const api = {
     }),
   mediaUrl: (id: string) => `/api/videos/${id}/media`,
   review: (id: string) => request<Review>(`/api/videos/${id}/review`),
+  publish: (id: string) => request<PublishTexts>(`/api/videos/${id}/publish`),
   setReview: (id: string, index: number, payload: { verdict?: Verdict; start?: number; end?: number }) =>
     request<Review>(`/api/videos/${id}/review/${index}`, {
       method: "PUT",

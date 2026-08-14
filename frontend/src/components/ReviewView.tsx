@@ -1,7 +1,39 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, formatDuration, type Review, type ReviewClip, type Verdict } from "../api";
+import { api, formatDuration, type ClipType, type Review, type ReviewClip, type Verdict } from "../api";
+
+const CLIP_TYPE_LABEL: Record<ClipType, string> = {
+  hook: "цепляет",
+  emotional_peak: "эмоция",
+  revelation: "неожиданность",
+  conflict: "конфликт",
+  victory: "победа",
+  failure: "провал",
+  quotable: "цитата",
+  story: "история",
+  practical: "польза",
+  other: "прочее",
+  unknown: "без типа",
+};
+
+/** Оценка красится по смыслу, а не градиентом: три ступени читаются быстрее. */
+function scoreClass(score: number | null | undefined): string {
+  if (score == null) return "";
+  if (score >= 0.6) return " good";
+  if (score >= 0.35) return " fair";
+  return " weak";
+}
 
 type Props = { videoId: string; durationSeconds: number | null };
+
+const FACTOR_LABEL: Record<string, string> = {
+  semantic: "смысл",
+  emotion: "эмоция",
+  audio: "звук",
+  context: "контекст",
+  completeness: "законченность",
+  novelty: "новизна",
+  visual: "картинка",
+};
 
 /** На сколько отматывают J и L. Пять секунд — шаг, на котором ещё виден контекст. */
 const SEEK_STEP = 5;
@@ -223,6 +255,9 @@ export function ReviewView({ videoId, durationSeconds }: Props) {
           {stats.accepted} годится · {stats.rejected} нет · {stats.undecided} без оценки
           {stats.edited > 0 && ` · ${stats.edited} с правкой границ`}
         </span>
+        {stats.scored === 0 && (
+          <span className="badge warn">модель не оценивала — запустите llm_select</span>
+        )}
       </div>
 
       {error && (
@@ -296,6 +331,33 @@ export function ReviewView({ videoId, durationSeconds }: Props) {
               )}
             </div>
 
+            {clip.interest_score != null && (
+              <div className="review-verdict-model">
+                <span className={`review-score${scoreClass(clip.interest_score)}`}>
+                  {clip.interest_score.toFixed(2)}
+                </span>
+                <span className="grow">
+                  <span className="small dim">
+                    оценка модели · ранг {clip.rank} ·{" "}
+                    {CLIP_TYPE_LABEL[clip.clip_type ?? "unknown"]}
+                  </span>
+                  {clip.explanation && <p className="review-explanation">{clip.explanation}</p>}
+                </span>
+              </div>
+            )}
+
+            {clip.factors && (
+              <dl className="review-factors small">
+                {Object.entries(clip.factors).map(([name, value]) => (
+                  <div key={name} className={value == null ? "unmeasured" : ""}>
+                    <dt>{FACTOR_LABEL[name] ?? name}</dt>
+                    {/* null — «не измеряли», и это не то же самое, что ноль (§54). */}
+                    <dd className="tnum">{value == null ? "не измерено" : value.toFixed(2)}</dd>
+                  </div>
+                ))}
+              </dl>
+            )}
+
             {clip.text && <p className="review-text small">{clip.text}</p>}
           </>
         )}
@@ -325,10 +387,20 @@ export function ReviewView({ videoId, durationSeconds }: Props) {
                   <span className="small dim tnum">{item.duration.toFixed(0)} с</span>
                 </span>
                 <span className="small dim tnum">
-                  score {item.provisional_score?.toFixed(2) ?? "—"}
-                  {item.signals?.words_per_second != null &&
-                    ` · ${item.signals.words_per_second.toFixed(1)} слов/с`}
+                  {item.interest_score != null ? (
+                    <>
+                      <b className={`review-score-inline${scoreClass(item.interest_score)}`}>
+                        {item.interest_score.toFixed(2)}
+                      </b>{" "}
+                      · ранг {item.rank} · {CLIP_TYPE_LABEL[item.clip_type ?? "unknown"]}
+                    </>
+                  ) : (
+                    <>сигнал {item.provisional_score?.toFixed(2) ?? "—"}</>
+                  )}
                 </span>
+                {item.explanation && (
+                  <span className="small dim review-card-why">{item.explanation}</span>
+                )}
                 <span className="review-badges">
                   {item.verdict === "accept" && <span className="badge ok">годится</span>}
                   {item.verdict === "reject" && <span className="badge bad">не годится</span>}

@@ -162,3 +162,88 @@ def build_user_message(blocks: list[str]) -> str:
         "Оцени фрагменты ниже. Для каждого верни его номер, уточнённые границы "
         "в секундах, тип, факторы, штрафы и объяснение.\n\n" + "\n\n".join(blocks)
     )
+
+
+# --- тексты для публикации (§22, §23, §24) ---------------------------------
+
+METADATA_SYSTEM_PROMPT = """\
+Ты готовишь тексты для публикации короткого вертикального ролика, \
+нарезанного из записи стрима.
+
+Для каждого фрагмента дай:
+
+1. titles — три варианта заголовка, от лучшего к худшему. Каждый до 60 \
+символов. Заголовок обязан соответствовать содержанию: обещать в нём то, \
+чего в ролике нет, запрещено. Не пиши капслоком, не используй «шок», \
+«ты не поверишь», «что было дальше» и подобные приёмы завлечения — \
+такие варианты будут отброшены.
+
+2. description — описание в два-три предложения: что происходит и почему \
+это стоит посмотреть. Без ссылок и без призывов подписаться.
+
+3. hashtags — от трёх до восьми хэштегов по содержанию, без решётки. \
+Только осмысленные, описывающие тему. Накрутка охвата вроде «рекомендации», \
+«fyp», «подпишись» запрещена.
+
+Отвечай на русском языке.\
+"""
+
+
+def metadata_schema() -> dict[str, Any]:
+    """Схема ответа для стадии metadata."""
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "clip_metadata",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["clips"],
+                "properties": {
+                    "clips": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "required": ["index", "titles", "description", "hashtags"],
+                            "properties": {
+                                "index": {"type": "integer"},
+                                "titles": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "minItems": 1,
+                                    "maxItems": 5,
+                                },
+                                "description": {"type": "string"},
+                                "hashtags": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "maxItems": 12,
+                                },
+                            },
+                        },
+                    }
+                },
+            },
+        },
+    }
+
+
+def render_clip_for_metadata(clip: dict[str, Any], lines: list[dict[str, Any]]) -> str:
+    """Фрагмент для генерации текстов.
+
+    Кроме реплик передаётся объяснение от стадии отбора: оно уже содержит
+    суть момента, и без него модель заново выводит её из сырого текста.
+    """
+    header = (
+        f"### Фрагмент {clip['index']}\n"
+        f"Длительность: {clip['end'] - clip['start']:.0f} с"
+    )
+    if clip.get("explanation"):
+        header += f"\nЧем интересен: {clip['explanation']}"
+    if clip.get("clip_type"):
+        header += f"\nТип: {clip['clip_type']}"
+
+    body = "\n".join(line["text"] for line in lines if line.get("text"))
+    return f"{header}\nРечь:\n{body}" if body else f"{header}\n(речи не распознано)"

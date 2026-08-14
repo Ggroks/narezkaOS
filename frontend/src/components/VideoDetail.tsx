@@ -9,6 +9,7 @@ import {
   type VideoDetail as Detail,
 } from "../api";
 import { FramingPanel } from "./FramingPanel";
+import { PublishView } from "./PublishView";
 import { ReviewView } from "./ReviewView";
 import { ShortsView } from "./ShortsView";
 import { TranscriptView } from "./TranscriptView";
@@ -233,6 +234,8 @@ export function VideoDetail({ videoId, onBack }: Props) {
       )}
 
       {shorts && shorts.files.length > 0 && <ShortsView videoId={videoId} shorts={shorts} />}
+
+      <PublishView videoId={videoId} />
 
       {transcript && (
         <TranscriptView transcript={transcript} onSeek={seek} currentTime={currentTime} />

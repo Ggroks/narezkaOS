@@ -28,6 +28,9 @@ export function ShortsView({ videoId, shorts }: Props) {
         {/* С какими настройками рамки это отрендерено: после правки видно,
             относится показанное к новым настройкам или ещё к старым. */}
         {shorts.framing && <span>{shorts.framing.summary}</span>}
+        {shorts.source === "candidates" && (
+          <span className="badge warn">без отбора моделью</span>
+        )}
       </div>
 
       <div className="shorts-grid">
@@ -40,6 +43,12 @@ export function ShortsView({ videoId, shorts }: Props) {
               src={`/api/videos/${videoId}/shorts/${file.index}/media`}
             />
             <figcaption className="small dim">
+              {file.interest_score != null && (
+                <span title={file.explanation ?? undefined}>
+                  оценка <b className="tnum">{file.interest_score.toFixed(2)}</b>
+                  {file.rank != null && ` · ранг ${file.rank}`}
+                </span>
+              )}
               <span>
                 {formatDuration(file.start)} → {formatDuration(file.end)}
               </span>

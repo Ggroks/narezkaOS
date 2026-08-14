@@ -714,3 +714,116 @@ kbd {
   color: var(--text);
   white-space: nowrap;
 }
+
+/* --- оценка модели --------------------------------------------------------
+   Три ступени цвета вместо градиента: «хорошо / средне / слабо» читается
+   быстрее, чем оттенок, и не требует сверяться со шкалой. */
+
+.review-score {
+  flex: none;
+  min-inline-size: 3.2em;
+  padding: 6px 10px;
+  border-radius: var(--radius-inner);
+  font-size: 20px;
+  font-weight: 600;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+
+.review-score.good { color: var(--ok); border-color: #2f7a58; }
+.review-score.fair { color: var(--warn); border-color: #7a6330; }
+.review-score.weak { color: var(--bad); border-color: #7a4038; }
+
+.review-score-inline.good { color: var(--ok); }
+.review-score-inline.fair { color: var(--warn); }
+.review-score-inline.weak { color: var(--bad); }
+
+.review-verdict-model {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin-block-start: 14px;
+}
+
+.review-explanation {
+  margin: 2px 0 0;
+  max-inline-size: 70ch;
+}
+
+.review-factors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin: 12px 0 0;
+  padding-block-start: 10px;
+  border-block-start: 1px solid var(--border);
+}
+
+.review-factors > div { display: flex; gap: 6px; align-items: baseline; }
+.review-factors dt { color: var(--text-dim); margin: 0; }
+.review-factors dd { margin: 0; }
+
+/* Неизмеренное показывается явно: «не измерено» и «ноль» — разные вещи,
+   и подменять одно другим значит выдавать пробел за результат (§54). */
+.review-factors .unmeasured dd { color: var(--text-dim); font-style: italic; }
+
+.review-card-why {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* --- тексты для публикации ------------------------------------------------
+   Экран нужен для одного действия: скопировать и вставить. */
+
+.publish-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 12px;
+}
+
+.publish-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-inner);
+  min-inline-size: 0;
+}
+
+.publish-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.publish-title {
+  flex: 1;
+  min-inline-size: 0;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.publish-description {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 14px;
+  max-inline-size: 60ch;
+}
+
+.publish-tags {
+  margin: 0;
+  color: var(--accent);
+  word-break: break-word;
+}
+
+.publish-rejected { margin-block-start: 2px; }
+.publish-rejected summary { cursor: pointer; }
+.publish-rejected ul { margin: 6px 0 0; padding-inline-start: 18px; }

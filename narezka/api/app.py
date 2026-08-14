@@ -16,6 +16,7 @@ from typing import Annotated, Any, Literal
 from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from narezka.api import jobs
@@ -33,7 +34,7 @@ from narezka.core.framing import (
     preview_presets,
 )
 from narezka.core.media import find_source, run_tool
-from narezka.core import review
+from narezka.core import publish, review
 from narezka.core.paths import list_videos, video_paths
 from narezka.core.runner import run_pipeline, run_stage
 from narezka.core.stage import StageContext
@@ -557,10 +558,52 @@ def _review_state(paths) -> dict[str, Any]:
         return review.empty()
 
 
+def _selection_by_index(paths) -> dict[int, dict[str, Any]]:
+    """Оценки модели по индексу кандидата.
+
+    Обзор показывает всех кандидатов, а не только отобранных: видеть, что
+    модель отбросила, не менее важно — несогласие человека с отбором и есть
+    обучающий сигнал (§63).
+    """
+    artifact = Artifact(paths.analysis / "selection.json")
+    if not artifact.exists():
+        return {}
+    try:
+        clips = artifact.read_json().get("clips", [])
+    except ValueError:
+        return {}
+    return {c["index"]: c for c in clips if isinstance(c.get("index"), int)}
+
+
 def _review_response(paths, video_id: str) -> dict[str, Any]:
     candidates = _candidates_list(paths)
     merged = review.merge(candidates, _review_state(paths))
-    return {"video_id": video_id, "clips": merged, "stats": review.stats(merged)}
+
+    scored = _selection_by_index(paths)
+    for clip in merged:
+        entry = scored.get(clip["index"])
+        clip["selected"] = entry is not None
+        if entry:
+            clip.update(
+                interest_score=entry.get("interest_score"),
+                rank=entry.get("rank"),
+                clip_type=entry.get("clip_type"),
+                explanation=entry.get("explanation"),
+                factors=entry.get("factors"),
+                penalties=entry.get("penalties"),
+            )
+            # Границы, уточнённые моделью, показываются только если человек
+            # их ещё не правил: его решение важнее.
+            if not clip.get("edited"):
+                clip["start"] = entry["start"]
+                clip["end"] = entry["end"]
+                clip["duration"] = round(entry["end"] - entry["start"], 2)
+
+    return {
+        "video_id": video_id,
+        "clips": merged,
+        "stats": {**review.stats(merged), "scored": len(scored)},
+    }
 
 
 @app.get("/api/videos/{video_id}/review")
@@ -599,6 +642,21 @@ def clear_review(video_id: str, index: int, project: str = "default") -> dict[st
     paths, _ = _paths(video_id, project)
     Artifact(paths.review).write_json(review.forget(_review_state(paths), index))
     return _review_response(paths, video_id)
+
+
+@app.get("/api/videos/{video_id}/publish")
+def publish_texts(video_id: str, project: str = "default") -> dict[str, Any]:
+    """Заголовки, описания и хэштеги — то, что копируют при публикации."""
+    paths, _ = _paths(video_id, project)
+    artifact = Artifact(paths.analysis / "publish.json")
+    if not artifact.exists():
+        raise HTTPException(status_code=404, detail="тексты ещё не сгенерированы")
+    data = artifact.read_json()
+    for entry in data.get("clips", []):
+        # Готовая к вставке строка собирается на сервере: правила склейки
+        # описания с хэштегами не должны разъезжаться между CLI и вебом (§33).
+        entry["ready"] = publish.render_description(entry)
+    return data
 
 
 #: Высота миниатюры кандидата. Карточка в списке узкая, больше не нужно.
@@ -677,3 +735,23 @@ def media(
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return serve_file(source, range_header)
+
+
+# --- собранный интерфейс ---------------------------------------------------
+
+#: Каталог сборки фронтенда. Ищется относительно кода, а не текущей папки:
+#: сервер должен подниматься из любого места (§58).
+FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
+
+
+def mount_frontend() -> bool:
+    """Отдаёт собранный интерфейс с того же адреса, что и API.
+
+    Монтируется последним: маршруты /api зарегистрированы выше и обрабатываются
+    раньше, поэтому статика их не перехватывает. Хэш-роутинг во фронтенде
+    означает, что для всех экранов достаточно одного index.html.
+    """
+    if not (FRONTEND_DIST / "index.html").is_file():
+        return False
+    app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")
+    return True

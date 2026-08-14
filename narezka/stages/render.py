@@ -21,7 +21,7 @@ from narezka.core.fonts import escape_for_filter, fonts_dir
 from narezka.core.framing import Framing, build_filter, describe, plan_frame
 from narezka.core.media import find_source, run_tool
 from narezka.core.stage import Device, Stage, StageContext, StageSkipped
-from narezka.stages.candidates import CANDIDATES_NAME
+from narezka.core.clips import SELECTION_NAME, describe_source, load_clips
 from narezka.stages.subtitles import INDEX_NAME
 
 SHORTS_INDEX = "index.json"
@@ -64,15 +64,16 @@ def source_size(metadata: dict[str, Any]) -> tuple[int, int]:
 
 class RenderStage(Stage):
     name = "render"
-    #: v3 — шрифт субтитров берётся из поставки, а не подбирается
-    #: fontconfig на машине рендера (§60).
-    version = 3
+    #: v4 — ролики режутся по отобранным моделью клипам с уточнёнными
+    #: границами, а не по сырым кандидатам (§11).
+    version = 4
     device = Device.ANY
     description = "Вертикальные ролики 9:16 с вшитыми субтитрами"
 
     def inputs(self, ctx: StageContext) -> list[Artifact]:
+        selection = Artifact(ctx.paths.analysis / SELECTION_NAME)
         return [
-            Artifact(ctx.paths.analysis / CANDIDATES_NAME),
+            selection if selection.exists() else Artifact(ctx.paths.analysis / "candidates.json"),
             Artifact(ctx.paths.base / "subtitles" / INDEX_NAME),
         ]
 
@@ -100,7 +101,7 @@ class RenderStage(Stage):
         out = ctx.config.output
         short = out.short
 
-        candidates = Artifact(ctx.paths.analysis / CANDIDATES_NAME).read_json().get("candidates", [])
+        clips, clip_source = load_clips(ctx.paths)
         subtitle_index = Artifact(ctx.paths.base / "subtitles" / INDEX_NAME).read_json()
         subtitle_files = {entry["index"]: entry["file"] for entry in subtitle_index.get("files", [])}
         if not subtitle_files:
@@ -129,13 +130,16 @@ class RenderStage(Stage):
         subtitles_dir = ctx.paths.base / "subtitles"
         ctx.paths.shorts.mkdir(parents=True, exist_ok=True)
 
+        ctx.log.info(describe_source(clip_source, len(clips)))
+
         rendered: list[dict[str, Any]] = []
-        for index, candidate in enumerate(candidates):
+        for clip in clips:
+            index = clip["index"]
             name = subtitle_files.get(index)
             if name is None:
                 continue
 
-            duration = candidate["end"] - candidate["start"]
+            duration = clip["end"] - clip["start"]
             target = Artifact(ctx.paths.shorts / f"{index:02d}.mp4")
             ctx.log.info("рендер %d: %.1f с", index, duration)
 
@@ -143,7 +147,7 @@ class RenderStage(Stage):
                 run_tool(
                     self._command(
                         source=source,
-                        start=candidate["start"],
+                        start=clip["start"],
                         duration=duration,
                         subtitle_name=name,
                         output=tmp,
@@ -166,10 +170,16 @@ class RenderStage(Stage):
                 {
                     "index": index,
                     "file": target.path.name,
-                    "start": candidate["start"],
-                    "end": candidate["end"],
+                    "start": clip["start"],
+                    "end": clip["end"],
                     "duration": round(duration, 2),
                     "size_bytes": target.path.stat().st_size,
+                    # Оценка и объяснение доезжают до интерфейса вместе
+                    # с роликом — иначе непонятно, почему он здесь.
+                    "interest_score": clip.get("interest_score"),
+                    "rank": clip.get("rank"),
+                    "clip_type": clip.get("clip_type"),
+                    "explanation": clip.get("explanation"),
                 }
             )
 
@@ -190,6 +200,7 @@ class RenderStage(Stage):
                 if has_video
                 else None,
                 "background": self._background_kind(framing, plan, has_video),
+                "source": clip_source,
                 "files": rendered,
             }
         )

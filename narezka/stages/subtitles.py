@@ -15,7 +15,7 @@ from typing import Any
 from narezka.core.artifacts import Artifact
 from narezka.core.stage import Device, Stage, StageContext, StageSkipped
 from narezka.core.subtitles import STYLES, build_ass, words_in_range
-from narezka.stages.candidates import CANDIDATES_NAME
+from narezka.core.clips import SELECTION_NAME, describe_source, load_clips
 from narezka.stages.transcribe import TRANSCRIPT_NAME
 
 INDEX_NAME = "index.json"
@@ -23,15 +23,19 @@ INDEX_NAME = "index.json"
 
 class SubtitlesStage(Stage):
     name = "subtitles"
-    version = 2
+    #: v3 — субтитры собираются по отобранным моделью клипам с уточнёнными
+    #: границами, а не по сырым кандидатам (§11).
+    version = 3
     device = Device.ANY
-    description = "Файлы ASS с подсветкой слова для каждого кандидата"
+    description = "Файлы ASS с подсветкой слова для каждого клипа"
 
     def inputs(self, ctx: StageContext) -> list[Artifact]:
-        return [
-            Artifact(ctx.paths.transcript / TRANSCRIPT_NAME),
-            Artifact(ctx.paths.analysis / CANDIDATES_NAME),
-        ]
+        # Отбор моделью необязателен: без него берутся кандидаты. Он указан
+        # входом, чтобы появление selection.json пересобрало субтитры.
+        inputs = [Artifact(ctx.paths.transcript / TRANSCRIPT_NAME)]
+        selection = Artifact(ctx.paths.analysis / SELECTION_NAME)
+        inputs.append(selection if selection.exists() else Artifact(ctx.paths.analysis / "candidates.json"))
+        return inputs
 
     def outputs(self, ctx: StageContext) -> list[Artifact]:
         index = Artifact(ctx.paths.base / "subtitles" / INDEX_NAME)
@@ -58,9 +62,10 @@ class SubtitlesStage(Stage):
             raise StageSkipped(f"неизвестный стиль субтитров '{style_name}'; доступны: {', '.join(STYLES)}")
 
         transcript = Artifact(ctx.paths.transcript / TRANSCRIPT_NAME).read_json()
-        candidates = Artifact(ctx.paths.analysis / CANDIDATES_NAME).read_json().get("candidates", [])
-        if not candidates:
-            raise StageSkipped("нет кандидатов — субтитры не для чего собирать")
+        clips, source = load_clips(ctx.paths)
+        if not clips:
+            raise StageSkipped("нет клипов — субтитры не для чего собирать")
+        ctx.log.info(describe_source(source, len(clips)))
 
         segments = transcript.get("segments", [])
         short = ctx.config.output.short
@@ -68,10 +73,11 @@ class SubtitlesStage(Stage):
         directory.mkdir(parents=True, exist_ok=True)
 
         files: list[dict[str, Any]] = []
-        for index, candidate in enumerate(candidates):
-            words = words_in_range(segments, candidate["start"], candidate["end"])
+        for clip in clips:
+            index = clip["index"]
+            words = words_in_range(segments, clip["start"], clip["end"])
             if not words:
-                ctx.log.warning("кандидат %d без слов, пропускаю", index)
+                ctx.log.warning("клип %d без слов, пропускаю", index)
                 continue
 
             ass = build_ass(
@@ -79,7 +85,7 @@ class SubtitlesStage(Stage):
                 style=style,
                 width=short.width,
                 height=short.height,
-                time_offset=candidate["start"],
+                time_offset=clip["start"],
             )
             name = f"{index:02d}.ass"
             Artifact(directory / name).write_bytes(ass.encode("utf-8"))
@@ -87,8 +93,8 @@ class SubtitlesStage(Stage):
                 {
                     "index": index,
                     "file": name,
-                    "start": candidate["start"],
-                    "end": candidate["end"],
+                    "start": clip["start"],
+                    "end": clip["end"],
                     "words": len(words),
                 }
             )

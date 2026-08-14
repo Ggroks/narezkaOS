@@ -11,12 +11,12 @@ import asyncio
 import hashlib
 import json
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from narezka.api import jobs
 from narezka.api.media import serve_file
@@ -33,6 +33,7 @@ from narezka.core.framing import (
     preview_presets,
 )
 from narezka.core.media import find_source, run_tool
+from narezka.core import review
 from narezka.core.paths import list_videos, video_paths
 from narezka.core.runner import run_pipeline, run_stage
 from narezka.core.stage import StageContext
@@ -518,6 +519,150 @@ def _preview_position(paths, metadata: dict[str, Any]) -> float:
             pass
     duration = metadata.get("duration_seconds")
     return float(duration) / 2 if duration else 0.0
+
+
+# --- обзор кандидатов ------------------------------------------------------
+
+
+class ReviewPayload(BaseModel):
+    """Решение по одному кандидату.
+
+    Все поля необязательны: вердикт и границы правятся независимо друг
+    от друга — можно принять клип, не трогая границы, и подвинуть границы,
+    не меняя оценки.
+    """
+
+    verdict: Literal["accept", "reject"] | None = None
+    start: float | None = Field(default=None, ge=0)
+    end: float | None = Field(default=None, ge=0)
+
+
+def _candidates_list(paths) -> list[dict[str, Any]]:
+    artifact = Artifact(paths.analysis / "candidates.json")
+    if not artifact.exists():
+        raise HTTPException(status_code=404, detail="кандидаты ещё не отобраны")
+    return artifact.read_json().get("candidates", [])
+
+
+def _review_state(paths) -> dict[str, Any]:
+    artifact = Artifact(paths.review)
+    if not artifact.exists():
+        return review.empty()
+    try:
+        return artifact.read_json()
+    except ValueError:
+        # Битый файл разметки не должен закрывать доступ к экрану: решения
+        # накапливаются заново, а вот потерять возможность работать хуже.
+        log.warning("не читается файл разметки, начинаем заново: %s", paths.review)
+        return review.empty()
+
+
+def _review_response(paths, video_id: str) -> dict[str, Any]:
+    candidates = _candidates_list(paths)
+    merged = review.merge(candidates, _review_state(paths))
+    return {"video_id": video_id, "clips": merged, "stats": review.stats(merged)}
+
+
+@app.get("/api/videos/{video_id}/review")
+def get_review(video_id: str, project: str = "default") -> dict[str, Any]:
+    paths, _ = _paths(video_id, project)
+    return _review_response(paths, video_id)
+
+
+@app.put("/api/videos/{video_id}/review/{index}")
+def set_review(
+    video_id: str, index: int, payload: ReviewPayload, project: str = "default"
+) -> dict[str, Any]:
+    paths, _ = _paths(video_id, project)
+    candidates = _candidates_list(paths)
+    if not 0 <= index < len(candidates):
+        raise HTTPException(status_code=404, detail=f"кандидата {index} нет")
+
+    try:
+        updated = review.record(
+            _review_state(paths),
+            index=index,
+            candidate=candidates[index],
+            verdict=payload.verdict,
+            start=payload.start,
+            end=payload.end,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    Artifact(paths.review).write_json(updated)
+    return _review_response(paths, video_id)
+
+
+@app.delete("/api/videos/{video_id}/review/{index}")
+def clear_review(video_id: str, index: int, project: str = "default") -> dict[str, Any]:
+    paths, _ = _paths(video_id, project)
+    Artifact(paths.review).write_json(review.forget(_review_state(paths), index))
+    return _review_response(paths, video_id)
+
+
+#: Высота миниатюры кандидата. Карточка в списке узкая, больше не нужно.
+THUMBNAIL_HEIGHT = 240
+
+
+@app.get("/api/videos/{video_id}/frame")
+def frame(
+    video_id: str,
+    at: float = Query(ge=0),
+    project: str = "default",
+    height: int = Query(default=THUMBNAIL_HEIGHT, ge=60, le=1080),
+):
+    """Один кадр исходника в заданный момент.
+
+    Нужен карточкам обзора: рендерить клип ради того, чтобы понять, что
+    в кадре, — минуты работы, вытащить кадр — доли секунды.
+    """
+    paths, _ = _paths(video_id, project)
+    try:
+        source = find_source(paths.source)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    metadata_artifact = Artifact(paths.metadata)
+    metadata = metadata_artifact.read_json() if metadata_artifact.exists() else {}
+    if not metadata.get("has_video", True):
+        raise HTTPException(status_code=409, detail="в источнике нет картинки")
+
+    target = paths.base / "meta" / f"frame-{height}-{at:.2f}.jpg"
+    if not target.exists():
+        try:
+            run_tool(
+                [
+                    "ffmpeg", "-nostdin", "-v", "error", "-y",
+                    "-ss", f"{at:.3f}",
+                    "-i", str(source.resolve()),
+                    "-frames:v", "1",
+                    "-vf", f"scale=-2:{height}",
+                    "-q:v", "4",
+                    "-f", "mjpeg",
+                    str(target),
+                ],
+                timeout=60,
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    _trim_frames(paths)
+    return serve_file(target, None)
+
+
+#: Миниатюры служат кэшем, но расти без предела не должны.
+FRAME_KEEP = 60
+
+
+def _trim_frames(paths) -> None:
+    files = sorted(
+        (paths.base / "meta").glob("frame-*.jpg"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    for stale in files[FRAME_KEEP:]:
+        stale.unlink(missing_ok=True)
 
 
 @app.get("/api/videos/{video_id}/media")

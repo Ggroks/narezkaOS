@@ -596,3 +596,121 @@ a.sr-only:focus-visible {
   .framing { grid-template-columns: minmax(0, 1fr); }
   .framing-preview { max-inline-size: 200px; }
 }
+
+/* --- обзор моментов -------------------------------------------------------
+   Экран, на котором оценивают качество отбора. Всё подчинено одному: пройти
+   подряд десятки кандидатов, не отрывая рук от клавиатуры. */
+
+.review:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; }
+
+.review-player { max-inline-size: 760px; }
+
+/* Полоса показывает позицию внутри отрезка, а не внутри всей записи:
+   судят именно об отрезке, и его начало должно быть нулём. */
+.review-track {
+  block-size: 4px;
+  margin-block-start: 10px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.review-track-fill {
+  block-size: 100%;
+  background: var(--accent);
+}
+
+.review-controls { margin-block-start: 12px; }
+.review-verdict { margin-block-start: 10px; }
+
+/* Отклонение — действие обратимое, поэтому не красная кнопка, а лишь
+   заметная рамка: пугать тем, что легко отменить, незачем. */
+button.danger-on {
+  border-color: var(--bad);
+  color: var(--bad);
+  font-weight: 600;
+}
+
+.review-text {
+  margin-block: 12px 0;
+  padding: 10px 12px;
+  border-inline-start: 2px solid var(--border);
+  color: var(--text-dim);
+  max-inline-size: 70ch;
+}
+
+.review-list {
+  list-style: none;
+  margin: 20px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 10px;
+}
+
+.review-card {
+  inline-size: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+  text-align: start;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-inner);
+}
+
+.review-card:hover:not(:disabled) { border-color: #3a4150; background: #262b34; }
+.review-card.active { border-color: var(--accent); }
+
+/* Цветная кромка слева — оценка видна в списке без чтения подписей. */
+.review-card.accept { box-shadow: inset 3px 0 0 var(--ok); }
+.review-card.reject { box-shadow: inset 3px 0 0 var(--bad); }
+
+.review-thumb {
+  inline-size: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  display: block;
+  background: #000;
+}
+
+.review-card.reject .review-thumb { opacity: 0.45; }
+
+.review-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px 12px;
+}
+
+.review-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-block-start: 2px;
+}
+
+.review-keys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 18px 0 0;
+  padding-block-start: 12px;
+  border-block-start: 1px solid var(--border);
+}
+
+.review-keys > div { display: flex; align-items: baseline; gap: 6px; }
+.review-keys dt, .review-keys dd { margin: 0; }
+
+kbd {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--text);
+  white-space: nowrap;
+}

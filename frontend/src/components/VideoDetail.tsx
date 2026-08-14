@@ -9,6 +9,7 @@ import {
   type VideoDetail as Detail,
 } from "../api";
 import { FramingPanel } from "./FramingPanel";
+import { ReviewView } from "./ReviewView";
 import { ShortsView } from "./ShortsView";
 import { TranscriptView } from "./TranscriptView";
 
@@ -216,6 +217,10 @@ export function VideoDetail({ videoId, onBack }: Props) {
           </div>
         )}
       </section>
+
+      {/* Обзор идёт до кадрирования: сначала решают, годится ли момент,
+          и только потом — как его показать. */}
+      <ReviewView videoId={videoId} durationSeconds={meta.duration_seconds ?? null} />
 
       {meta.has_video !== false && (
         <FramingPanel

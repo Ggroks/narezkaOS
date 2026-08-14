@@ -119,6 +119,34 @@ export type FramingState = {
   presets: PresetPreview[];
 };
 
+export type Verdict = "accept" | "reject";
+
+export type ReviewClip = {
+  index: number;
+  start: number;
+  end: number;
+  duration: number;
+  peak_at: number;
+  provisional_score: number;
+  signals: { loudness_z?: number; rms_db?: number; words_per_second?: number };
+  text: string;
+  verdict: Verdict | null;
+  decided_at?: string;
+  /** Границы, предложенные автоматикой, — до правок человеком. */
+  original?: { start: number; end: number };
+  edited: boolean;
+};
+
+export type ReviewStats = {
+  total: number;
+  accepted: number;
+  rejected: number;
+  undecided: number;
+  edited: number;
+};
+
+export type Review = { video_id: string; clips: ReviewClip[]; stats: ReviewStats };
+
 export type HealthCheck = { name: string; ok: boolean; detail: string; critical: boolean };
 export type Health = {
   ok: boolean;
@@ -160,6 +188,17 @@ export const api = {
       body: JSON.stringify(payload),
     }),
   mediaUrl: (id: string) => `/api/videos/${id}/media`,
+  review: (id: string) => request<Review>(`/api/videos/${id}/review`),
+  setReview: (id: string, index: number, payload: { verdict?: Verdict; start?: number; end?: number }) =>
+    request<Review>(`/api/videos/${id}/review/${index}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+  clearReview: (id: string, index: number) =>
+    request<Review>(`/api/videos/${id}/review/${index}`, { method: "DELETE" }),
+  /** Кадр исходника в заданный момент — миниатюра карточки. */
+  frameUrl: (id: string, at: number, height = 240) =>
+    `/api/videos/${id}/frame?at=${at.toFixed(2)}&height=${height}`,
   framing: (id: string) => request<FramingState>(`/api/videos/${id}/framing`),
   setFraming: (id: string, payload: Framing) =>
     request<FramingState>(`/api/videos/${id}/framing`, {

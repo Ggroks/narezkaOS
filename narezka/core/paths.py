@@ -54,6 +54,11 @@ class VideoPaths:
         return self.base / "meta" / "framing.json"
 
     @property
+    def review(self) -> Path:
+        """Решения человека по кандидатам — «годится» / «не годится» (§35, §63)."""
+        return self.base / "analysis" / "review.json"
+
+    @property
     def cost(self) -> Path:
         return self.base / "meta" / "cost.json"
 

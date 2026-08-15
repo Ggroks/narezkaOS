@@ -382,7 +382,12 @@ def models(
     from narezka.core import llm  # noqa: PLC0415
 
     config = load_config(config_path)
-    key = llm.api_key()
+    try:
+        current = llm.provider(config.llm.provider)
+    except llm.LlmError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from None
+    key = llm.api_key(provider_name=config.llm.provider)
 
     if check:
         if not key:
@@ -404,7 +409,8 @@ def models(
 
         try:
             result = llm.check_key(
-                key, chain, timeout=config.llm.timeout_seconds, on_attempt=report
+                key, chain, timeout=config.llm.timeout_seconds, on_attempt=report,
+                provider_name=config.llm.provider,
             )
         except llm.LlmError as exc:
             console.print(f"[red]{exc}[/red]")
@@ -433,14 +439,16 @@ def models(
         return
 
     try:
-        available = llm.fetch_models(key)
+        available = llm.fetch_models(key, provider_name=config.llm.provider)
     except llm.LlmError as exc:
         console.print(f"[red]{exc}[/red]")
         console.print("[dim]Если сеть за прокси — проверьте ALL_PROXY и HTTPS_PROXY.[/dim]")
         raise typer.Exit(1) from None
 
     shown = available if all_models else llm.rank_free(available)
-    table = Table(title="Бесплатные модели OpenRouter" if not all_models else "Модели OpenRouter")
+    table = Table(
+        title=f"{'Бесплатные модели' if not all_models else 'Модели'} · {current.name}"
+    )
     table.add_column("")
     table.add_column("Модель", style="bold")
     table.add_column("Контекст", justify="right")
@@ -463,7 +471,7 @@ def models(
         f"Порядок: сначала те, что умеют отвечать по схеме JSON.[/dim]"
     )
     if not key:
-        console.print(f"[yellow]Ключа нет.[/yellow] Положите его в .env как {llm.API_KEY_ENV}.")
+        console.print(f"[yellow]Ключа нет.[/yellow] Положите его в .env как {current.key_env}.")
     if not config.llm.model:
         console.print("[yellow]Модель не выбрана.[/yellow] Впишите её в configs/config.yaml → llm.model")
 

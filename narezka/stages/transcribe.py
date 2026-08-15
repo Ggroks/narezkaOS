@@ -21,6 +21,16 @@ TRANSCRIPT_NAME = "transcript.json"
 #: Соответствие устройства и типа вычислений, когда в конфиге стоит auto.
 COMPUTE_TYPE_BY_DEVICE = {"cpu": "int8", "cuda": "float16"}
 
+#: Длина куска, которым читается длинная запись. Замер: пятичасовая запись,
+#: отданная faster-whisper целиком, выедает всю память машины и подвешивает
+#: её — Silero VAD и выравнивание слов держат весь звук распакованным сразу.
+#: Полчаса звука это около 100 МБ в памяти, что безопасно на любой машине.
+CHUNK_SECONDS = 1800
+
+#: Перекрытие кусков. Реплика на стыке иначе рвётся пополам и распознаётся
+#: как два обрывка.
+CHUNK_OVERLAP = 5.0
+
 #: Дефолты Silero VAD. speech_pad_ms важен: без запаса речь обрезается
 #: на границах (заимствовано из upstream, см. docs/upstream-notes.md).
 VAD_PARAMETERS = {
@@ -80,36 +90,63 @@ class TranscribeStage(Stage):
             raise StageSkipped(f"не удалось загрузить модель {cfg.model}: {exc}") from exc
 
         language = None if cfg.language == "auto" else cfg.language
-        segment_iter, info = model.transcribe(
-            str(audio),
-            language=language,
-            word_timestamps=True,
-            vad_filter=cfg.vad_filter,
-            vad_parameters=VAD_PARAMETERS if cfg.vad_filter else None,
-        )
+
+        import numpy as np  # noqa: PLC0415
+        from narezka.core.signals import read_wav_mono  # noqa: PLC0415
+
+        samples, rate = read_wav_mono(audio)
+        total_seconds = len(samples) / rate
+
+        # Длинная запись читается кусками: отданная целиком, она выедает всю
+        # память — Silero VAD и выравнивание слов держат весь звук
+        # распакованным сразу. На пятичасовой записи это подвесило машину.
+        chunk_samples = int(CHUNK_SECONDS * rate)
+        overlap_samples = int(CHUNK_OVERLAP * rate)
+        starts = list(range(0, len(samples), chunk_samples)) or [0]
 
         segments: list[dict[str, Any]] = []
-        for segment in segment_iter:
-            segments.append(
-                {
-                    "id": segment.id,
-                    "start": round(segment.start, 3),
-                    "end": round(segment.end, 3),
-                    "text": segment.text.strip(),
-                    "avg_logprob": round(segment.avg_logprob, 4),
-                    "no_speech_prob": round(segment.no_speech_prob, 4),
-                    "compression_ratio": round(segment.compression_ratio, 4),
-                    "words": [
-                        {
-                            "word": word.word.strip(),
-                            "start": round(word.start, 3),
-                            "end": round(word.end, 3),
-                            "probability": round(word.probability, 4),
-                        }
-                        for word in (segment.words or [])
-                    ],
-                }
+        info = None
+        next_id = 0
+        last_end = 0.0
+
+        for number, begin in enumerate(starts, start=1):
+            finish = min(begin + chunk_samples + overlap_samples, len(samples))
+            offset = begin / rate
+            if len(starts) > 1:
+                ctx.log.info(
+                    "кусок %d из %d: %.0f–%.0f с из %.0f",
+                    number, len(starts), offset, finish / rate, total_seconds,
+                )
+
+            piece = samples[begin:finish].astype(np.float32)
+            segment_iter, chunk_info = model.transcribe(
+                piece,
+                language=language or (info.language if info else None),
+                word_timestamps=True,
+                vad_filter=cfg.vad_filter,
+                vad_parameters=VAD_PARAMETERS if cfg.vad_filter else None,
             )
+            if info is None:
+                info = chunk_info
+
+            for segment in segment_iter:
+                start = segment.start + offset
+                # Перекрытие кусков даёт повтор на стыке — берём только то,
+                # что начинается позже уже разобранного.
+                if start < last_end - 0.05:
+                    continue
+                last_end = max(last_end, segment.end + offset)
+                segments.append(
+                    self._segment_dict(segment, offset, next_id)
+                )
+                next_id += 1
+
+            del piece
+
+        if info is None:
+            raise StageSkipped("звук не удалось разобрать")
+
+        del samples
 
         mark_suspect_segments(
             segments,
@@ -124,11 +161,12 @@ class TranscribeStage(Stage):
         result = {
             "language": info.language,
             "language_probability": round(info.language_probability, 4),
-            "duration_seconds": round(info.duration, 3),
+            "duration_seconds": round(total_seconds, 3),
             "model": cfg.model,
             "compute_type": compute_type,
             "device": ctx.device.kind,
             "vad_filter": cfg.vad_filter,
+            "chunks": len(starts),
             "segments": segments,
             "stats": {
                 "segments_total": len(segments),
@@ -146,3 +184,26 @@ class TranscribeStage(Stage):
             ctx.log.warning(
                 "все сегменты помечены подозрительными — вероятно, в записи нет речи"
             )
+
+    @staticmethod
+    def _segment_dict(segment, offset: float, segment_id: int) -> dict[str, Any]:
+        """Сегмент со сдвигом на начало куска: метки времени должны быть
+        от начала записи, а не от начала куска."""
+        return {
+            "id": segment_id,
+            "start": round(segment.start + offset, 3),
+            "end": round(segment.end + offset, 3),
+            "text": segment.text.strip(),
+            "avg_logprob": round(segment.avg_logprob, 4),
+            "no_speech_prob": round(segment.no_speech_prob, 4),
+            "compression_ratio": round(segment.compression_ratio, 4),
+            "words": [
+                {
+                    "word": word.word.strip(),
+                    "start": round(word.start + offset, 3),
+                    "end": round(word.end + offset, 3),
+                    "probability": round(word.probability, 4),
+                }
+                for word in (segment.words or [])
+            ],
+        }

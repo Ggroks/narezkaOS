@@ -140,12 +140,14 @@ def run_checks(storage_root: Path, device_setting: str = "auto") -> tuple[list[C
     # не работает только отбор моделью (§43, мягкая деградация).
     from narezka.core import llm  # noqa: PLC0415 — тянет httpx
 
-    has_key = llm.api_key() is not None
+    has_key = llm.api_key() is not None or llm.api_key(provider_name="openai") is not None
     checks.append(
         Check(
             "ключ LLM",
             has_key,
-            "задан" if has_key else f"нет {llm.API_KEY_ENV} — стадии llm_select и metadata пропустятся",
+            "задан" if has_key
+            else "нет ключа (OPENROUTER_API_KEY или OPENAI_API_KEY) — "
+                 "стадии llm_select и metadata пропустятся",
             critical=False,
         )
     )

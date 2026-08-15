@@ -54,10 +54,10 @@ class MetadataStage(Stage):
         }
 
     def run(self, ctx: StageContext) -> None:
-        key = llm.api_key()
+        key = llm.api_key(provider_name=ctx.config.llm.provider)
         if not key:
             raise StageSkipped(
-                f"нет ключа {llm.API_KEY_ENV} — тексты для публикации не сгенерированы"
+                f"нет ключа {llm.provider(ctx.config.llm.provider).key_env} — тексты для публикации не сгенерированы"
             )
         if not ctx.config.llm.model:
             raise StageSkipped("в конфиге не выбрана модель (llm.model)")
@@ -156,6 +156,7 @@ class MetadataStage(Stage):
             },
             timeout=ctx.config.llm.timeout_seconds,
             max_retries=ctx.config.llm.max_retries,
+            provider_name=ctx.config.llm.provider,
         )
 
         choices = response.get("choices") or []

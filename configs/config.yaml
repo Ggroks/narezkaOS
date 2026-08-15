@@ -21,7 +21,14 @@ stt:
   batch_size: 8
 
 llm:
-  provider: openrouter   # openrouter | local
+  # openrouter — бесплатные модели, ключ из OPENROUTER_API_KEY
+  # openai     — платно и быстро, ключ из OPENAI_API_KEY
+  #
+  # Замер на пятичасовой записи: ~112 000 токенов входа и ~14 000 выхода
+  # на одну запись целиком. В деньгах это около $0.01 на gpt-5-nano,
+  # $0.03 на gpt-4o-mini и около $0.50 на gpt-5.4. Протокол один и тот же,
+  # поэтому переход — это две строки здесь и ключ в .env.
+  provider: openrouter
   # Имя модели меняется вместе с каталогом провайдера — актуальные бесплатные
   # варианты показывает `narezka models`. Ключ берётся из OPENROUTER_API_KEY
   # (файл .env, он в .gitignore).

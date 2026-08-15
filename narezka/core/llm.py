@@ -20,11 +20,56 @@ from typing import Any
 
 import httpx
 
-BASE_URL = "https://openrouter.ai/api/v1"
+@dataclass(frozen=True)
+class Provider:
+    """Куда ходить за моделью. Протокол один и тот же — OpenAI-совместимый,
+    поэтому переход сводится к смене адреса и переменной с ключом."""
 
-#: Переменная окружения с ключом. Ключ не хранится в конфиге: конфиг
-#: в репозитории, а `.env` — в .gitignore.
-API_KEY_ENV = "OPENROUTER_API_KEY"
+    name: str
+    base_url: str
+    key_env: str
+    #: Заголовки сверх авторизации. OpenRouter просит их для учёта трафика.
+    headers: dict[str, str]
+    #: Есть ли у провайдера открытый каталог моделей.
+    lists_models: bool
+
+
+PROVIDERS: dict[str, Provider] = {
+    "openrouter": Provider(
+        name="openrouter",
+        base_url="https://openrouter.ai/api/v1",
+        key_env="OPENROUTER_API_KEY",
+        headers={
+            "HTTP-Referer": "https://github.com/Ggroks/narezkaOS",
+            "X-Title": "Narezka OS",
+        },
+        lists_models=True,
+    ),
+    "openai": Provider(
+        name="openai",
+        base_url="https://api.openai.com/v1",
+        key_env="OPENAI_API_KEY",
+        headers={},
+        lists_models=True,
+    ),
+}
+
+DEFAULT_PROVIDER = "openrouter"
+
+
+def provider(name: str | None = None) -> Provider:
+    """Настройки провайдера по имени. Незнакомое имя — понятная ошибка,
+    а не запрос в никуда."""
+    key = (name or DEFAULT_PROVIDER).strip().lower()
+    if key not in PROVIDERS:
+        known = ", ".join(sorted(PROVIDERS))
+        raise LlmError(f"неизвестный провайдер «{name}». Доступны: {known}")
+    return PROVIDERS[key]
+
+
+#: Оставлено для совместимости: часть кода и сообщений ссылается на них прямо.
+BASE_URL = PROVIDERS[DEFAULT_PROVIDER].base_url
+API_KEY_ENV = PROVIDERS[DEFAULT_PROVIDER].key_env
 
 #: Бесплатные модели помечаются этим суффиксом в идентификаторе.
 FREE_SUFFIX = ":free"
@@ -149,27 +194,26 @@ def rank_free(models: list[ModelInfo]) -> list[ModelInfo]:
     return sorted(free, key=lambda m: m.score(), reverse=True)
 
 
-def api_key(env: dict[str, str] | None = None) -> str | None:
+def api_key(env: dict[str, str] | None = None, provider_name: str | None = None) -> str | None:
     source = env if env is not None else os.environ
-    key = (source.get(API_KEY_ENV) or "").strip()
+    key = (source.get(provider(provider_name).key_env) or "").strip()
     return key or None
 
 
-def _client(key: str | None, timeout: float) -> httpx.Client:
-    headers = {
-        # OpenRouter просит эти заголовки для учёта трафика приложения.
-        "HTTP-Referer": "https://github.com/Ggroks/narezkaOS",
-        "X-Title": "Narezka OS",
-    }
+def _client(key: str | None, timeout: float, provider_name: str | None = None) -> httpx.Client:
+    current = provider(provider_name)
+    headers = dict(current.headers)
     if key:
         headers["Authorization"] = f"Bearer {key}"
-    return httpx.Client(base_url=BASE_URL, headers=headers, timeout=timeout)
+    return httpx.Client(base_url=current.base_url, headers=headers, timeout=timeout)
 
 
-def fetch_models(key: str | None = None, timeout: float = 30.0) -> list[ModelInfo]:
-    """Актуальный каталог. Ключ необязателен — список открытый."""
+def fetch_models(
+    key: str | None = None, timeout: float = 30.0, provider_name: str | None = None
+) -> list[ModelInfo]:
+    """Актуальный каталог. У OpenRouter он открытый, у OpenAI нужен ключ."""
     try:
-        with _client(key, timeout) as client:
+        with _client(key, timeout, provider_name) as client:
             response = client.get("/models")
             response.raise_for_status()
             return parse_models(response.json())
@@ -204,6 +248,7 @@ def chat(
     timeout: float = 120.0,
     max_retries: int = 3,
     on_attempt: Any = None,
+    provider_name: str | None = None,
 ) -> dict[str, Any]:
     """Запрос к модели с повторами и переходом на запасные.
 
@@ -218,7 +263,7 @@ def chat(
         raise LlmError("не задано ни одной модели")
 
     failures: list[str] = []
-    with _client(key, timeout) as client:
+    with _client(key, timeout, provider_name) as client:
         for model in models:
             for attempt in range(max_retries + 1):
                 try:
@@ -244,6 +289,7 @@ def check_key(
     timeout: float = 60.0,
     max_retries: int = 2,
     on_attempt: Any = None,
+    provider_name: str | None = None,
 ) -> dict[str, Any]:
     """Пробный запрос: работает ли ключ и отвечает ли хоть одна модель.
 
@@ -260,6 +306,7 @@ def check_key(
         timeout=timeout,
         max_retries=max_retries,
         on_attempt=on_attempt,
+        provider_name=provider_name,
     )
     choices = data.get("choices") or []
     text = choices[0].get("message", {}).get("content", "") if choices else ""

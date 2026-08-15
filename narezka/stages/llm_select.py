@@ -104,10 +104,10 @@ class LlmSelectStage(Stage):
         }
 
     def run(self, ctx: StageContext) -> None:
-        key = llm.api_key()
+        key = llm.api_key(provider_name=ctx.config.llm.provider)
         if not key:
             raise StageSkipped(
-                f"нет ключа {llm.API_KEY_ENV} — отбор моделью пропущен, "
+                f"нет ключа {llm.provider(ctx.config.llm.provider).key_env} — отбор моделью пропущен, "
                 "ролики соберутся по кандидатам от дешёвых сигналов"
             )
         if not ctx.config.llm.model:
@@ -225,6 +225,7 @@ class LlmSelectStage(Stage):
             },
             timeout=ctx.config.llm.timeout_seconds,
             max_retries=ctx.config.llm.max_retries,
+            provider_name=ctx.config.llm.provider,
         )
 
         choices = response.get("choices") or []

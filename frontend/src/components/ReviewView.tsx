@@ -1,19 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, formatDuration, type ClipType, type Review, type ReviewClip, type Verdict } from "../api";
-
-const CLIP_TYPE_LABEL: Record<ClipType, string> = {
-  hook: "цепляет",
-  emotional_peak: "эмоция",
-  revelation: "неожиданность",
-  conflict: "конфликт",
-  victory: "победа",
-  failure: "провал",
-  quotable: "цитата",
-  story: "история",
-  practical: "польза",
-  other: "прочее",
-  unknown: "без типа",
-};
+import { api, formatDuration, type Review, type ReviewClip, type Verdict } from "../api";
 
 /** Оценка красится по смыслу, а не градиентом: три ступени читаются быстрее. */
 function scoreClass(score: number | null | undefined): string {
@@ -337,10 +323,7 @@ export function ReviewView({ videoId, durationSeconds }: Props) {
                   {clip.interest_score.toFixed(2)}
                 </span>
                 <span className="grow">
-                  <span className="small dim">
-                    оценка модели · ранг {clip.rank} ·{" "}
-                    {CLIP_TYPE_LABEL[clip.clip_type ?? "unknown"]}
-                  </span>
+                  <span className="small dim">оценка модели · ранг {clip.rank}</span>
                   {clip.explanation && <p className="review-explanation">{clip.explanation}</p>}
                 </span>
               </div>
@@ -392,7 +375,7 @@ export function ReviewView({ videoId, durationSeconds }: Props) {
                       <b className={`review-score-inline${scoreClass(item.interest_score)}`}>
                         {item.interest_score.toFixed(2)}
                       </b>{" "}
-                      · ранг {item.rank} · {CLIP_TYPE_LABEL[item.clip_type ?? "unknown"]}
+                      · ранг {item.rank}
                     </>
                   ) : (
                     <>сигнал {item.provisional_score?.toFixed(2) ?? "—"}</>

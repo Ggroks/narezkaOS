@@ -81,7 +81,6 @@ export type ShortFile = {
   size_bytes: number;
   interest_score?: number | null;
   rank?: number | null;
-  clip_type?: string | null;
   explanation?: string | null;
 };
 
@@ -136,10 +135,6 @@ export type FramingState = {
 
 export type Verdict = "accept" | "reject";
 
-export type ClipType =
-  | "hook" | "emotional_peak" | "revelation" | "conflict" | "victory"
-  | "failure" | "quotable" | "story" | "practical" | "other" | "unknown";
-
 export type ReviewClip = {
   index: number;
   start: number;
@@ -158,7 +153,6 @@ export type ReviewClip = {
   selected: boolean;
   interest_score?: number | null;
   rank?: number | null;
-  clip_type?: ClipType;
   explanation?: string;
   /** null означает «не измерено», а не «ноль» — см. §54. */
   factors?: Record<string, number | null>;

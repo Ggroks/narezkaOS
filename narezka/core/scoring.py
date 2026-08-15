@@ -200,7 +200,6 @@ def build_clip(
         "penalties": penalties,
         # Сырые сигналы, породившие кандидата, — для последующего анализа (§12).
         "signals": candidate.get("signals", {}),
-        "clip_type": verdict.get("clip_type") or "unknown",
         "explanation": (verdict.get("explanation") or "").strip(),
         "original": {"start": candidate["start"], "end": candidate["end"]},
         "model": model,

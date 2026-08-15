@@ -211,7 +211,6 @@ class RenderStage(Stage):
                     # с роликом — иначе непонятно, почему он здесь.
                     "interest_score": clip.get("interest_score"),
                     "rank": clip.get("rank"),
-                    "clip_type": clip.get("clip_type"),
                     "explanation": clip.get("explanation"),
                 }
             )

@@ -619,7 +619,6 @@ def _review_response(paths, video_id: str) -> dict[str, Any]:
             clip.update(
                 interest_score=entry.get("interest_score"),
                 rank=entry.get("rank"),
-                clip_type=entry.get("clip_type"),
                 explanation=entry.get("explanation"),
                 factors=entry.get("factors"),
                 penalties=entry.get("penalties"),

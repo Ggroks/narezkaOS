@@ -17,12 +17,19 @@ from narezka.core.scoring import TEXT_FACTORS, TEXT_PENALTIES
 
 #: Версия промпта. Пишется в результат, чтобы через месяц было видно,
 #: на какой формулировке получен отбор.
-#: v2 — у модели перестали спрашивать звук: на первом прогоне она честно
-#: ставила ноль всем клипам подряд, потому что читает текст, а не слушает.
-PROMPT_VERSION = 2
+#: v4 — тип клипа убран: замер показал, что модель ставит один тип всему
+#: пакету и меняет его от прогона к прогону.
+PROMPT_VERSION = 4
 
-#: Типы клипов. Взяты из таксономии виральности upstream (docs/upstream-notes.md)
-#: и дополнены гейминговыми: спека нацелена на стримы (§13).
+#: Типы клипов из таксономии виральности upstream. **Не используются.**
+#: Замер на трёх прогонах одного материала: модель ставит один и тот же тип
+#: всем фрагментам пакета и меняет его от прогона к прогону
+#: (emotional_peak → conflict → practical → story). Уточнение формулировки
+#: не помогло. Поле убрано из схемы ответа: ярлык, который выглядит
+#: осмысленным, но не несёт информации, хуже его отсутствия (§54).
+#:
+#: Оставлено как справка: если тип понадобится, его придётся спрашивать
+#: по одному фрагменту на запрос — похоже, решение переносится с первого.
 CLIP_TYPES = (
     "hook",            # цепляет с первой секунды
     "emotional_peak",  # сильная эмоция, крик, смех
@@ -102,14 +109,13 @@ def response_schema() -> dict[str, Any]:
                             "type": "object",
                             "additionalProperties": False,
                             "required": [
-                                "index", "start", "end", "clip_type",
+                                "index", "start", "end",
                                 "factors", "penalties", "explanation",
                             ],
                             "properties": {
                                 "index": {"type": "integer"},
                                 "start": {"type": "number"},
                                 "end": {"type": "number"},
-                                "clip_type": {"type": "string", "enum": list(CLIP_TYPES)},
                                 "factors": {
                                     "type": "object",
                                     "additionalProperties": False,
@@ -160,7 +166,7 @@ def render_candidate(index: int, candidate: dict[str, Any], lines: list[dict[str
 def build_user_message(blocks: list[str]) -> str:
     return (
         "Оцени фрагменты ниже. Для каждого верни его номер, уточнённые границы "
-        "в секундах, тип, факторы, штрафы и объяснение.\n\n" + "\n\n".join(blocks)
+        "в секундах, факторы, штрафы и объяснение.\n\n" + "\n\n".join(blocks)
     )
 
 
@@ -242,8 +248,6 @@ def render_clip_for_metadata(clip: dict[str, Any], lines: list[dict[str, Any]]) 
     )
     if clip.get("explanation"):
         header += f"\nЧем интересен: {clip['explanation']}"
-    if clip.get("clip_type"):
-        header += f"\nТип: {clip['clip_type']}"
 
     body = "\n".join(line["text"] for line in lines if line.get("text"))
     return f"{header}\nРечь:\n{body}" if body else f"{header}\n(речи не распознано)"

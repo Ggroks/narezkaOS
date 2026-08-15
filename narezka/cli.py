@@ -788,6 +788,74 @@ def serve(
 
 
 @app.command()
+def prune(
+    video_id: Annotated[str | None, typer.Option("--video-id", "-i", help="По умолчанию все")] = None,
+    project: Annotated[str, typer.Option("--project", "-p")] = "default",
+    apply: Annotated[bool, typer.Option("--apply", help="Действительно удалить")] = False,
+    include_source: Annotated[bool, typer.Option("--source", help="Удалять и исходники")] = False,
+    config_path: Annotated[Path | None, typer.Option("--config")] = None,
+) -> None:
+    """Освободить место в хранилище (§65).
+
+    По умолчанию только показывает, что можно удалить и чем это восстановимо.
+    Удаление требует явного --apply: исходник восьмичасовой записи скачивается
+    заново десятки минут, и делать это по неосторожности не стоит.
+    """
+    from narezka.core import retention  # noqa: PLC0415
+
+    config = load_config(config_path)
+    targets = [video_id] if video_id else list_videos(config.storage_root, project)
+    if not targets:
+        console.print("[yellow]В проекте нет видео.[/yellow]")
+        return
+
+    candidates = []
+    for current in targets:
+        paths = video_paths(config.storage_root, project, current)
+        if paths.exists():
+            candidates.extend(retention.inspect(paths, current))
+
+    if not include_source:
+        # Исходник удаляется только по явной просьбе: остальное восстановимо
+        # за секунды, а он — минутами скачивания.
+        candidates = [c for c in candidates if c.kind != "source"]
+
+    if not candidates:
+        console.print("[green]Освобождать нечего.[/green]")
+        if not include_source:
+            console.print("[dim]Исходники не рассматривались — добавьте --source.[/dim]")
+        return
+
+    table = Table(title="Можно освободить" if not apply else "Освобождено")
+    table.add_column("Видео", style="bold")
+    table.add_column("Что")
+    table.add_column("Размер", justify="right")
+    table.add_column("Восстановимо")
+
+    freed = 0
+    for candidate in sorted(candidates, key=lambda c: -c.size_bytes):
+        if apply:
+            freed += retention.free(candidate)
+        table.add_row(
+            candidate.video_id, candidate.kind,
+            f"{candidate.size_gb:.2f} ГБ", candidate.recoverable,
+        )
+    console.print(table)
+
+    total = retention.summarize(candidates)
+    if apply:
+        console.print(f"[green]Освобождено {freed / 1024**3:.2f} ГБ.[/green]")
+    else:
+        console.print(
+            f"Всего [bold]{total['gb']:.2f} ГБ[/bold]. "
+            f"Чтобы удалить: [bold]narezka prune --apply"
+            f"{' --source' if include_source else ''}[/bold]"
+        )
+        for candidate in candidates[:3]:
+            console.print(f"[dim]{candidate.video_id} · {candidate.kind}: {candidate.reason}[/dim]")
+
+
+@app.command()
 def clean(
     video_id: Annotated[str, typer.Option("--video-id", "-i")],
     project: Annotated[str, typer.Option("--project", "-p")] = "default",

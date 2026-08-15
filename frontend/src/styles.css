@@ -1050,3 +1050,18 @@ details.section .section-body > .card {
   margin: 0;
 }
 details.section .section-body > .card > h2 { display: none; }
+
+/* Выбор из списка в панели настроек: та же плотность, что у переключателей. */
+.choice {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 9px 8px;
+}
+
+.choice-label { font-size: 14px; }
+.choice select { font-size: 14px; padding: 7px 9px; }
+.choice-hint { font-size: 12px; color: var(--text-faint); }
+.choice select:disabled { opacity: 0.5; }
+/* Недоступный вариант виден, но не выбирается — честнее, чем прятать. */
+.choice option:disabled { color: var(--text-faint); }

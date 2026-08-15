@@ -34,7 +34,7 @@ from narezka.core.framing import (
     preview_presets,
 )
 from narezka.core.media import find_source, run_tool
-from narezka.core import db, feedback, publish, review
+from narezka.core import db, detectors, feedback, llm, publish, review
 from narezka.core.paths import list_videos, video_paths
 from narezka.core.runner import run_pipeline, run_stage
 from narezka.core.stage import StageContext
@@ -356,6 +356,10 @@ class FramingPayload(FramingConfig):
     subtitles_enabled: bool = True
     loudnorm_enabled: bool = True
     chat_ignore_start: bool = True
+    #: Модель и бэкенд зрения задаются на видео: так можно сравнить их
+    #: на одном материале, а не менять глобально и терять сравнимость.
+    llm_model: str | None = None
+    detector_backend: str | None = None
 
 
 def _framing_state(video_id: str, project: str) -> tuple[Any, Any, Framing, int, int]:
@@ -394,6 +398,8 @@ def framing(video_id: str, project: str = "default") -> dict[str, Any]:
             stored = Artifact(paths.framing).read_json()
         except ValueError:
             stored = {}
+    options["llm_model"] = stored.get("llm_model") or ctx.config.llm.model
+    options["detector_backend"] = stored.get("detector_backend") or ctx.config.detector.backend
     options["chat_ignore_start"] = (
         stored.get("chat_ignore_start")
         if isinstance(stored.get("chat_ignore_start"), bool)
@@ -766,6 +772,55 @@ def media(
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return serve_file(source, range_header)
+
+
+@app.get("/api/settings/models")
+def available_models(free_only: bool = True) -> dict[str, Any]:
+    """Модели, из которых можно выбирать, и та, что выбрана сейчас."""
+    config, _ = _config()
+    try:
+        current = llm.provider(config.llm.provider)
+    except llm.LlmError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    key = llm.api_key(provider_name=config.llm.provider)
+    try:
+        catalogue = llm.fetch_models(key, provider_name=config.llm.provider)
+    except llm.LlmError as exc:
+        # Каталог недоступен — это не повод ронять экран настроек: выбранная
+        # модель известна и без него.
+        log.warning("каталог моделей недоступен: %s", exc)
+        return {
+            "provider": current.name,
+            "selected": config.llm.model,
+            "models": [],
+            "error": str(exc),
+        }
+
+    shown = llm.rank_free(catalogue) if free_only else [
+        m for m in catalogue if m.is_text and m.structured
+    ]
+    return {
+        "provider": current.name,
+        "selected": config.llm.model,
+        "has_key": key is not None,
+        "models": [
+            {
+                "id": m.id,
+                "context": m.context_length,
+                "free": m.is_free,
+                "structured": m.structured,
+            }
+            for m in shown[:40]
+        ],
+    }
+
+
+@app.get("/api/settings/detectors")
+def available_detectors() -> dict[str, Any]:
+    """Бэкенды компьютерного зрения с честной пометкой о готовности."""
+    config, _ = _config()
+    return {"selected": config.detector.backend, "backends": detectors.describe_backends()}
 
 
 # --- контур сбора данных (§63) ---------------------------------------------

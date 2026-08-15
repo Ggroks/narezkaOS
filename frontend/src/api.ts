@@ -104,6 +104,9 @@ export type Framing = {
   loudnorm_enabled: boolean;
   /** Не доверять чату в начале записи: там здороваются, а не реагируют. */
   chat_ignore_start: boolean;
+  /** Модель и бэкенд зрения — на видео, чтобы сравнивать их на одном материале. */
+  llm_model: string | null;
+  detector_backend: string | null;
   preset: FramingPreset;
   side_crop: number;
   anchor: "center" | "left" | "right";
@@ -253,6 +256,33 @@ export type FeedbackReport = {
 
 export type Performance = { clips: PublishedClip[]; report: FeedbackReport };
 
+export type ModelOption = {
+  id: string;
+  context: number;
+  free: boolean;
+  structured: boolean;
+};
+
+export type ModelsInfo = {
+  provider: string;
+  selected: string | null;
+  has_key?: boolean;
+  models: ModelOption[];
+  error?: string;
+};
+
+export type DetectorOption = {
+  name: string;
+  label: string;
+  license: string;
+  /** Реализован ли вообще. Нет — выбрать нельзя, и это видно. */
+  implemented: boolean;
+  available: boolean;
+  note: string;
+};
+
+export type DetectorsInfo = { selected: string; backends: DetectorOption[] };
+
 export type HealthCheck = { name: string; ok: boolean; detail: string; critical: boolean };
 export type Health = {
   ok: boolean;
@@ -296,6 +326,8 @@ export const api = {
   mediaUrl: (id: string) => `/api/videos/${id}/media`,
   review: (id: string) => request<Review>(`/api/videos/${id}/review`),
   publish: (id: string) => request<PublishTexts>(`/api/videos/${id}/publish`),
+  models: () => request<ModelsInfo>("/api/settings/models"),
+  detectors: () => request<DetectorsInfo>("/api/settings/detectors"),
   performance: (id: string) => request<Performance>(`/api/videos/${id}/performance`),
   markPublished: (id: string, payload: { index: number; platform: string; url?: string }) =>
     request<Performance>(`/api/videos/${id}/performance/publish`, {

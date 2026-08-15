@@ -4,7 +4,9 @@ import {
   formatDuration,
   subscribeToJob,
   type JobEvent,
+  type DetectorsInfo,
   type Framing,
+  type ModelsInfo,
   type ReviewClip,
   type ShortsIndex,
   type Transcript,
@@ -43,6 +45,8 @@ export function VideoDetail({ videoId, onBack }: Props) {
   const [reviewClips, setReviewClips] = useState<ReviewClip[]>([]);
   const [framing, setFraming] = useState<Framing | null>(null);
   const [splitAvailable, setSplitAvailable] = useState(false);
+  const [models, setModels] = useState<ModelsInfo | null>(null);
+  const [detectors, setDetectors] = useState<DetectorsInfo | null>(null);
   const [events, setEvents] = useState<JobEvent[]>([]);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -79,6 +83,10 @@ export function VideoDetail({ videoId, onBack }: Props) {
       } catch {
         setFraming(null);
       }
+      // Списки грузятся мягко: каталог моделей ходит в сеть, и его отказ
+      // не должен мешать остальной работе.
+      api.models().then(setModels).catch(() => setModels(null));
+      api.detectors().then(setDetectors).catch(() => setDetectors(null));
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : String(exc));
     }
@@ -273,6 +281,8 @@ export function VideoDetail({ videoId, onBack }: Props) {
                 disabled={running}
                 // Отбор моментов идёт до сборки, поэтому пересчитывать надо
                 // с него: перерендерить старые кандидаты бессмысленно.
+                models={models}
+                detectors={detectors}
                 onReanalyse={() => start("candidates", true)}
               />
               <button

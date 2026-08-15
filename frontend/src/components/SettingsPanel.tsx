@@ -1,4 +1,4 @@
-import type { Framing } from "../api";
+import type { DetectorsInfo, Framing, ModelsInfo } from "../api";
 
 type Props = {
   value: Framing;
@@ -7,6 +7,8 @@ type Props = {
   onReanalyse?: () => void;
   /** Раскладка «сплит» доступна только там, где найдена вебка наложением. */
   splitAvailable: boolean;
+  models?: ModelsInfo | null;
+  detectors?: DetectorsInfo | null;
   disabled?: boolean;
 };
 
@@ -19,7 +21,7 @@ type Props = {
  * громкости, потому что звук уже сведён.
  */
 export function SettingsPanel({
-  value, onChange, onReanalyse, splitAvailable, disabled,
+  value, onChange, onReanalyse, splitAvailable, disabled, models, detectors,
 }: Props) {
   return (
     <div className="options">
@@ -63,6 +65,55 @@ export function SettingsPanel({
         disabled={disabled}
         onChange={(loudnorm_enabled) => onChange({ loudnorm_enabled })}
       />
+
+      {models && models.models.length > 0 && (
+        <label className="choice">
+          <span className="choice-label">Модель отбора</span>
+          <select
+            value={value.llm_model ?? models.selected ?? ""}
+            disabled={disabled}
+            onChange={(e) => {
+              onChange({ llm_model: e.target.value });
+              onReanalyse?.();
+            }}
+          >
+            {models.models.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.id.split("/").pop()}
+                {m.free ? " · бесплатно" : ""}
+              </option>
+            ))}
+          </select>
+          <span className="choice-hint">
+            {models.provider} · смена модели пересчитывает отбор
+          </span>
+        </label>
+      )}
+
+      {detectors && (
+        <label className="choice">
+          <span className="choice-label">Компьютерное зрение</span>
+          <select
+            value={value.detector_backend ?? detectors.selected}
+            disabled={disabled}
+            onChange={(e) => onChange({ detector_backend: e.target.value })}
+          >
+            {detectors.backends.map((b) => (
+              // Нереализованные показываются, но выбрать их нельзя: заглушка,
+              // притворяющаяся рабочей, хуже её отсутствия.
+              <option key={b.name} value={b.name} disabled={!b.available}>
+                {b.label} · {b.license}
+                {b.available ? "" : " — не готов"}
+              </option>
+            ))}
+          </select>
+          <span className="choice-hint">
+            {detectors.backends.find(
+              (b) => b.name === (value.detector_backend ?? detectors.selected),
+            )?.note}
+          </span>
+        </label>
+      )}
 
       <Toggle
         label="Размытый фон"

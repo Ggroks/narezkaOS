@@ -12,6 +12,7 @@ BAZA.md §43 и §49. Бэкенд меняется через конфиг, а 
 from __future__ import annotations
 
 import importlib.util
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -23,7 +24,56 @@ MODELS_DIR = Path(__file__).resolve().parent.parent.parent / "assets" / "models"
 #: вебки, а не по полному кадру (см. narezka/core/facecam.py).
 DEFAULT_MODEL = "blaze_face_short_range.tflite"
 
-BACKENDS = ("mediapipe",)
+@dataclass(frozen=True)
+class Backend:
+    """Бэкенд детектора и его состояние.
+
+    Нереализованные перечислены намеренно: §43 требует сменяемости, а §52 —
+    сравнения трёх на своём материале. Показывать их в интерфейсе честнее,
+    чем делать вид, что выбора нет, — но только с прямой пометкой, что они
+    не работают. Заглушка, притворяющаяся рабочей, хуже её отсутствия.
+    """
+
+    name: str
+    label: str
+    license: str
+    #: Реализован ли. Нет — выбрать нельзя, и в интерфейсе это видно.
+    implemented: bool
+    note: str
+
+
+BACKENDS: tuple[Backend, ...] = (
+    Backend(
+        "mediapipe", "MediaPipe", "Apache-2.0", True,
+        "работает: лица на CPU, модель 230 КБ в поставке",
+    ),
+    Backend(
+        "yolox", "YOLOX", "Apache-2.0", False,
+        "не реализован: люди и объекты, коммерчески чистый",
+    ),
+    Backend(
+        "ultralytics", "Ultralytics YOLO", "AGPL-3.0", False,
+        "не реализован: обычно точнее, но AGPL ограничит публичный запуск",
+    ),
+)
+
+
+def describe_backends() -> list[dict[str, object]]:
+    """Список бэкендов для интерфейса — с причиной недоступности."""
+    result = []
+    for backend in BACKENDS:
+        reason = available(backend.name) if backend.implemented else backend.note
+        result.append(
+            {
+                "name": backend.name,
+                "label": backend.label,
+                "license": backend.license,
+                "implemented": backend.implemented,
+                "available": backend.implemented and reason is None,
+                "note": reason or backend.note,
+            }
+        )
+    return result
 
 
 class DetectorError(RuntimeError):
@@ -75,8 +125,11 @@ class MediaPipeFaces:
 
 def available(backend: str = "mediapipe") -> str | None:
     """Причина, по которой бэкенд недоступен. None — доступен."""
-    if backend != "mediapipe":
-        return f"бэкенд {backend} ещё не реализован"
+    known = {b.name: b for b in BACKENDS}
+    if backend not in known:
+        return f"неизвестный бэкенд {backend}"
+    if not known[backend].implemented:
+        return known[backend].note
     for module in ("mediapipe", "cv2"):
         if importlib.util.find_spec(module) is None:
             return f"модуль {module} не установлен"

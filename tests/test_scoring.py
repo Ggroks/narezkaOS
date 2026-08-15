@@ -204,3 +204,67 @@ def test_min_score_filters_weak_clips() -> None:
 
 def test_empty_input_gives_empty_output() -> None:
     assert select_top([], limit=5) == []
+
+
+# --- границы против ограничений площадки -----------------------------------
+
+
+def test_too_short_refinement_is_extended() -> None:
+    """Реальный случай с записи стрима: модель ужала клип с 62 секунд до 6.
+
+    Она уточняет границы по смыслу и об ограничениях площадки не знает —
+    шестисекундный ролик публиковать некуда. Проверять обязан код.
+    """
+    from narezka.core.scoring import fit_duration
+
+    start, end = fit_duration(
+        100.0, 106.2, min_duration=15, max_duration=90,
+        limit_start=90.0, limit_end=152.0,
+    )
+    assert end - start == 15.0
+    # Начало сохранено: §14 требует смысловой завязки, её модель выбирала.
+    assert start == 100.0
+
+
+def test_too_long_refinement_is_trimmed() -> None:
+    from narezka.core.scoring import fit_duration
+
+    start, end = fit_duration(
+        10.0, 200.0, min_duration=15, max_duration=90,
+        limit_start=10.0, limit_end=200.0,
+    )
+    assert end - start == 90.0
+
+
+def test_extension_stops_at_the_candidate_edge() -> None:
+    """Растягивать за пределы кандидата нельзя: там материал, который
+    дешёвые сигналы не сочли интересным."""
+    from narezka.core.scoring import fit_duration
+
+    start, end = fit_duration(
+        140.0, 145.0, min_duration=15, max_duration=90,
+        limit_start=100.0, limit_end=150.0,
+    )
+    assert end == 150.0
+    assert end - start == 15.0
+
+
+def test_candidate_shorter_than_minimum_is_left_alone() -> None:
+    """Растягивать не из чего — отдаём кандидата как есть, а не выдумываем."""
+    from narezka.core.scoring import fit_duration
+
+    assert fit_duration(
+        10.0, 12.0, min_duration=15, max_duration=90,
+        limit_start=10.0, limit_end=20.0,
+    ) == (10.0, 20.0)
+
+
+def test_build_clip_applies_the_limits() -> None:
+    clip = build_clip(
+        video_id="v1", index=0,
+        candidate=candidate(100.0, 200.0),
+        verdict=verdict(start=120.0, end=126.0),
+        weights=WEIGHTS, schema_version=2, model="m",
+        min_duration=15, max_duration=90,
+    )
+    assert clip["duration"] == 15.0

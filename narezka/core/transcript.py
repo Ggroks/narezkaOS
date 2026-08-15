@@ -67,12 +67,32 @@ class RepeatInfo:
     span: int
 
 
-#: Столько повторов подряд в живой речи не встречается — это петля модели.
-CERTAIN_LOOP_REPEATS = 5
+#: Выше этого значения молчание практически достоверно — такой сегмент
+#: отбраковывается сам по себе.
+CERTAIN_NO_SPEECH = 0.9
 
-#: При меньшем числе повторов признаком служит доля сегмента: настоящая петля
-#: занимает его целиком, а эмоциональный повтор вкраплён в обычную речь.
-LOOP_DOMINANCE = 0.6
+#: Уверенность модели, при которой её мнение о наличии речи перевешивает
+#: `no_speech_prob`. Замер на записи стрима: 19 сегментов живой речи были
+#: отброшены по no_speech_prob 0.64–0.85, и **у всех** avg_logprob лежал
+#: в диапазоне −0.15…−0.31 при медиане по записи −0.21. Модель прекрасно
+#: расслышала текст: на стриме фоном идёт звук игры, и no_speech_prob
+#: подскакивает от него, а не от отсутствия речи. На студийной дорожке
+#: мультфильма его медиана 0.007, на стриме 0.051 — в семь раз выше.
+CONFIDENT_LOGPROB = -0.6
+
+#: Единственный надёжный признак петли — какую долю сегмента она занимает.
+#: Замер на записи стрима отменил прежнее правило «пять повторов подряд —
+#: это петля»: там нашлись «круто круто круто круто круто круто круто…
+#: прикинь» и «да, да, да… там навалилось всё вместе». Семь и девять повторов
+#: внутри связной фразы — это возбуждённая живая речь, ровно те моменты,
+#: ради которых всё строится (§13). У настоящей петли модели связного текста
+#: вокруг нет: она заполняет сегмент целиком.
+LOOP_DOMINANCE = 0.75
+
+#: Короче этого сегмент не судим: «Ладно, ладно, ладно» — три слова, все
+#: повторы, доля 100%, и при этом обычная речь. На таком объёме доля
+#: перестаёт что-либо означать.
+MIN_WORDS_FOR_LOOP = 4
 
 
 def find_repeat(words: list[str], max_n: int = 5) -> RepeatInfo:
@@ -103,11 +123,11 @@ def find_repeat(words: list[str], max_n: int = 5) -> RepeatInfo:
 
 
 def is_loop(words: list[str]) -> bool:
-    """Отличает петлю модели от естественного повтора в речи."""
+    """Отличает петлю модели от эмоционального повтора в живой речи."""
+    if len(words) < MIN_WORDS_FOR_LOOP:
+        return False
     info = find_repeat(words)
-    if info.repeats >= CERTAIN_LOOP_REPEATS:
-        return True
-    if info.repeats < 3 or not words:
+    if info.repeats < 3:
         return False
     return info.span / len(words) >= LOOP_DOMINANCE
 
@@ -139,10 +159,15 @@ def check_segment(
             return Verdict(True, f"типовая галлюцинация: «{phrase}»")
 
     no_speech = segment.get("no_speech_prob")
-    if no_speech is not None and no_speech > max_no_speech_prob:
-        return Verdict(True, f"вероятность отсутствия речи {no_speech:.2f}")
-
     avg_logprob = segment.get("avg_logprob")
+    if no_speech is not None and no_speech > max_no_speech_prob:
+        # Одного no_speech_prob мало: на фоне игрового звука он подскакивает
+        # и у совершенно разборчивой речи. Отбраковываем, только если модель
+        # и сама не уверена в тексте — либо если молчание почти достоверно.
+        confident = avg_logprob is not None and avg_logprob > CONFIDENT_LOGPROB
+        if no_speech > CERTAIN_NO_SPEECH or not confident:
+            return Verdict(True, f"вероятность отсутствия речи {no_speech:.2f}")
+
     if avg_logprob is not None and avg_logprob < min_avg_logprob:
         return Verdict(True, f"низкая уверенность модели {avg_logprob:.2f}")
 

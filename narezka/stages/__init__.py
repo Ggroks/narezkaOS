@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from narezka.core.stage import Stage
 from narezka.stages.candidates import CandidatesStage
+from narezka.stages.chat import ChatStage
 from narezka.stages.download import DownloadStage
 from narezka.stages.extract_audio import ExtractAudioStage
 from narezka.stages.llm_select import LlmSelectStage
@@ -22,6 +23,8 @@ PIPELINE: list[Stage] = [
     DownloadStage(),
     ProbeStage(),
     ExtractAudioStage(),
+    # Чат читается до отбора: он один из сигналов воронки (§11, §41).
+    ChatStage(),
     TranscribeStage(),
     CandidatesStage(),
     LlmSelectStage(),

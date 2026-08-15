@@ -65,9 +65,27 @@ def test_loop_detected_when_repeat_dominates_segment() -> None:
     assert is_loop("спасибо спасибо спасибо спасибо".split())
 
 
-def test_many_repeats_are_a_loop_regardless_of_length() -> None:
-    words = ("да " * 6 + "поехали дальше по карте смотрим что там").split()
-    assert is_loop(words)
+def test_emphatic_repetition_inside_a_sentence_is_speech() -> None:
+    """Настоящие случаи с записи стрима, отменившие прежнее правило.
+
+    Раньше пять повторов подряд считались петлёй безусловно. На живой записи
+    так отбраковались «круто круто круто круто круто круто круто… прикинь»
+    и «да, да, да… там навалилось всё вместе» — семь и девять повторов внутри
+    связной фразы. Это возбуждённая речь, то есть ровно те моменты, ради
+    которых строится отбор (§13). У петли модели связного текста вокруг нет.
+    """
+    for text in (
+        "йо тут еще есть физика лаза не как в пике прикинь круто круто круто круто круто круто круто не",
+        "на этом разошли собственно говоря да да да да да да да да да там навалилось всё вместе",
+        "да да да да да да поехали дальше по карте смотрим что там",
+    ):
+        assert not is_loop(text.split()), f"эмоциональный повтор принят за петлю: {text}"
+
+
+def test_very_short_segment_is_not_judged() -> None:
+    """«Ладно, ладно, ладно» — три слова, все повторы, и при этом обычная речь.
+    На таком объёме доля перестаёт что-либо означать."""
+    assert not is_loop("ладно ладно ладно".split())
 
 
 @pytest.mark.parametrize(
@@ -242,3 +260,57 @@ def test_segments_are_marked_not_deleted() -> None:
     segments = [segment("Спасибо за просмотр"), segment("нормальная реплика")]
     result = mark_suspect_segments(segments, **THRESHOLDS)
     assert len(result) == 2, "фильтр не должен удалять сегменты"
+
+
+# --- шум на фоне против настоящего молчания --------------------------------
+
+
+def test_loud_background_does_not_condemn_clear_speech() -> None:
+    """Замер на записи стрима: 19 сегментов живой речи были отброшены
+    по no_speech_prob 0.64–0.85, при том что модель расслышала их отлично
+    (avg_logprob −0.15…−0.31 при медиане по записи −0.21).
+
+    На стриме фоном идёт звук игры, и no_speech_prob подскакивает от него,
+    а не от отсутствия речи. На студийной дорожке мультфильма его медиана
+    0.007, на стриме 0.051 — в семь раз выше.
+    """
+    verdict = check_segment(
+        segment("Блять, а где другого компа, провод?", no_speech_prob=0.76, avg_logprob=-0.2),
+        **THRESHOLDS,
+    )
+    assert not verdict.suspect, f"живая речь отброшена: {verdict.reason}"
+
+
+def test_near_certain_silence_is_caught_anyway() -> None:
+    """Выше 0.9 молчание практически достоверно — уверенность не спасает."""
+    verdict = check_segment(
+        segment("какой-то текст", no_speech_prob=0.95, avg_logprob=-0.2), **THRESHOLDS
+    )
+    assert verdict.suspect
+    assert "отсутствия речи" in verdict.reason
+
+
+def test_high_no_speech_with_unsure_model_is_still_caught() -> None:
+    """Когда модель и сама не уверена в тексте, подтверждений достаточно."""
+    verdict = check_segment(
+        segment("бу бу бу", no_speech_prob=0.7, avg_logprob=-0.9), **THRESHOLDS
+    )
+    assert verdict.suspect
+
+
+def test_known_hallucination_is_caught_regardless_of_confidence() -> None:
+    """Смягчение касается только no_speech_prob: титры остаются титрами,
+    как бы уверенно модель их ни выдумала."""
+    verdict = check_segment(
+        segment("Субтитры сделал DimaTorzok", no_speech_prob=0.05, avg_logprob=-0.1),
+        **THRESHOLDS,
+    )
+    assert verdict.suspect
+
+
+def test_loop_is_caught_regardless_of_confidence() -> None:
+    verdict = check_segment(
+        segment("Спасибо. Спасибо. Спасибо. Спасибо.", no_speech_prob=0.05, avg_logprob=-0.1),
+        **THRESHOLDS,
+    )
+    assert verdict.suspect

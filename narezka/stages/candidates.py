@@ -16,17 +16,20 @@ import numpy as np
 
 from narezka.core.artifacts import Artifact
 from narezka.core.signals import (
+    chat_rate,
     deduplicate,
     limit_coverage,
     find_peaks,
     loudness_track,
     read_wav_mono,
     robust_z,
+    smooth,
     snap_to_segments,
     speech_density,
 )
 from narezka.core.stage import Device, Stage, StageContext, StageSkipped
 from narezka.core.transcript import usable_segments
+from narezka.stages.chat import CHAT_NAME
 from narezka.stages.extract_audio import AUDIO_NAME
 from narezka.stages.transcribe import TRANSCRIPT_NAME
 
@@ -35,15 +38,23 @@ CANDIDATES_NAME = "candidates.json"
 
 class CandidatesStage(Stage):
     name = "candidates"
-    version = 1
+    #: v2 — третий сигнал: всплеск чата (§41). Он не зависит от громкости,
+    #: поэтому ловит тихие, но неожиданные моменты.
+    version = 2
     device = Device.ANY
-    description = "Отбор кандидатов по всплескам громкости и плотности речи"
+    description = "Отбор кандидатов по всплескам громкости, речи и чата"
 
     def inputs(self, ctx: StageContext) -> list[Artifact]:
-        return [
+        inputs = [
             Artifact(ctx.paths.audio / AUDIO_NAME),
             Artifact(ctx.paths.transcript / TRANSCRIPT_NAME),
         ]
+        # Чат необязателен: у записи может не быть чата вовсе. Указан входом,
+        # чтобы его появление пересчитало кандидатов.
+        chat = Artifact(ctx.paths.analysis / CHAT_NAME)
+        if chat.exists():
+            inputs.append(chat)
+        return inputs
 
     def outputs(self, ctx: StageContext) -> list[Artifact]:
         return [Artifact(ctx.paths.analysis / CANDIDATES_NAME)]
@@ -77,7 +88,20 @@ class CandidatesStage(Stage):
         density = speech_density(segments, track.count, cfg.window_seconds)
         density_z = robust_z(density)
 
-        score = cfg.loudness_weight * loudness_z + cfg.density_weight * density_z
+        chat, chat_z, chat_stats = self._chat_signal(ctx, track.count, cfg)
+
+        # Вес недоступного сигнала не пропадает, а распределяется между
+        # остальными: иначе запись без чата получала бы систематически более
+        # низкие оценки просто из-за отсутствия источника.
+        weights = {"loudness": cfg.loudness_weight, "density": cfg.density_weight}
+        if chat_z is not None:
+            weights["chat"] = cfg.chat_weight
+        total = sum(weights.values()) or 1.0
+        weights = {name: value / total for name, value in weights.items()}
+
+        score = weights["loudness"] * loudness_z + weights["density"] * density_z
+        if chat_z is not None:
+            score = score + weights["chat"] * chat_z
 
         peaks = find_peaks(
             score,
@@ -88,7 +112,9 @@ class CandidatesStage(Stage):
 
         raw: list[dict] = []
         for index in peaks:
-            candidate = self._build(index, track, score, loudness_z, density, segments, short, cfg)
+            candidate = self._build(
+                index, track, score, loudness_z, density, chat, segments, short, cfg
+            )
             if candidate is not None:
                 raw.append(candidate)
 
@@ -104,7 +130,8 @@ class CandidatesStage(Stage):
 
         Artifact(ctx.paths.analysis / CANDIDATES_NAME).write_json(
             {
-                "source": "loudness+density",
+                "source": "loudness+density+chat" if chat_z is not None else "loudness+density",
+                "weights": weights,
                 "stage_version": self.version,
                 "window_seconds": cfg.window_seconds,
                 "stats": {
@@ -115,6 +142,7 @@ class CandidatesStage(Stage):
                     "kept": len(kept),
                     "coverage": round(share, 3),
                     "hit_coverage_ceiling": hit_ceiling,
+                    **chat_stats,
                 },
                 "candidates": kept,
             }
@@ -133,6 +161,31 @@ class CandidatesStage(Stage):
                 "Для однородной записи это ожидаемо, для стрима — повод проверить звук"
             )
 
+    def _chat_signal(self, ctx: StageContext, window_count: int, cfg):
+        """Всплеск чата, если он есть. Иначе сигнал просто отсутствует."""
+        artifact = Artifact(ctx.paths.analysis / CHAT_NAME)
+        if not artifact.exists():
+            return None, None, {"chat": "нет"}
+
+        try:
+            messages = artifact.read_json().get("messages", [])
+        except ValueError:
+            ctx.log.warning("файл чата не читается — сигнал пропущен")
+            return None, None, {"chat": "не читается"}
+
+        if not messages:
+            return None, None, {"chat": "пусто"}
+
+        rate = chat_rate(
+            messages, window_count, cfg.window_seconds,
+            skip_bots=not cfg.chat_include_bots,
+        )
+        rate = smooth(rate, max(int(cfg.chat_smooth_seconds / cfg.window_seconds), 1))
+        ctx.log.info(
+            "чат: %d сообщений, в среднем %.2f в секунду", len(messages), float(rate.mean())
+        )
+        return rate, robust_z(rate), {"chat_messages": len(messages)}
+
     def _build(
         self,
         index: int,
@@ -140,6 +193,7 @@ class CandidatesStage(Stage):
         score: np.ndarray,
         loudness_z: np.ndarray,
         density: np.ndarray,
+        chat,
         segments: list[dict],
         short,
         cfg,
@@ -183,6 +237,11 @@ class CandidatesStage(Stage):
                 "loudness_z": round(float(loudness_z[window][0]), 3),
                 "words_per_second": round(float(density[window][0]), 2),
                 "rms_db": round(float(track.rms_db[window][0]), 1),
+                **(
+                    {"chat_rate_peak": round(float(chat[window][0]), 2)}
+                    if chat is not None
+                    else {}
+                ),
             },
             "text": text,
         }

@@ -79,7 +79,9 @@ def parse_reply(content: str) -> list[dict[str, Any]]:
 
 class LlmSelectStage(Stage):
     name = "llm_select"
-    version = 1
+    #: v2 — уточнённые границы проверяются против ограничений площадки:
+    #: модель о них не знает и однажды ужала клип до шести секунд (§17).
+    version = 2
     device = Device.ANY
     optional = True
     description = "Отбор моментов моделью: оценка, уточнение границ, топ-N"
@@ -151,6 +153,8 @@ class LlmSelectStage(Stage):
                 weights=weights,
                 schema_version=ctx.config.score.schema_version,
                 model=", ".join(sorted(models_used)),
+                min_duration=ctx.config.output.short.min_duration,
+                max_duration=ctx.config.output.short.max_duration,
             )
             for index, candidate in enumerate(candidates)
             if index in verdicts

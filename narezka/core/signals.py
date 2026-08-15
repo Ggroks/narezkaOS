@@ -206,3 +206,49 @@ def deduplicate(
             continue
         kept.append(candidate)
     return sorted(kept, key=lambda c: c["start"])
+
+
+def chat_rate(
+    messages: list[dict],
+    window_count: int,
+    window_seconds: float,
+    *,
+    skip_bots: bool = True,
+) -> np.ndarray:
+    """Плотность сообщений чата по тем же окнам, что и громкость.
+
+    BAZA.md §41. Всплеск чата — прямое свидетельство того, что зрители сочли
+    момент важным, и он не зависит от громкости: тихая, но неожиданная сцена
+    даёт всплеск сообщений при ровном звуке.
+
+    Сообщения ботов по умолчанию не считаются: они идут по расписанию,
+    а не в ответ на происходящее, и создают всплески на пустом месте.
+    """
+    rate = np.zeros(window_count, dtype=np.float64)
+    if window_count <= 0 or window_seconds <= 0:
+        return rate
+
+    for message in messages:
+        if skip_bots and message.get("is_bot"):
+            continue
+        at = message.get("at")
+        if at is None:
+            continue
+        index = int(float(at) / window_seconds)
+        if 0 <= index < window_count:
+            rate[index] += 1.0
+
+    return rate / window_seconds
+
+
+def smooth(values: np.ndarray, window: int) -> np.ndarray:
+    """Скользящее среднее по окну.
+
+    Нужно чату: зрители реагируют с запозданием и вразнобой, поэтому всплеск
+    размазан на несколько секунд. Без сглаживания он не виден как единый
+    всплеск, а рассыпается на дрожь вокруг фона.
+    """
+    if window <= 1 or values.size == 0:
+        return values
+    kernel = np.ones(min(window, values.size)) / min(window, values.size)
+    return np.convolve(values, kernel, mode="same")

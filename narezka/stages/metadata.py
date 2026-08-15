@@ -14,7 +14,7 @@ from typing import Any
 
 from narezka.core import llm, prompts, publish
 from narezka.core.artifacts import Artifact
-from narezka.core.clips import describe_source, load_clips
+from narezka.core.clips import SELECTION_NAME, describe_source, load_clips
 from narezka.core.stage import Device, Stage, StageContext, StageSkipped
 from narezka.stages.llm_select import BATCH_SIZE, parse_reply, transcript_lines
 from narezka.stages.transcribe import TRANSCRIPT_NAME
@@ -24,13 +24,23 @@ PUBLISH_NAME = "publish.json"
 
 class MetadataStage(Stage):
     name = "metadata"
-    version = 1
+    #: v2 — клипы объявлены входом: без этого тексты брались из кэша после
+    #: пересчёта отбора и относились к другим границам.
+    version = 2
     device = Device.ANY
     optional = True
     description = "Заголовок, описание и хэштеги для каждого клипа"
 
     def inputs(self, ctx: StageContext) -> list[Artifact]:
-        return [Artifact(ctx.paths.transcript / TRANSCRIPT_NAME)]
+        # Клипы обязаны быть входом: тексты пишутся под конкретные границы,
+        # и без этой связи стадия бралась из кэша после пересчёта отбора,
+        # оставляя заголовки от других клипов.
+        inputs = [Artifact(ctx.paths.transcript / TRANSCRIPT_NAME)]
+        selection = Artifact(ctx.paths.analysis / SELECTION_NAME)
+        inputs.append(
+            selection if selection.exists() else Artifact(ctx.paths.analysis / "candidates.json")
+        )
+        return inputs
 
     def outputs(self, ctx: StageContext) -> list[Artifact]:
         return [Artifact(ctx.paths.analysis / PUBLISH_NAME)]

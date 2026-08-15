@@ -104,6 +104,44 @@ def interest_score(
     return round(clamp01(base * (1.0 - PENALTY_WEIGHT * clamp01(penalty))), 4)
 
 
+def fit_duration(
+    start: float,
+    end: float,
+    *,
+    min_duration: float,
+    max_duration: float,
+    limit_start: float,
+    limit_end: float,
+) -> tuple[float, float]:
+    """Приводит уточнённые границы к допустимой длительности (§17).
+
+    Модель уточняет границы по смыслу и об ограничениях площадки не знает:
+    на записи стрима она однажды ужала клип с 62 секунд до 6, а шестисекундный
+    ролик публиковать некуда. Проверять результат обязан код.
+
+    Начало сохраняется: §14 требует смысловой завязки, и именно её модель
+    выбирала осознанно. Двигается конец, и только упёршись в край кандидата —
+    начало.
+    """
+    if limit_end - limit_start < min_duration:
+        # Сам кандидат короче минимума — растягивать не из чего.
+        return limit_start, limit_end
+
+    start = min(max(start, limit_start), limit_end)
+    end = min(max(end, start), limit_end)
+
+    if end - start > max_duration:
+        return start, start + max_duration
+
+    if end - start < min_duration:
+        end = start + min_duration
+        if end > limit_end:
+            end = limit_end
+            start = max(limit_start, end - min_duration)
+
+    return start, end
+
+
 def build_clip(
     *,
     video_id: str,
@@ -113,6 +151,8 @@ def build_clip(
     weights: dict[str, float],
     schema_version: int,
     model: str,
+    min_duration: float = 0.0,
+    max_duration: float = float("inf"),
 ) -> dict[str, Any]:
     """Собирает запись клипа по схеме §12.
 
@@ -137,6 +177,15 @@ def build_clip(
     end = float(verdict.get("end", candidate["end"]))
     if end <= start:
         start, end = float(candidate["start"]), float(candidate["end"])
+
+    if min_duration > 0 or max_duration < float("inf"):
+        start, end = fit_duration(
+            start, end,
+            min_duration=min_duration,
+            max_duration=max_duration,
+            limit_start=float(candidate["start"]),
+            limit_end=float(candidate["end"]),
+        )
 
     return {
         "clip_id": f"{video_id}_c{index:02d}",

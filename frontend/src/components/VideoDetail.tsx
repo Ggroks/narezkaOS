@@ -4,11 +4,13 @@ import {
   formatDuration,
   subscribeToJob,
   type JobEvent,
+  type ReviewClip,
   type ShortsIndex,
   type Transcript,
   type VideoDetail as Detail,
 } from "../api";
 import { FramingPanel } from "./FramingPanel";
+import { PerformanceView } from "./PerformanceView";
 import { PublishView } from "./PublishView";
 import { ReviewView } from "./ReviewView";
 import { ShortsView } from "./ShortsView";
@@ -34,6 +36,9 @@ export function VideoDetail({ videoId, onBack }: Props) {
   const [detail, setDetail] = useState<Detail | null>(null);
   const [transcript, setTranscript] = useState<Transcript | null>(null);
   const [shorts, setShorts] = useState<ShortsIndex | null>(null);
+  // Список кандидатов нужен и обзору, и контуру сбора данных: второй берёт
+  // из него, какие клипы ещё не отмечены опубликованными.
+  const [reviewClips, setReviewClips] = useState<ReviewClip[]>([]);
   const [events, setEvents] = useState<JobEvent[]>([]);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -55,6 +60,11 @@ export function VideoDetail({ videoId, onBack }: Props) {
         setShorts(await api.shorts(videoId));
       } catch {
         setShorts(null); // роликов ещё нет
+      }
+      try {
+        setReviewClips((await api.review(videoId)).clips);
+      } catch {
+        setReviewClips([]); // кандидатов ещё нет
       }
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : String(exc));
@@ -236,6 +246,8 @@ export function VideoDetail({ videoId, onBack }: Props) {
       {shorts && shorts.files.length > 0 && <ShortsView videoId={videoId} shorts={shorts} />}
 
       <PublishView videoId={videoId} />
+
+      <PerformanceView videoId={videoId} clips={reviewClips} />
 
       {transcript && (
         <TranscriptView transcript={transcript} onSeek={seek} currentTime={currentTime} />

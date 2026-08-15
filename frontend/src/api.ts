@@ -188,6 +188,68 @@ export type ReviewStats = {
 
 export type Review = { video_id: string; clips: ReviewClip[]; stats: ReviewStats };
 
+export type Measurement = {
+  id: number;
+  measured_at: string;
+  views: number | null;
+  likes: number | null;
+  comments: number | null;
+  shares: number | null;
+  retention: number | null;
+  ctr: number | null;
+  note: string | null;
+};
+
+export type PublishedClip = {
+  clip_id: string;
+  clip_index: number;
+  title: string | null;
+  interest_score: number | null;
+  /** Вектор признаков на момент публикации — неизменяемый (§63). */
+  factors_snapshot: Record<string, number | null>;
+  score_schema_version: number | null;
+  prompt_version: number | null;
+  model: string | null;
+  human_verdict: string | null;
+  bounds_shift_start: number | null;
+  bounds_shift_end: number | null;
+  platform: string | null;
+  url: string | null;
+  published_at: string | null;
+  views: number | null;
+  measured_at: string | null;
+  history: Measurement[];
+};
+
+export type FeedbackReport = {
+  clips: number;
+  published: number;
+  measured: number;
+  correlations: {
+    metric: string;
+    sample: number;
+    reliable: boolean;
+    min_sample: number;
+    factors: Record<string, { correlation: number | null; sample: number }>;
+  };
+  verdicts: {
+    accepted: number;
+    rejected: number;
+    mean_accepted: number | null;
+    mean_rejected: number | null;
+    gap: number | null;
+    reliable: boolean;
+  };
+  bounds: {
+    sample: number;
+    mean_start_shift: number | null;
+    mean_end_shift: number | null;
+    reliable: boolean;
+  };
+};
+
+export type Performance = { clips: PublishedClip[]; report: FeedbackReport };
+
 export type HealthCheck = { name: string; ok: boolean; detail: string; critical: boolean };
 export type Health = {
   ok: boolean;
@@ -231,6 +293,28 @@ export const api = {
   mediaUrl: (id: string) => `/api/videos/${id}/media`,
   review: (id: string) => request<Review>(`/api/videos/${id}/review`),
   publish: (id: string) => request<PublishTexts>(`/api/videos/${id}/publish`),
+  performance: (id: string) => request<Performance>(`/api/videos/${id}/performance`),
+  markPublished: (id: string, payload: { index: number; platform: string; url?: string }) =>
+    request<Performance>(`/api/videos/${id}/performance/publish`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  addMetrics: (
+    id: string,
+    payload: {
+      clip_id: string;
+      views?: number;
+      likes?: number;
+      comments?: number;
+      shares?: number;
+      retention?: number;
+      ctr?: number;
+    },
+  ) =>
+    request<Performance>(`/api/videos/${id}/performance/metrics`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   setReview: (id: string, index: number, payload: { verdict?: Verdict; start?: number; end?: number }) =>
     request<Review>(`/api/videos/${id}/review/${index}`, {
       method: "PUT",

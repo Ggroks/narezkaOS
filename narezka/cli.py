@@ -468,6 +468,227 @@ def models(
         console.print("[yellow]Модель не выбрана.[/yellow] Впишите её в configs/config.yaml → llm.model")
 
 
+def _load_selection(paths) -> tuple[list[dict], dict]:
+    """Отобранные клипы и метаданные отбора."""
+    artifact = Artifact(paths.analysis / "selection.json")
+    if not artifact.exists():
+        console.print("[red]Отбор не выполнен[/red] — сначала narezka run llm_select")
+        raise typer.Exit(1)
+    data = artifact.read_json()
+    return data.get("clips", []), data
+
+
+def _title_for(paths, index: int) -> str | None:
+    artifact = Artifact(paths.analysis / "publish.json")
+    if not artifact.exists():
+        return None
+    try:
+        for entry in artifact.read_json().get("clips", []):
+            if entry.get("index") == index:
+                return entry.get("title")
+    except (ValueError, KeyError):
+        pass
+    return None
+
+
+@app.command()
+def publish(
+    video_id: Annotated[str, typer.Option("--video-id", "-i")],
+    clip: Annotated[int, typer.Option("--clip", "-c", help="Номер клипа из обзора")],
+    platform: Annotated[str, typer.Option("--platform", help="youtube | tiktok | instagram | vk")],
+    url: Annotated[str | None, typer.Option("--url", help="Ссылка на публикацию")] = None,
+    at: Annotated[str | None, typer.Option("--at", help="Дата публикации, ISO; по умолчанию сейчас")] = None,
+    project: Annotated[str, typer.Option("--project", "-p")] = "default",
+    config_path: Annotated[Path | None, typer.Option("--config")] = None,
+) -> None:
+    """Отметить клип опубликованным, заморозив его вектор признаков.
+
+    Именно в этот момент признаки перестают меняться: дальше стадии можно
+    пересчитывать сколько угодно, а запись в базе останется той, при которой
+    клип ушёл в публикацию (§63).
+    """
+    from narezka.core import db, review  # noqa: PLC0415
+
+    config = load_config(config_path)
+    paths = video_paths(config.storage_root, project, video_id)
+    if not paths.exists():
+        console.print(f"[red]Видео '{video_id}' не найдено.[/red]")
+        raise typer.Exit(1)
+
+    clips, selection = _load_selection(paths)
+    chosen = next((c for c in clips if c.get("index") == clip), None)
+    if chosen is None:
+        available = ", ".join(str(c.get("index")) for c in clips)
+        console.print(f"[red]Клипа {clip} нет в отборе.[/red] Доступны: {available}")
+        raise typer.Exit(1)
+
+    # Решение человека и его правка границ — тоже обучающий сигнал (§63).
+    # Сдвиг считается относительно того, что предложила система, а не
+    # относительно сырого кандидата: систематическую ошибку показывает
+    # именно поправка человека.
+    verdict = None
+    shift: tuple[float | None, float | None] = (None, None)
+    review_artifact = Artifact(paths.review)
+    if review_artifact.exists():
+        try:
+            entry = review.by_index(review_artifact.read_json()).get(clip)
+        except ValueError:
+            entry = None
+        if entry:
+            verdict = entry.get("verdict")
+            shift = (
+                round(entry["start"] - chosen["start"], 3),
+                round(entry["end"] - chosen["end"], 3),
+            )
+
+    meta = Artifact(paths.metadata)
+    metadata = meta.read_json() if meta.exists() else {}
+
+    with db.connect(config.storage_root) as connection:
+        db.upsert_video(
+            connection,
+            video_id=video_id,
+            project_id=project,
+            title=metadata.get("source_title") or metadata.get("source_file"),
+            content_origin=metadata.get("content_origin", "own"),
+            retention_until=metadata.get("retention_until"),
+        )
+        clip_id = db.freeze_clip(
+            connection,
+            clip={**chosen, "prompt_version": selection.get("prompt_version")},
+            video_id=video_id,
+            weights=selection.get("weights"),
+            title=_title_for(paths, clip),
+            platform=platform,
+            url=url,
+            published_at=at or db.now(),
+            human_verdict=verdict,
+            bounds_shift=shift,
+        )
+
+    console.print(f"[green]Зафиксирован[/green] клип [bold]{clip_id}[/bold] на площадке {platform}")
+    console.print(f"Дальше внесите метрики: [bold]narezka metrics --clip-id {clip_id} --views ...[/bold]")
+
+
+@app.command()
+def metrics(
+    clip_id: Annotated[str, typer.Option("--clip-id", help="Идентификатор из narezka publish")],
+    views: Annotated[int | None, typer.Option("--views")] = None,
+    likes: Annotated[int | None, typer.Option("--likes")] = None,
+    comments: Annotated[int | None, typer.Option("--comments")] = None,
+    shares: Annotated[int | None, typer.Option("--shares")] = None,
+    retention: Annotated[float | None, typer.Option("--retention", help="Доля досмотра, 0..1")] = None,
+    ctr: Annotated[float | None, typer.Option("--ctr", help="Кликабельность, 0..1")] = None,
+    platform: Annotated[str | None, typer.Option("--platform")] = None,
+    at: Annotated[str | None, typer.Option("--at", help="Когда сняты метрики, ISO")] = None,
+    note: Annotated[str | None, typer.Option("--note")] = None,
+    config_path: Annotated[Path | None, typer.Option("--config")] = None,
+) -> None:
+    """Внести фактические показатели опубликованного клипа.
+
+    Замеры копятся, а не перезаписываются: тысяча просмотров за сутки и та же
+    тысяча за месяц — разные результаты, и историю роста видно только так.
+    """
+    from narezka.core import db  # noqa: PLC0415
+
+    config = load_config(config_path)
+    with db.connect(config.storage_root) as connection:
+        row = connection.execute(
+            "SELECT platform FROM clips WHERE clip_id = ?", (clip_id,)
+        ).fetchone()
+        if row is None:
+            console.print(f"[red]Клип {clip_id} не зафиксирован.[/red] Сначала narezka publish")
+            raise typer.Exit(1)
+        try:
+            db.add_measurement(
+                connection,
+                clip_id=clip_id,
+                platform=platform or row["platform"] or "other",
+                measured_at=at,
+                views=views, likes=likes, comments=comments,
+                shares=shares, retention=retention, ctr=ctr, note=note,
+            )
+        except ValueError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(1) from None
+
+    console.print(f"[green]Записано.[/green] Отчёт: [bold]narezka report[/bold]")
+
+
+@app.command()
+def report(
+    video_id: Annotated[str | None, typer.Option("--video-id", "-i")] = None,
+    metric: Annotated[str, typer.Option("--metric", help="views | likes | retention | ctr")] = "views",
+    config_path: Annotated[Path | None, typer.Option("--config")] = None,
+) -> None:
+    """Связка «вектор признаков → фактический результат» (§63)."""
+    from narezka.core import db, feedback  # noqa: PLC0415
+
+    config = load_config(config_path)
+    with db.connect(config.storage_root) as connection:
+        rows = db.clip_rows(connection, video_id)
+
+    if not rows:
+        console.print("[yellow]Данных пока нет.[/yellow] Опубликуйте клип: narezka publish --help")
+        return
+
+    data = feedback.report(rows, metric)
+    console.print(
+        f"Клипов [bold]{data['clips']}[/bold], опубликовано {data['published']}, "
+        f"с метриками {data['measured']}"
+    )
+
+    verdicts = data["verdicts"]
+    if verdicts["gap"] is not None:
+        style = "green" if verdicts["gap"] > 0.1 else "yellow"
+        console.print(
+            f"\nСогласие с человеком: принятые [bold]{verdicts['mean_accepted']}[/bold] "
+            f"против отклонённых [bold]{verdicts['mean_rejected']}[/bold], "
+            f"разрыв [{style}]{verdicts['gap']:+.3f}[/{style}]"
+        )
+        if not verdicts["reliable"]:
+            console.print("[dim]Наблюдений мало — числа пока ни о чём не говорят.[/dim]")
+
+    bounds = data["bounds"]
+    if bounds["mean_start_shift"] is not None:
+        console.print(
+            f"\nПравка границ: начало в среднем {bounds['mean_start_shift']:+.2f} с, "
+            f"конец {bounds['mean_end_shift']:+.2f} с"
+        )
+
+    correlations = data["correlations"]
+    status = feedback.correlation_status(correlations)
+    if status == "no_data":
+        console.print(f"\n[dim]Метрики «{metric}» ещё не внесены.[/dim]")
+        return
+    if status == "single_point":
+        console.print(
+            f"\n[dim]Клип с метриками пока один. Связь считается от двух, "
+            f"а осмысленной становится от {correlations['min_sample']}.[/dim]"
+        )
+        return
+
+    table = Table(title=f"Связь факторов с «{metric}»")
+    table.add_column("Фактор", style="bold")
+    table.add_column("Связь", justify="right")
+    table.add_column("Наблюдений", justify="right")
+    for name, entry in sorted(
+        correlations["factors"].items(),
+        key=lambda item: abs(item[1]["correlation"] or 0),
+        reverse=True,
+    ):
+        value = entry["correlation"]
+        table.add_row(name, "—" if value is None else f"{value:+.3f}", str(entry["sample"]))
+    console.print(table)
+
+    if not correlations["reliable"]:
+        console.print(
+            f"[yellow]Наблюдений {correlations['sample']}, надёжно от "
+            f"{correlations['min_sample']}.[/yellow] На таком объёме коэффициент "
+            "скачет от добавления одной строки — принимать решения по нему рано."
+        )
+
+
 @app.command()
 def status(
     video_id: Annotated[str | None, typer.Option("--video-id", "-i")] = None,

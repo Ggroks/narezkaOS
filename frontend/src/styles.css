@@ -827,3 +827,60 @@ kbd {
 .publish-rejected { margin-block-start: 2px; }
 .publish-rejected summary { cursor: pointer; }
 .publish-rejected ul { margin: 6px 0 0; padding-inline-start: 18px; }
+
+/* --- результаты публикаций (§63) ------------------------------------------
+   Форма ввода метрик живёт на той же странице, что и обзор: если заносить
+   данные неудобно, их не будут заносить, и весь контур окажется мёртвым. */
+
+.perf-publish {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  margin-block-end: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-inner);
+}
+
+.perf-list { display: grid; gap: 10px; }
+
+.perf-item {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-inner);
+}
+
+.perf-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 10px;
+}
+
+.perf-field { display: flex; flex-direction: column; gap: 4px; }
+.perf-field input { padding: 7px 10px; font-size: 15px; }
+.perf-hint { opacity: 0.7; }
+
+.perf-report {
+  margin-block-start: 16px;
+  padding-block-start: 12px;
+  border-block-start: 1px solid var(--border);
+}
+
+.perf-report h3 { margin: 0 0 8px; font-weight: 600; }
+.perf-report p { margin: 0 0 6px; max-inline-size: 70ch; }
+
+.perf-table {
+  border-collapse: collapse;
+  margin-block-start: 8px;
+  font-size: 13px;
+}
+
+.perf-table caption { text-align: start; padding-block-end: 6px; }
+.perf-table th, .perf-table td { padding: 4px 16px 4px 0; text-align: start; }
+.perf-table th { color: var(--text-dim); font-weight: 500; }

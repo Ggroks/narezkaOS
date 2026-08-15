@@ -34,7 +34,7 @@ from narezka.core.framing import (
     preview_presets,
 )
 from narezka.core.media import find_source, run_tool
-from narezka.core import publish, review
+from narezka.core import db, feedback, publish, review
 from narezka.core.paths import list_videos, video_paths
 from narezka.core.runner import run_pipeline, run_stage
 from narezka.core.stage import StageContext
@@ -735,6 +735,137 @@ def media(
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return serve_file(source, range_header)
+
+
+# --- контур сбора данных (§63) ---------------------------------------------
+
+
+class PublishRequest(BaseModel):
+    index: int
+    platform: str = "youtube"
+    url: str | None = None
+
+
+class MetricsRequest(BaseModel):
+    clip_id: str
+    platform: str | None = None
+    measured_at: str | None = None
+    views: int | None = Field(default=None, ge=0)
+    likes: int | None = Field(default=None, ge=0)
+    comments: int | None = Field(default=None, ge=0)
+    shares: int | None = Field(default=None, ge=0)
+    retention: float | None = Field(default=None, ge=0, le=1)
+    ctr: float | None = Field(default=None, ge=0, le=1)
+    note: str | None = None
+
+
+def _performance_payload(config, video_id: str) -> dict[str, Any]:
+    with db.connect(config.storage_root) as connection:
+        rows = db.clip_rows(connection, video_id)
+        for row in rows:
+            row["history"] = db.measurements(connection, row["clip_id"])
+    return {"clips": rows, "report": feedback.report(rows)}
+
+
+@app.get("/api/videos/{video_id}/performance")
+def performance(video_id: str, project: str = "default") -> dict[str, Any]:
+    """Опубликованные клипы, их метрики и отчёт по связи признаков с результатом."""
+    _paths(video_id, project)
+    config, _ = _config()
+    return _performance_payload(config, video_id)
+
+
+@app.post("/api/videos/{video_id}/performance/publish")
+def mark_published(video_id: str, payload: PublishRequest, project: str = "default") -> dict[str, Any]:
+    """Фиксирует клип: с этого момента его вектор признаков неизменяем (§63)."""
+    paths, config = _paths(video_id, project)
+
+    selection = Artifact(paths.analysis / "selection.json")
+    if not selection.exists():
+        raise HTTPException(status_code=409, detail="отбор моделью не выполнялся")
+    data = selection.read_json()
+    chosen = next((c for c in data.get("clips", []) if c.get("index") == payload.index), None)
+    if chosen is None:
+        raise HTTPException(status_code=404, detail=f"клипа {payload.index} нет в отборе")
+
+    verdict, shift = None, (None, None)
+    review_artifact = Artifact(paths.review)
+    if review_artifact.exists():
+        try:
+            entry = review.by_index(review_artifact.read_json()).get(payload.index)
+        except ValueError:
+            entry = None
+        if entry:
+            verdict = entry.get("verdict")
+            shift = (
+                round(entry["start"] - chosen["start"], 3),
+                round(entry["end"] - chosen["end"], 3),
+            )
+
+    meta = Artifact(paths.metadata)
+    metadata = meta.read_json() if meta.exists() else {}
+
+    title = None
+    publish_artifact = Artifact(paths.analysis / "publish.json")
+    if publish_artifact.exists():
+        try:
+            title = next(
+                (e.get("title") for e in publish_artifact.read_json().get("clips", [])
+                 if e.get("index") == payload.index),
+                None,
+            )
+        except ValueError:
+            title = None
+
+    with db.connect(config.storage_root) as connection:
+        db.upsert_video(
+            connection,
+            video_id=video_id,
+            project_id=project,
+            title=metadata.get("source_title") or metadata.get("source_file"),
+            content_origin=metadata.get("content_origin", "own"),
+            retention_until=metadata.get("retention_until"),
+        )
+        db.freeze_clip(
+            connection,
+            clip={**chosen, "prompt_version": data.get("prompt_version")},
+            video_id=video_id,
+            weights=data.get("weights"),
+            title=title,
+            platform=payload.platform,
+            url=payload.url,
+            published_at=db.now(),
+            human_verdict=verdict,
+            bounds_shift=shift,
+        )
+
+    log.info("видео %s: клип %d опубликован на %s", video_id, payload.index, payload.platform)
+    return _performance_payload(config, video_id)
+
+
+@app.post("/api/videos/{video_id}/performance/metrics")
+def add_metrics(video_id: str, payload: MetricsRequest, project: str = "default") -> dict[str, Any]:
+    _paths(video_id, project)
+    config, _ = _config()
+    with db.connect(config.storage_root) as connection:
+        row = connection.execute(
+            "SELECT platform FROM clips WHERE clip_id = ?", (payload.clip_id,)
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="клип не зафиксирован — сначала отметьте публикацию")
+        try:
+            db.add_measurement(
+                connection,
+                clip_id=payload.clip_id,
+                platform=payload.platform or row["platform"] or "other",
+                measured_at=payload.measured_at,
+                views=payload.views, likes=payload.likes, comments=payload.comments,
+                shares=payload.shares, retention=payload.retention, ctr=payload.ctr,
+                note=payload.note,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _performance_payload(config, video_id)
 
 
 # --- собранный интерфейс ---------------------------------------------------

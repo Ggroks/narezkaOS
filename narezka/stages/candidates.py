@@ -17,13 +17,13 @@ import numpy as np
 from narezka.core.artifacts import Artifact
 from narezka.core.signals import (
     chat_rate,
+    forward_average,
     deduplicate,
     limit_coverage,
     find_peaks,
     loudness_track,
     read_wav_mono,
     robust_z,
-    smooth,
     snap_to_segments,
     speech_density,
 )
@@ -38,9 +38,9 @@ CANDIDATES_NAME = "candidates.json"
 
 class CandidatesStage(Stage):
     name = "candidates"
-    #: v2 — третий сигнал: всплеск чата (§41). Он не зависит от громкости,
-    #: поэтому ловит тихие, но неожиданные моменты.
-    version = 2
+    #: v3 — реакция чата считается окном вперёд, а не симметричным
+    #: сглаживанием: замер показал плато 15–20 с после события (§41).
+    version = 3
     device = Device.ANY
     description = "Отбор кандидатов по всплескам громкости, речи и чата"
 
@@ -180,7 +180,7 @@ class CandidatesStage(Stage):
             messages, window_count, cfg.window_seconds,
             skip_bots=not cfg.chat_include_bots,
         )
-        rate = smooth(rate, max(int(cfg.chat_smooth_seconds / cfg.window_seconds), 1))
+        rate = forward_average(rate, max(int(cfg.chat_lead_seconds / cfg.window_seconds), 1))
         ctx.log.info(
             "чат: %d сообщений, в среднем %.2f в секунду", len(messages), float(rate.mean())
         )

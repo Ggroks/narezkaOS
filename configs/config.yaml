@@ -85,7 +85,7 @@ candidates:
   loudness_weight: 0.45
   density_weight: 0.25
   chat_weight: 0.30
-  chat_smooth_seconds: 5    # зрители реагируют с запозданием, всплеск размазан
+  chat_lead_seconds: 12     # окно реакции считается вперёд: замер дал плато 15-20 с
   chat_include_bots: false  # боты пишут по расписанию, а не на происходящее
   min_peak_score: 0.8       # порог локального максимума, в единицах устойчивого z
   min_gap_seconds: 20       # чтобы один всплеск не дал десяток кандидатов

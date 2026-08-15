@@ -252,3 +252,28 @@ def smooth(values: np.ndarray, window: int) -> np.ndarray:
         return values
     kernel = np.ones(min(window, values.size)) / min(window, values.size)
     return np.convolve(values, kernel, mode="same")
+
+
+def forward_average(values: np.ndarray, window: int) -> np.ndarray:
+    """Среднее по окну **вперёд**: значение в точке t — это среднее [t, t+window].
+
+    Нужно чату. Замер на записи стрима (усреднение по 10 всплескам громкости)
+    показал, что реакция зрителей — не сдвиг на пару секунд, а растянутое
+    плато: чат поднимается сразу от события и держится повышенным ещё
+    15–20 секунд, а до события он на уровне фона или ниже.
+
+    Поэтому симметричное сглаживание неверно: оно подмешивает в оценку момента
+    чат, который к нему не относится, и размазывает всплеск назад по времени —
+    кандидат начинается раньше, чем произошло событие. Окно вперёд приписывает
+    реакцию её причине.
+    """
+    if window <= 1 or values.size == 0:
+        return values
+
+    window = min(window, values.size)
+    # Накопленная сумма даёт скользящее окно за один проход независимо
+    # от его ширины — на восьмичасовой записи это заметно.
+    padded = np.concatenate([values, np.zeros(window)])
+    cumulative = np.concatenate([[0.0], np.cumsum(padded)])
+    counts = np.minimum(np.arange(values.size) + window, values.size) - np.arange(values.size)
+    return (cumulative[np.arange(values.size) + window] - cumulative[: values.size]) / counts

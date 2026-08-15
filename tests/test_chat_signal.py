@@ -89,3 +89,50 @@ def test_chat_burst_is_visible_after_normalization() -> None:
     z = robust_z(rate)
     assert z[150] > 3.0
     assert abs(z[10]) < 3.0
+
+
+# --- окно реакции вперёд ---------------------------------------------------
+
+
+def test_forward_window_attributes_reaction_to_its_cause() -> None:
+    """Замер на записи стрима (усреднение по 10 всплескам громкости) показал:
+    реакция чата — не сдвиг на пару секунд, а плато длиной 15–20 с,
+    начинающееся сразу от события.
+
+    Значит, оценка момента t должна учитывать чат в [t, t+окно]: всплеск
+    через несколько секунд после события вызван именно им.
+    """
+    from narezka.core.signals import forward_average
+
+    burst = np.zeros(20)
+    burst[10:15] = 5.0                      # реакция началась на 10-й секунде
+    result = forward_average(burst, 6)
+    # Момент события виден раньше пика самой реакции.
+    assert result[6] > 0
+    assert int(np.argmax(result)) <= 10
+
+
+def test_forward_window_does_not_look_back() -> None:
+    """Чат до события к нему не относится: симметричное сглаживание
+    размазывало бы всплеск назад, и кандидат начинался бы раньше события."""
+    from narezka.core.signals import forward_average
+
+    values = np.array([9.0, 0.0, 0.0, 0.0, 0.0])
+    result = forward_average(values, 3)
+    assert result[1] == 0.0
+    assert result[2] == 0.0
+
+
+def test_forward_window_handles_the_tail() -> None:
+    """У конца записи окно короче — делить надо на фактическое число точек."""
+    from narezka.core.signals import forward_average
+
+    values = np.array([0.0, 0.0, 3.0])
+    assert forward_average(values, 5)[2] == 3.0
+
+
+def test_forward_window_of_one_changes_nothing() -> None:
+    from narezka.core.signals import forward_average
+
+    values = np.array([1.0, 2.0, 3.0])
+    assert forward_average(values, 1).tolist() == values.tolist()

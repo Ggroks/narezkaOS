@@ -62,6 +62,10 @@ output:
   #   focus    50%         → 63%
   #   fill     68%         → 100%, кадр заполнен целиком
   framing:
+    # single — исходник целиком на подложке; split — лицо стримера сверху,
+    # приближённый контент снизу. Сплит работает там, где стадия facecam
+    # нашла вебку наложением (§61).
+    layout: single
     preset: balanced       # full | balanced | focus | fill | custom
     side_crop: 0.25        # используется при preset: custom
     anchor: center         # center | left | right

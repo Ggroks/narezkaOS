@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 Anchor = Literal["center", "left", "right"]
+Layout = Literal["single", "split"]
 Background = Literal["blur", "color"]
 
 #: Готовые варианты обрезки по бокам. Значения — доля ширины, которая
@@ -46,8 +47,38 @@ PRESET_LABELS = {
 }
 
 
+#: Какую долю высоты кадра отдавать вебке в раскладке «сплит». Треть —
+#: лицо крупное и читаемое, но большая часть кадра остаётся контенту, ради
+#: которого ролик и смотрят.
+SPLIT_TOP_SHARE = 0.34
+
+#: Границы доли: ниже лицо перестаёт читаться на телефоне, выше контент
+#: становится слишком мелким.
+SPLIT_MIN_SHARE = 0.2
+SPLIT_MAX_SHARE = 0.5
+
+#: Во сколько раз кадр вокруг лица шире самого лица. Портрет с запасом
+#: на плечи и фон; вплотную к лицу смотреть неприятно.
+FACE_ZOOM_OUT = 2.6
+
+#: Куда попадает центр лица по высоте полосы. Чуть выше середины — так
+#: в кадр входят плечи, а не пустота над головой.
+FACE_VERTICAL_ANCHOR = 0.45
+
+
+@dataclass(frozen=True)
+class SplitPlan:
+    """Раскладка «сплит»: вебка сверху, приближённый контент снизу (§61)."""
+
+    cam_crop: tuple[int, int, int, int]     # что вырезать под вебку
+    cam_height: int                          # её высота в готовом кадре
+    main_crop: tuple[int, int, int, int]     # что вырезать под контент
+    main_height: int
+
+
 @dataclass(frozen=True)
 class Framing:
+    layout: Layout = "single"
     preset: str = "balanced"
     #: Используется при preset="custom". Доля ширины, отрезаемая суммарно.
     side_crop: float = 0.25
@@ -201,6 +232,149 @@ def build_filter(
     if subtitle_name is None:
         return f"{base}[v]"
 
+    subtitles = f"subtitles={subtitle_name}"
+    if fonts_dir:
+        subtitles += f":fontsdir={fonts_dir}"
+    return f"{base}[base];[base]{subtitles}[v]"
+
+
+def plan_split(
+    source_w: int,
+    source_h: int,
+    out_w: int,
+    out_h: int,
+    cam: tuple[int, int, int, int],
+    *,
+    face: tuple[int, int, int, int] | None = None,
+    top_share: float = SPLIT_TOP_SHARE,
+    anchor: Anchor = "center",
+) -> SplitPlan | None:
+    """Раскладка «сплит» по найденному окну вебки.
+
+    Сверху лицо стримера, снизу — приближённый контент. Смысл в том, чтобы
+    зритель одновременно видел и то, что смотрят, и реакцию: при обычном
+    кадрировании вебка в углу экрана обрезается и реакция теряется.
+
+    Контент внизу режется **в обход окна вебки**: показывать её дважды
+    незачем, а в исходном кадре она занимает угол.
+    """
+    cam_x, cam_y, cam_w, cam_h = cam
+    if cam_w <= 0 or cam_h <= 0:
+        return None
+
+    share = min(max(top_share, SPLIT_MIN_SHARE), SPLIT_MAX_SHARE)
+    cam_height = _even(out_h * share)
+    main_height = out_h - cam_height
+    if main_height <= 0:
+        return None
+
+    target_ratio = out_w / cam_height
+
+    if face is not None:
+        # Кадрируем по лицу, а не по найденному окну: окно ищется грубо,
+        # по углам кадра, и захватывает панель браузера или край экрана.
+        cam_crop = _frame_face(face, target_ratio, source_w, source_h)
+    else:
+        # Без лица подрезаем само окно под пропорцию полосы, чтобы не
+        # искажать картинку растяжением.
+        fitted_w, fitted_h = _fit_ratio(cam_w, cam_h, target_ratio)
+        cam_crop = (
+            _even(cam_x + (cam_w - fitted_w) / 2),
+            _even(cam_y + (cam_h - fitted_h) / 2),
+            _even(fitted_w),
+            _even(fitted_h),
+        )
+
+    # Контент: часть кадра, свободная от вебки. Если вебка прижата к верху,
+    # берём то, что ниже неё, иначе — весь кадр.
+    region_y = cam_y + cam_h if cam_y < source_h * 0.25 else 0
+    region_h = source_h - region_y
+    if region_h < source_h * 0.4:
+        region_y, region_h = 0, source_h
+
+    main_ratio = out_w / main_height
+    main_w, main_h = _fit_ratio(source_w, region_h, main_ratio)
+    if anchor == "left":
+        main_x = 0
+    elif anchor == "right":
+        main_x = source_w - main_w
+    else:
+        main_x = (source_w - main_w) // 2
+
+    main_crop = (
+        _even(main_x),
+        _even(region_y + (region_h - main_h) / 2),
+        _even(main_w),
+        _even(main_h),
+    )
+
+    return SplitPlan(
+        cam_crop=_clamp_crop(cam_crop, source_w, source_h),
+        cam_height=cam_height,
+        main_crop=_clamp_crop(main_crop, source_w, source_h),
+        main_height=main_height,
+    )
+
+
+def _clamp_crop(
+    crop: tuple[int, int, int, int], source_w: int, source_h: int
+) -> tuple[int, int, int, int]:
+    """Загоняет вырез в пределы кадра.
+
+    Нужно после округления до чётных сторон: пара пикселей вверх выталкивает
+    вырез за край, и ffmpeg отказывается резать.
+    """
+    x, y, w, h = crop
+    w = max(2, min(w, source_w))
+    h = max(2, min(h, source_h))
+    x = max(0, min(x, source_w - w))
+    y = max(0, min(y, source_h - h))
+    return (x - x % 2, y - y % 2, w - w % 2, h - h % 2)
+
+
+def _frame_face(
+    face: tuple[int, int, int, int], ratio: float, source_w: int, source_h: int
+) -> tuple[int, int, int, int]:
+    """Портретный кадр вокруг лица под заданную пропорцию."""
+    fx, fy, fw, fh = face
+    width = min(_even(fw * FACE_ZOOM_OUT), source_w)
+    height = min(_even(width / ratio), source_h)
+    width = _even(min(width, height * ratio))
+
+    centre_x = fx + fw / 2
+    centre_y = fy + fh / 2
+    x = _even(centre_x - width / 2)
+    y = _even(centre_y - height * FACE_VERTICAL_ANCHOR)
+
+    # Кадр не должен выходить за пределы исходника.
+    x = max(0, min(x, source_w - width))
+    y = max(0, min(y, source_h - height))
+    return (_even(x), _even(y), width, height)
+
+
+def _fit_ratio(width: int, height: int, ratio: float) -> tuple[int, int]:
+    """Наибольший прямоугольник заданной пропорции внутри области."""
+    if width / height > ratio:
+        return int(height * ratio), height
+    return width, int(width / ratio)
+
+
+def build_split_filter(
+    plan: SplitPlan,
+    out_w: int,
+    subtitle_name: str | None = None,
+    fonts_dir: str | None = None,
+) -> str:
+    """Цепочка фильтров для сплита: две полосы одна над другой."""
+    cx, cy, cw, ch = plan.cam_crop
+    mx, my, mw, mh = plan.main_crop
+    base = (
+        f"[0:v]crop={cw}:{ch}:{cx}:{cy},scale={out_w}:{plan.cam_height}[cam];"
+        f"[0:v]crop={mw}:{mh}:{mx}:{my},scale={out_w}:{plan.main_height}[main];"
+        f"[cam][main]vstack=inputs=2"
+    )
+    if subtitle_name is None:
+        return f"{base}[v]"
     subtitles = f"subtitles={subtitle_name}"
     if fonts_dir:
         subtitles += f":fontsdir={fonts_dir}"

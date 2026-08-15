@@ -11,6 +11,7 @@ from narezka.stages.candidates import CandidatesStage
 from narezka.stages.chat import ChatStage
 from narezka.stages.download import DownloadStage
 from narezka.stages.extract_audio import ExtractAudioStage
+from narezka.stages.facecam import FacecamStage
 from narezka.stages.llm_select import LlmSelectStage
 from narezka.stages.metadata import MetadataStage
 from narezka.stages.probe import ProbeStage
@@ -28,6 +29,8 @@ PIPELINE: list[Stage] = [
     TranscribeStage(),
     CandidatesStage(),
     LlmSelectStage(),
+    # После отбора: вебка ищется по тем отрезкам, что пойдут в ролики (§61).
+    FacecamStage(),
     SubtitlesStage(),
     RenderStage(),
     MetadataStage(),

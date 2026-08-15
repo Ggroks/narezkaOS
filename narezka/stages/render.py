@@ -18,7 +18,14 @@ from typing import Any
 from narezka.core.artifacts import Artifact
 from narezka.core.config import FramingConfig
 from narezka.core.fonts import escape_for_filter, fonts_dir
-from narezka.core.framing import Framing, build_filter, describe, plan_frame
+from narezka.core.framing import (
+    Framing,
+    build_filter,
+    build_split_filter,
+    describe,
+    plan_frame,
+    plan_split,
+)
 from narezka.core.media import find_source, run_tool
 from narezka.core.stage import Device, Stage, StageContext, StageSkipped
 from narezka.core.clips import SELECTION_NAME, describe_source, load_clips
@@ -64,9 +71,8 @@ def source_size(metadata: dict[str, Any]) -> tuple[int, int]:
 
 class RenderStage(Stage):
     name = "render"
-    #: v4 — ролики режутся по отобранным моделью клипам с уточнёнными
-    #: границами, а не по сырым кандидатам (§11).
-    version = 4
+    #: v5 — раскладка «сплит»: лицо стримера сверху, контент снизу (§61).
+    version = 5
     device = Device.ANY
     description = "Вертикальные ролики 9:16 с вшитыми субтитрами"
 
@@ -131,6 +137,7 @@ class RenderStage(Stage):
         ctx.paths.shorts.mkdir(parents=True, exist_ok=True)
 
         ctx.log.info(describe_source(clip_source, len(clips)))
+        cams = self._facecams(ctx)
 
         rendered: list[dict[str, Any]] = []
         for clip in clips:
@@ -143,9 +150,12 @@ class RenderStage(Stage):
             target = Artifact(ctx.paths.shorts / f"{index:02d}.mp4")
             ctx.log.info("рендер %d: %.1f с", index, duration)
 
+            split = self._split_for(clip, cams, framing, src_w, src_h, short)
+
             with target.reserve() as tmp:
                 run_tool(
                     self._command(
+                        split=split,
                         source=source,
                         start=clip["start"],
                         duration=duration,
@@ -208,6 +218,37 @@ class RenderStage(Stage):
         ctx.log.info("готово роликов %d, суммарно %.1f МБ", len(rendered), total_mb)
 
     @staticmethod
+    @staticmethod
+    def _facecams(ctx: StageContext) -> dict[str, Any]:
+        artifact = Artifact(ctx.paths.analysis / "facecam.json")
+        if not artifact.exists():
+            return {}
+        try:
+            return artifact.read_json().get("clips", {})
+        except ValueError:
+            return {}
+
+    @staticmethod
+    def _split_for(clip, cams, framing, src_w, src_h, short):
+        """Раскладка сплита для клипа — если она вообще применима.
+
+        Полноэкранная камера сплита не требует: делить кадр, где и так одно
+        лицо, значит показать его дважды.
+        """
+        if framing.layout != "split":
+            return None
+        cam = cams.get(str(clip["index"]))
+        if not cam or cam.get("full_frame"):
+            return None
+        face = cam.get("face") or {}
+        return plan_split(
+            src_w, src_h, short.width, short.height,
+            (cam["x"], cam["y"], cam["width"], cam["height"]),
+            face=(face["x"], face["y"], face["width"], face["height"]) if face else None,
+            anchor=framing.anchor,
+        )
+
+    @staticmethod
     def _background_kind(framing: Framing, plan, has_video: bool) -> str:
         if not has_video:
             return "solid"
@@ -226,6 +267,7 @@ class RenderStage(Stage):
         subtitle_name: str,
         output,
         has_video: bool,
+        split=None,
         framing: Framing,
         plan,
         width: int,
@@ -249,10 +291,15 @@ class RenderStage(Stage):
 
         if has_video:
             args += ["-ss", f"{start:.3f}", "-i", str(source), "-t", f"{duration:.3f}"]
-            video_filter = build_filter(
-                plan, framing, width, height, subtitle_name,
-                fonts_dir=escape_for_filter(fonts_dir()),
-            )
+            if split is not None:
+                video_filter = build_split_filter(
+                    split, width, subtitle_name, fonts_dir=escape_for_filter(fonts_dir())
+                )
+            else:
+                video_filter = build_filter(
+                    plan, framing, width, height, subtitle_name,
+                    fonts_dir=escape_for_filter(fonts_dir()),
+                )
             args += ["-filter_complex", video_filter, "-map", "[v]", "-map", "0:a:0"]
         else:
             args += [

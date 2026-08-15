@@ -31,3 +31,7 @@ frontend/dist/
 
 # Кэш инкрементальной сборки TypeScript — меняется при каждой сборке
 frontend/tsconfig.tsbuildinfo
+
+# Служебные файлы autoskills во вложенных каталогах
+frontend/.claude/
+frontend/skills-lock.json

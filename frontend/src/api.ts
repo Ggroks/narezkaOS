@@ -98,6 +98,11 @@ export type ShortsIndex = {
 export type FramingPreset = "full" | "balanced" | "focus" | "fill" | "custom";
 
 export type Framing = {
+  /** single — исходник на подложке; split — вебка сверху, контент снизу. */
+  layout: "single" | "split";
+  /** Что вшивать в готовый ролик. Каждый пункт отключается отдельно. */
+  subtitles_enabled: boolean;
+  loudnorm_enabled: boolean;
   preset: FramingPreset;
   side_crop: number;
   anchor: "center" | "left" | "right";
@@ -117,6 +122,8 @@ export type PresetPreview = {
 
 export type FramingState = {
   current: Framing;
+  /** Найдена ли вебка наложением — без неё раскладка «сплит» невозможна. */
+  split_available?: boolean;
   /** Настройки заданы вручную для этого видео, а не взяты из конфига. */
   custom: boolean;
   source: { width: number; height: number };

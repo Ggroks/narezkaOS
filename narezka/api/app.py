@@ -39,7 +39,7 @@ from narezka.core.paths import list_videos, video_paths
 from narezka.core.runner import run_pipeline, run_stage
 from narezka.core.stage import StageContext
 from narezka.stages import PIPELINE, get_stage
-from narezka.stages.render import load_framing, source_size
+from narezka.stages.render import load_framing, load_options, source_size
 
 app = FastAPI(title="Narezka OS", version="0.1.0")
 log = get_logger("api")
@@ -346,10 +346,15 @@ PREVIEW_HEIGHT = 960
 
 
 class FramingPayload(FramingConfig):
-    """Настройки кадрирования, присланные из интерфейса.
+    """Настройки ролика, присланные из интерфейса.
 
-    Наследует проверки диапазонов у конфига — отдельную схему держать незачем.
+    Кадрирование наследует проверки диапазонов у конфига, а переключатели
+    того, что вшивать, живут здесь же: для пользователя это одна панель
+    настроек, и разносить её по двум файлам незачем.
     """
+
+    subtitles_enabled: bool = True
+    loudnorm_enabled: bool = True
 
 
 def _framing_state(video_id: str, project: str) -> tuple[Any, Any, Framing, int, int]:
@@ -368,8 +373,23 @@ def framing(video_id: str, project: str = "default") -> dict[str, Any]:
     short = ctx.config.output.short
     plan = plan_frame(src_w, src_h, short.width, short.height, current)
 
+    # Сплит возможен только там, где вебка найдена наложением: предлагать
+    # раскладку, для которой нет данных, значит обещать несбыточное.
+    facecam = Artifact(paths.analysis / "facecam.json")
+    split_available = False
+    if facecam.exists():
+        try:
+            split_available = any(
+                not entry.get("full_frame")
+                for entry in facecam.read_json().get("clips", {}).values()
+            )
+        except ValueError:
+            split_available = False
+
+    options = load_options(ctx)
     return {
-        "current": current.__dict__,
+        "current": {**current.__dict__, **options},
+        "split_available": split_available,
         "custom": Artifact(paths.framing).exists(),
         "source": {"width": src_w, "height": src_h},
         "output": {"width": short.width, "height": short.height},

@@ -1,28 +1,51 @@
-/* Тёмная тема по умолчанию — §69: работа идёт с видео, светлый фон вокруг
-   кадра мешает оценивать картинку. */
+/* Оформление интерфейса.
+
+   Раскладка редактора: слева просмотр, справа настройки, снизу лента клипов.
+   Так устроены привычные монтажные программы, и переучиваться не приходится.
+
+   Палитра задана в OKLCH: в нём светлота воспринимается равномерно, поэтому
+   ступени поверхностей действительно выглядят равными шагами, а не «две почти
+   одинаковые и одна выпадающая», как выходит при подборе в hex. */
 
 :root {
-  --bg: #0e1013;
-  --surface: #171a1f;
-  --surface-2: #1e222a;
-  --border: #2a2f39;
-  --text: #e6e8ec;
-  /* Приглушённый текст осветлён с #9aa3b2: на surface-2 прежний давал
-     недостаточный контраст для основного текста. */
-  --text-dim: #a8b1c0;
-  --accent: #5b9dff;
-  --ok: #3fbf7f;
-  --warn: #e0a33a;
-  --bad: #e5604d;
+  /* Поверхности: почти нейтральный тёмный с еле заметной синевой. Работа идёт
+     с видео, и любой выраженный оттенок фона искажает восприятие кадра. */
+  --bg:          oklch(0.17 0.008 265);
+  --surface:     oklch(0.21 0.009 265);
+  --surface-2:   oklch(0.25 0.010 265);
+  --surface-3:   oklch(0.30 0.011 265);
+  --border:      oklch(0.33 0.012 265);
+  --border-soft: oklch(0.27 0.010 265);
 
-  /* Радиусы концентричны: внутренний = внешний − отступ контейнера.
-     Несогласованные радиусы у вложенных элементов — самое частое, от чего
-     интерфейс выглядит небрежным. */
-  --radius: 12px;
-  --radius-inner: 8px;
+  --text:      oklch(0.96 0.004 265);
+  --text-dim:  oklch(0.74 0.014 265);
+  --text-faint: oklch(0.58 0.012 265);
+
+  /* Один акцент на весь интерфейс: когда акцентов несколько, ни один
+     не притягивает взгляд. */
+  --accent:      oklch(0.72 0.155 250);
+  --accent-hover: oklch(0.78 0.150 250);
+  --accent-soft: oklch(0.72 0.155 250 / 0.16);
+  --on-accent:   oklch(0.17 0.03 265);
+
+  --ok:   oklch(0.76 0.150 155);
+  --warn: oklch(0.82 0.140 80);
+  --bad:  oklch(0.68 0.180 25);
+
+  /* Радиусы концентричны: внутренний = внешний − отступ контейнера. */
+  --radius:       14px;
+  --radius-inner: 10px;
+  --radius-small: 7px;
   --pad: 16px;
 
-  --focus: #8cbcff;
+  --focus: oklch(0.85 0.10 250);
+
+  /* Шрифт задан стопкой системных: они уже установлены, грузить нечего,
+     а начертания у них выверенные. Цифры табличные там, где значения
+     меняются, — иначе вёрстка дёргается при каждом обновлении. */
+  --font: "Inter var", Inter, ui-sans-serif, -apple-system, "Segoe UI",
+          Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
 
   color-scheme: dark;
 }
@@ -35,7 +58,9 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Ubuntu, sans-serif;
+  font: 15px/1.5 var(--font);
+  /* Убирает лишнюю широту у системных гротесков в заголовках интерфейса. */
+  letter-spacing: -0.006em;
   /* На macOS текст рендерится тяжелее задуманного — сглаживание один раз
      на корне, а не покомпонентно. */
   -webkit-font-smoothing: antialiased;
@@ -53,6 +78,7 @@ body {
 
 button {
   font: inherit;
+  font-weight: 500;
   color: var(--text);
   background: var(--surface-2);
   border: 1px solid var(--border);
@@ -63,11 +89,11 @@ button {
   transition-duration: 120ms;
   transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
 }
-button:hover:not(:disabled) { background: #262b34; border-color: #3a4150; }
+button:hover:not(:disabled) { background: var(--surface-3); border-color: var(--border); }
 button:active:not(:disabled) { scale: 0.96; }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
-button.primary { background: var(--accent); border-color: var(--accent); color: #06101f; font-weight: 600; }
-button.primary:hover:not(:disabled) { background: #74acff; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+button.primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
 button.danger:hover:not(:disabled) { border-color: var(--bad); color: var(--bad); }
 
 /* Иконочные кнопки: квадрат не меньше 32px и увеличенная зона нажатия,
@@ -114,7 +140,7 @@ input[type="radio"], input[type="checkbox"] {
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
-.app { max-width: 1100px; margin: 0 auto; padding: 24px 20px 64px; }
+.app { max-width: 1240px; margin: 0 auto; padding: 20px 20px 56px; }
 
 header.top {
   display: flex;
@@ -140,10 +166,7 @@ header.top .env { color: var(--text-dim); font-size: 13px; margin-inline-start: 
 .grow { flex: 1; min-width: 0; }
 .dim { color: var(--text-dim); }
 .small { font-size: 13px; }
-.mono {
-  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 12px;
-}
+.mono { font-family: var(--font-mono); font-size: 12px; }
 /* Меняющиеся значения не должны дёргать вёрстку при обновлении. */
 .tnum { font-variant-numeric: tabular-nums; }
 
@@ -157,10 +180,10 @@ header.top .env { color: var(--text-dim); font-size: 13px; margin-inline-start: 
   color: var(--text-dim);
   white-space: nowrap;
 }
-.badge.ok { color: var(--ok); border-color: #2f7a58; }
-.badge.warn { color: var(--warn); border-color: #7a6330; }
-.badge.bad { color: var(--bad); border-color: #7a4038; }
-.badge.run { color: var(--accent); border-color: #35558c; }
+.badge.ok { color: var(--ok); border-color: oklch(0.45 0.09 155); }
+.badge.warn { color: var(--warn); border-color: oklch(0.48 0.08 80); }
+.badge.bad { color: var(--bad); border-color: oklch(0.45 0.10 25); }
+.badge.run { color: var(--accent); border-color: oklch(0.45 0.10 250); }
 
 .video-list { display: grid; gap: 10px; }
 /* Строка списка — не кнопка: внутри неё есть собственная кнопка удаления,
@@ -177,7 +200,7 @@ header.top .env { color: var(--text-dim); font-size: 13px; margin-inline-start: 
   transition-property: background-color, border-color;
   transition-duration: 120ms;
 }
-.video-item:hover { border-color: #3a4150; background: var(--surface-2); }
+.video-item:hover { border-color: var(--border); background: var(--surface-2); }
 .video-item:focus-within { border-color: var(--accent); }
 .video-item .title { color: var(--text); font-weight: 600; }
 .video-item a.open { color: inherit; display: block; }
@@ -204,13 +227,13 @@ header.top .env { color: var(--text-dim); font-size: 13px; margin-inline-start: 
 .stage.active { border-color: var(--accent); }
 
 .log {
-  background: #0a0c0f;
+  background: oklch(0.13 0.008 265);
   border: 1px solid var(--border);
   border-radius: var(--radius-inner);
   padding: 10px 12px;
   max-height: 220px;
   overflow-y: auto;
-  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.7;
   font-variant-numeric: tabular-nums;
@@ -661,7 +684,7 @@ button.danger-on {
   border-radius: var(--radius-inner);
 }
 
-.review-card:hover:not(:disabled) { border-color: #3a4150; background: #262b34; }
+.review-card:hover:not(:disabled) { border-color: var(--border); background: var(--surface-3); }
 .review-card.active { border-color: var(--accent); }
 
 /* Цветная кромка слева — оценка видна в списке без чтения подписей. */
@@ -705,7 +728,7 @@ button.danger-on {
 .review-keys dt, .review-keys dd { margin: 0; }
 
 kbd {
-  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   padding: 2px 6px;
   border: 1px solid var(--border);
@@ -732,9 +755,9 @@ kbd {
   border: 1px solid var(--border);
 }
 
-.review-score.good { color: var(--ok); border-color: #2f7a58; }
-.review-score.fair { color: var(--warn); border-color: #7a6330; }
-.review-score.weak { color: var(--bad); border-color: #7a4038; }
+.review-score.good { color: var(--ok); border-color: oklch(0.45 0.09 155); }
+.review-score.fair { color: var(--warn); border-color: oklch(0.48 0.08 80); }
+.review-score.weak { color: var(--bad); border-color: oklch(0.45 0.10 25); }
 
 .review-score-inline.good { color: var(--ok); }
 .review-score-inline.fair { color: var(--warn); }
@@ -884,3 +907,136 @@ kbd {
 .perf-table caption { text-align: start; padding-block-end: 6px; }
 .perf-table th, .perf-table td { padding: 4px 16px 4px 0; text-align: start; }
 .perf-table th { color: var(--text-dim); font-weight: 500; }
+
+/* --- редакторская раскладка -----------------------------------------------
+   Слева просмотр, справа настройки, снизу лента клипов — как в привычных
+   монтажных программах. Переучиваться не приходится, а перегружать экран
+   всеми возможностями сразу незачем: редко используемое убрано под сворачивание. */
+
+.editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: var(--pad);
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .editor { grid-template-columns: minmax(0, 1fr); }
+}
+
+.editor-side {
+  position: sticky;
+  top: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  padding: 14px;
+}
+
+.panel > h3 {
+  margin: 0 0 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+/* --- переключатели --------------------------------------------------------- */
+
+.options { display: flex; flex-direction: column; gap: 2px; }
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 9px 8px;
+  border-radius: var(--radius-small);
+  cursor: pointer;
+}
+
+.toggle:hover:not(.off) { background: var(--surface-2); }
+.toggle.off { cursor: default; opacity: 0.5; }
+
+.toggle:has(input:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.toggle-track {
+  flex: none;
+  inline-size: 34px;
+  block-size: 20px;
+  padding: 2px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  transition: background-color 140ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.toggle-knob {
+  display: block;
+  inline-size: 16px;
+  block-size: 16px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  transition: translate 140ms cubic-bezier(0.2, 0, 0, 1), background-color 140ms;
+}
+
+.toggle:has(input:checked) .toggle-track { background: var(--accent); }
+.toggle:has(input:checked) .toggle-knob {
+  translate: 14px 0;
+  background: var(--on-accent);
+}
+
+.toggle-text { display: flex; flex-direction: column; gap: 1px; min-inline-size: 0; }
+.toggle-label { font-size: 14px; }
+.toggle-hint { font-size: 12px; color: var(--text-faint); }
+
+/* --- свёрнутые разделы ------------------------------------------------------
+   Стадии, журнал и транскрипт нужны при разборе неполадок, а не при обычной
+   работе. Держать их всегда развёрнутыми значит прятать главное среди служебного. */
+
+details.section {
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  margin-block-end: 10px;
+}
+
+details.section > summary {
+  padding: 12px 14px;
+  cursor: pointer;
+  font-weight: 500;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+details.section > summary::-webkit-details-marker { display: none; }
+
+details.section > summary::before {
+  content: "›";
+  color: var(--text-faint);
+  font-size: 18px;
+  line-height: 1;
+  transition: rotate 140ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+details.section[open] > summary::before { rotate: 90deg; }
+details.section > summary:hover { color: var(--accent); }
+details.section .section-body { padding: 0 14px 14px; }
+
+/* Исходник — справочный материал, а не главный экран: работа идёт с клипами.
+   Без ограничения по высоте он занимал весь первый экран, и до настроек
+   приходилось прокручивать. */
+.source-preview video { max-block-size: 42vh; object-fit: contain; }
+
+.editor-main { min-inline-size: 0; }
+.editor-main .card:last-child { margin-block-end: 0; }

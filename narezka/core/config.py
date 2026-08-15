@@ -103,6 +103,11 @@ class ShortOutput(BaseModel):
 class OutputConfig(BaseModel):
     short: ShortOutput = Field(default_factory=ShortOutput)
     framing: FramingConfig = Field(default_factory=FramingConfig)
+    #: Что вшивать в готовый ролик. Каждый пункт отключается отдельно:
+    #: нарезка нужна и без субтитров (например, под свой монтаж), а
+    #: нормализация громкости мешает, если звук уже сведён.
+    subtitles_enabled: bool = True
+    loudnorm_enabled: bool = True
     loudness_target_lufs: float = -14.0
     crf: int = 20
     pix_fmt: str = "yuv420p"

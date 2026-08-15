@@ -4,6 +4,7 @@ import {
   formatDuration,
   subscribeToJob,
   type JobEvent,
+  type Framing,
   type ReviewClip,
   type ShortsIndex,
   type Transcript,
@@ -11,6 +12,7 @@ import {
 } from "../api";
 import { FramingPanel } from "./FramingPanel";
 import { PerformanceView } from "./PerformanceView";
+import { SettingsPanel } from "./SettingsPanel";
 import { PublishView } from "./PublishView";
 import { ReviewView } from "./ReviewView";
 import { ShortsView } from "./ShortsView";
@@ -39,6 +41,8 @@ export function VideoDetail({ videoId, onBack }: Props) {
   // Список кандидатов нужен и обзору, и контуру сбора данных: второй берёт
   // из него, какие клипы ещё не отмечены опубликованными.
   const [reviewClips, setReviewClips] = useState<ReviewClip[]>([]);
+  const [framing, setFraming] = useState<Framing | null>(null);
+  const [splitAvailable, setSplitAvailable] = useState(false);
   const [events, setEvents] = useState<JobEvent[]>([]);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -66,6 +70,15 @@ export function VideoDetail({ videoId, onBack }: Props) {
       } catch {
         setReviewClips([]); // кандидатов ещё нет
       }
+      try {
+        const state = await api.framing(videoId);
+        setFraming(state.current);
+        // Сплит предлагается только там, где вебка найдена наложением:
+        // включать раскладку, для которой нет данных, — обещать несбыточное.
+        setSplitAvailable(state.split_available ?? false);
+      } catch {
+        setFraming(null);
+      }
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : String(exc));
     }
@@ -91,6 +104,17 @@ export function VideoDetail({ videoId, onBack }: Props) {
     // событии оборвало бы подписку.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running, videoId, load]);
+
+  async function updateFraming(patch: Partial<Framing>) {
+    if (!framing) return;
+    const next = { ...framing, ...patch };
+    setFraming(next);
+    try {
+      await api.setFraming(videoId, next);
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : String(exc));
+    }
+  }
 
   async function start(stage?: string, force = false) {
     setError(null);
@@ -152,7 +176,7 @@ export function VideoDetail({ videoId, onBack }: Props) {
         </button>
       </div>
 
-      <section className="card" aria-labelledby="source-heading">
+      <section className="card source-preview" aria-labelledby="source-heading">
         <h2 id="source-heading">Исходник</h2>
         <video
           ref={videoRef}
@@ -173,8 +197,9 @@ export function VideoDetail({ videoId, onBack }: Props) {
         </div>
       </section>
 
-      <section className="card" aria-labelledby="stages-heading">
-        <h2 id="stages-heading">Стадии</h2>
+      <details className="section" aria-labelledby="stages-heading">
+        <summary id="stages-heading">Стадии обработки</summary>
+        <div className="section-body">
         <div className="stages">
           {detail.stages.map((stage) => {
             const event = [...events].reverse().find((e) => e.stage === stage.name && e.event === "finished");
@@ -227,11 +252,38 @@ export function VideoDetail({ videoId, onBack }: Props) {
             ))}
           </div>
         )}
-      </section>
+        </div>
+      </details>
 
       {/* Обзор идёт до кадрирования: сначала решают, годится ли момент,
           и только потом — как его показать. */}
-      <ReviewView videoId={videoId} durationSeconds={meta.duration_seconds ?? null} />
+      <div className="editor">
+        <div className="editor-main">
+          <ReviewView videoId={videoId} durationSeconds={meta.duration_seconds ?? null} />
+        </div>
+
+        <aside className="editor-side" aria-label="Настройки ролика">
+          {framing && (
+            <div className="panel">
+              <h3>Что вошло в ролик</h3>
+              <SettingsPanel
+                value={framing}
+                onChange={updateFraming}
+                splitAvailable={splitAvailable}
+                disabled={running}
+              />
+              <button
+                className="primary"
+                style={{ inlineSize: "100%", marginBlockStart: 10 }}
+                disabled={running}
+                onClick={() => start("render", true)}
+              >
+                Пересобрать ролики
+              </button>
+            </div>
+          )}
+        </aside>
+      </div>
 
       {meta.has_video !== false && (
         <FramingPanel
@@ -250,7 +302,12 @@ export function VideoDetail({ videoId, onBack }: Props) {
       <PerformanceView videoId={videoId} clips={reviewClips} />
 
       {transcript && (
-        <TranscriptView transcript={transcript} onSeek={seek} currentTime={currentTime} />
+        <details className="section">
+          <summary>Транскрипт</summary>
+          <div className="section-body">
+            <TranscriptView transcript={transcript} onSeek={seek} currentTime={currentTime} />
+          </div>
+        </details>
       )}
     </>
   );

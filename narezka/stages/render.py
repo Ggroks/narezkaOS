@@ -38,6 +38,26 @@ SHORTS_INDEX = "index.json"
 FALLBACK_SIZE = (1920, 1080)
 
 
+def load_options(ctx: StageContext) -> dict[str, bool]:
+    """Что вшивать в ролик: конфиг, поверх него — правка для этого видео."""
+    out = ctx.config.output
+    options = {
+        "subtitles_enabled": out.subtitles_enabled,
+        "loudnorm_enabled": out.loudnorm_enabled,
+    }
+    override = Artifact(ctx.paths.framing)
+    if override.exists():
+        try:
+            stored = override.read_json()
+        except ValueError:
+            return options
+        if isinstance(stored, dict):
+            for key in options:
+                if isinstance(stored.get(key), bool):
+                    options[key] = stored[key]
+    return options
+
+
 def load_framing(ctx: StageContext) -> Framing:
     """Настройки кадрирования: конфиг, поверх него — ручная правка для видео.
 
@@ -71,8 +91,8 @@ def source_size(metadata: dict[str, Any]) -> tuple[int, int]:
 
 class RenderStage(Stage):
     name = "render"
-    #: v5 — раскладка «сплит»: лицо стримера сверху, контент снизу (§61).
-    version = 5
+    #: v6 — субтитры и нормализация громкости отключаются по отдельности.
+    version = 6
     device = Device.ANY
     description = "Вертикальные ролики 9:16 с вшитыми субтитрами"
 
@@ -100,6 +120,7 @@ class RenderStage(Stage):
         return {
             **ctx.config.output.model_dump(),
             "framing": load_framing(ctx).__dict__,
+            **load_options(ctx),
             "subtitle_style": ctx.config.subtitles.style,
         }
 
@@ -119,6 +140,7 @@ class RenderStage(Stage):
         has_video = bool(metadata.get("has_video", True))
 
         framing = load_framing(ctx)
+        options = load_options(ctx)
         src_w, src_h = source_size(metadata)
         plan = plan_frame(src_w, src_h, short.width, short.height, framing)
 
@@ -142,8 +164,8 @@ class RenderStage(Stage):
         rendered: list[dict[str, Any]] = []
         for clip in clips:
             index = clip["index"]
-            name = subtitle_files.get(index)
-            if name is None:
+            name = subtitle_files.get(index) if options["subtitles_enabled"] else None
+            if options["subtitles_enabled"] and name is None:
                 continue
 
             duration = clip["end"] - clip["start"]
@@ -160,6 +182,7 @@ class RenderStage(Stage):
                         start=clip["start"],
                         duration=duration,
                         subtitle_name=name,
+                        loudnorm=options["loudnorm_enabled"],
                         output=tmp,
                         has_video=has_video,
                         framing=framing,
@@ -264,8 +287,9 @@ class RenderStage(Stage):
         source,
         start: float,
         duration: float,
-        subtitle_name: str,
-        output,
+        subtitle_name: str | None,
+        loudnorm: bool = True,
+        output=None,
         has_video: bool,
         split=None,
         framing: Framing,
@@ -311,8 +335,9 @@ class RenderStage(Stage):
                 "-map", "[v]", "-map", "1:a:0",
             ]
 
+        if loudnorm:
+            args += ["-af", f"loudnorm=I={lufs}:TP=-1.5:LRA=11"]
         args += [
-            "-af", f"loudnorm=I={lufs}:TP=-1.5:LRA=11",
             "-c:v", "libx264",
             "-preset", "medium",
             "-crf", str(crf),

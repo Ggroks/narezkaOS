@@ -36,7 +36,13 @@ MOTION_SAMPLES = 6
 MOTION_STEP = 1.0
 
 
-def sample_frames(source, times: list[float]):
+#: Предел на один кадр. Без него зависший вызов ffmpeg вешает стадию
+#: навсегда: subprocess.run без timeout ждёт бесконечно, и снаружи это
+#: выглядит не ошибкой, а бесконечной работой.
+FRAME_TIMEOUT = 30
+
+
+def sample_frames(source, times: list[float], log=None):
     """Кадры в заданные моменты. Читаются по одному, а не потоком:
     моменты разбросаны по записи, и перемотка дешевле декодирования."""
     import cv2  # noqa: PLC0415
@@ -44,11 +50,18 @@ def sample_frames(source, times: list[float]):
 
     frames = []
     for at in times:
-        result = subprocess.run(
-            ["ffmpeg", "-nostdin", "-v", "error", "-ss", f"{at:.2f}", "-i", str(source),
-             "-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "-"],
-            capture_output=True, check=False,
-        )
+        try:
+            result = subprocess.run(
+                ["ffmpeg", "-nostdin", "-v", "error", "-ss", f"{at:.2f}", "-i", str(source),
+                 "-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "-"],
+                capture_output=True, check=False, timeout=FRAME_TIMEOUT,
+            )
+        except subprocess.TimeoutExpired:
+            # Один непрочитанный кадр не повод бросать клип: проб несколько,
+            # и остальных хватит.
+            if log:
+                log.warning("кадр на %.1f с не прочитан за %d с", at, FRAME_TIMEOUT)
+            continue
         if result.returncode != 0 or not result.stdout:
             continue
         image = cv2.imdecode(np.frombuffer(result.stdout, np.uint8), cv2.IMREAD_COLOR)
@@ -62,6 +75,9 @@ class FacecamStage(Stage):
     #: v3 — область контента ищется по близким кадрам: на разнесённых
     #: движение одинаково высоко по всему экрану и ничего не различает.
     version = 3
+    #: Предел на стадию целиком. Замер: 6.5 с на клип, то есть минута
+    #: на десяток. Всё, что дольше на порядок, — зависание, а не работа.
+    timeout_seconds = 600
     device = Device.ANY
     optional = True
     description = "Поиск окна вебкамеры для раскладки «сплит»"
@@ -98,7 +114,7 @@ class FacecamStage(Stage):
         for clip in clips:
             step = (clip["end"] - clip["start"]) / (SAMPLES_PER_CLIP + 1)
             times = [clip["start"] + step * (i + 1) for i in range(SAMPLES_PER_CLIP)]
-            frames = sample_frames(source, times)
+            frames = sample_frames(source, times, log=ctx.log)
             if not frames:
                 continue
 
@@ -115,6 +131,7 @@ class FacecamStage(Stage):
                 burst = sample_frames(
                     source,
                     [middle + i * MOTION_STEP for i in range(MOTION_SAMPLES)],
+                    log=ctx.log,
                 )
                 content = facecam.detect_content(burst, exclude=result.rect)
                 if content is not None:

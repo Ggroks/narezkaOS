@@ -76,7 +76,13 @@ class Rect:
         return Rect(x, y, min(self.width, frame_width - x), min(self.height, frame_height - y))
 
     def as_dict(self) -> dict[str, int]:
-        return {"x": self.x, "y": self.y, "width": self.width, "height": self.height}
+        # Приведение к обычному int обязательно: OpenCV возвращает numpy.int32,
+        # и json на нём падает уже при записи артефакта — то есть после того,
+        # как вся работа стадии проделана.
+        return {
+            "x": int(self.x), "y": int(self.y),
+            "width": int(self.width), "height": int(self.height),
+        }
 
 
 @dataclass(frozen=True)
@@ -212,6 +218,13 @@ def detect(
 #: подвижные пятна — это курсор, бегущая строка чата или значки.
 MIN_CONTENT_SHARE = 0.05
 
+#: Допустимые пропорции области. Проигрываемое видео лежит между 4:3 и 21:9;
+#: узкая вертикальная полоса — это лента сообщений или столбец страницы,
+#: а не видео. Неверная область хуже её отсутствия: без неё нижняя полоса
+#: режется по разумному умолчанию, а с ней — по ленте чата.
+MIN_CONTENT_RATIO = 1.1
+MAX_CONTENT_RATIO = 2.6
+
 #: Насколько выше медианы должно быть движение, чтобы точка считалась
 #: подвижной. Порог относительный: у тёмной записи и у яркой абсолютный
 #: разброс отличается в разы.
@@ -274,12 +287,17 @@ def detect_content(frames: list[np.ndarray], exclude: Rect | None = None) -> Rec
     top, bottom = _dense_span(box.mean(axis=1))
     left, right = _dense_span(box.mean(axis=0))
 
-    return Rect(
-        (x + left) * scale,
-        (y + top) * scale,
-        max(right - left, 1) * scale,
-        max(bottom - top, 1) * scale,
+    rect = Rect(
+        int((x + left) * scale),
+        int((y + top) * scale),
+        int(max(right - left, 1) * scale),
+        int(max(bottom - top, 1) * scale),
     ).clamp(width, height)
+
+    ratio = rect.width / max(rect.height, 1)
+    if not MIN_CONTENT_RATIO <= ratio <= MAX_CONTENT_RATIO:
+        return None
+    return rect
 
 
 #: Доля от самой подвижной строки, ниже которой край считается не контентом,

@@ -176,3 +176,44 @@ def test_split_uses_the_content_region() -> None:
     x, y, w, h = with_content.main_crop
     assert x >= 318 and y >= 178
     assert x + w <= 320 + 640 + 2
+
+
+def test_rect_serializes_to_plain_json() -> None:
+    """OpenCV возвращает numpy.int32, и json на нём падает уже при записи
+    артефакта — то есть после того, как вся работа стадии проделана.
+    Прогон выглядел зависшим, хотя стадия падала.
+    """
+    import json
+
+    rect = facecam.detect_content(synthetic_frames())
+    assert rect is not None
+    # Не должно бросать исключение.
+    assert json.dumps(rect.as_dict())
+
+
+def test_facecam_result_serializes() -> None:
+    import json
+
+    result = facecam.detect(FakeDetector([(20, 30, 60, 0.95)]), frames())
+    assert result is not None
+    assert json.dumps(result.as_dict())
+
+
+def test_narrow_strip_is_not_content() -> None:
+    """Реальный случай с записи: областью выходила полоса 184x516 — лента
+    сообщений, а не видео. Неверная область хуже её отсутствия: без неё
+    нижняя полоса режется по разумному умолчанию, а с ней — по ленте чата.
+    """
+    frames = []
+    rng = np.random.default_rng(11)
+    for _ in range(6):
+        frame = np.full((180, 320, 3), 40, dtype=np.uint8)
+        frame[20:160, 260:300] = rng.integers(0, 255, (140, 40, 3), dtype=np.uint8)
+        frames.append(frame)
+    assert facecam.detect_content(frames) is None
+
+
+def test_wide_video_region_is_accepted() -> None:
+    rect = facecam.detect_content(synthetic_frames())
+    assert rect is not None
+    assert 1.1 <= rect.width / rect.height <= 2.6

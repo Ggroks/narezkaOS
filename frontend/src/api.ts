@@ -103,6 +103,8 @@ export type Framing = {
   /** Что вшивать в готовый ролик. Каждый пункт отключается отдельно. */
   subtitles_enabled: boolean;
   loudnorm_enabled: boolean;
+  /** Не доверять чату в начале записи: там здороваются, а не реагируют. */
+  chat_ignore_start: boolean;
   preset: FramingPreset;
   side_crop: number;
   anchor: "center" | "left" | "right";

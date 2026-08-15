@@ -38,9 +38,8 @@ CANDIDATES_NAME = "candidates.json"
 
 class CandidatesStage(Stage):
     name = "candidates"
-    #: v3 — реакция чата считается окном вперёд, а не симметричным
-    #: сглаживанием: замер показал плато 15–20 с после события (§41).
-    version = 3
+    #: v4 — приветствия в начале записи можно не учитывать.
+    version = 4
     device = Device.ANY
     description = "Отбор кандидатов по всплескам громкости, речи и чата"
 
@@ -59,9 +58,29 @@ class CandidatesStage(Stage):
     def outputs(self, ctx: StageContext) -> list[Artifact]:
         return [Artifact(ctx.paths.analysis / CANDIDATES_NAME)]
 
+    @staticmethod
+    def _overrides(ctx: StageContext) -> dict:
+        """Правки настроек, заданные для этого видео из интерфейса."""
+        artifact = Artifact(ctx.paths.framing)
+        if not artifact.exists():
+            return {}
+        try:
+            stored = artifact.read_json()
+        except ValueError:
+            return {}
+        return stored if isinstance(stored, dict) else {}
+
+    def _ignore_start(self, ctx: StageContext) -> float:
+        """Сколько секунд в начале записи не доверять чату. Ноль — доверять."""
+        cfg = ctx.config.candidates
+        override = self._overrides(ctx).get("chat_ignore_start")
+        enabled = override if isinstance(override, bool) else cfg.chat_ignore_start
+        return cfg.chat_ignore_start_seconds if enabled else 0.0
+
     def config_slice(self, ctx: StageContext) -> dict:
         return {
             **ctx.config.candidates.model_dump(),
+            "ignore_start": self._ignore_start(ctx),
             "min_duration": ctx.config.output.short.min_duration,
             "max_duration": ctx.config.output.short.max_duration,
             "optimal_duration": ctx.config.output.short.optimal_duration,
@@ -181,10 +200,21 @@ class CandidatesStage(Stage):
             skip_bots=not cfg.chat_include_bots,
         )
         rate = forward_average(rate, max(int(cfg.chat_lead_seconds / cfg.window_seconds), 1))
+        normalized = robust_z(rate)
+
+        ignore = self._ignore_start(ctx)
+        if ignore > 0:
+            # Обнуляем именно нормализованный сигнал, а не сами сообщения:
+            # приветствия должны перестать влиять на оценку, но не сдвигать
+            # медиану, по которой считается всплеск на остальной записи.
+            windows = min(int(ignore / cfg.window_seconds), normalized.size)
+            normalized[:windows] = 0.0
+            ctx.log.info("приветствия в первых %.0f с не учитываются", ignore)
+
         ctx.log.info(
             "чат: %d сообщений, в среднем %.2f в секунду", len(messages), float(rate.mean())
         )
-        return rate, robust_z(rate), {"chat_messages": len(messages)}
+        return rate, normalized, {"chat_messages": len(messages), "chat_ignored_start": ignore}
 
     def _build(
         self,

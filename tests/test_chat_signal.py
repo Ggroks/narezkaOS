@@ -136,3 +136,26 @@ def test_forward_window_of_one_changes_nothing() -> None:
 
     values = np.array([1.0, 2.0, 3.0])
     assert forward_average(values, 1).tolist() == values.tolist()
+
+
+# --- приветствия в начале записи -------------------------------------------
+
+
+def test_ignoring_the_opening_does_not_shift_the_median() -> None:
+    """Обнуляется нормализованный сигнал, а не сами сообщения.
+
+    Если выбросить приветствия до нормализации, сдвинется медиана, по которой
+    считается всплеск на всей остальной записи, — и отбор поедет там, где
+    к приветствиям отношения не имеет.
+    """
+    from narezka.core.signals import robust_z
+
+    rate = np.concatenate([np.full(90, 8.0), np.full(400, 1.0)])
+    rate[200:210] = 6.0                       # настоящий всплеск в середине
+
+    z = robust_z(rate)
+    middle_before = z[205]
+    z[:90] = 0.0                              # так делает стадия
+
+    assert z[10] == 0.0, "приветствия должны перестать влиять"
+    assert z[205] == middle_before, "оценка середины не должна измениться"

@@ -271,6 +271,9 @@ export function VideoDetail({ videoId, onBack }: Props) {
                 onChange={updateFraming}
                 splitAvailable={splitAvailable}
                 disabled={running}
+                // Отбор моментов идёт до сборки, поэтому пересчитывать надо
+                // с него: перерендерить старые кандидаты бессмысленно.
+                onReanalyse={() => start("candidates", true)}
               />
               <button
                 className="primary"

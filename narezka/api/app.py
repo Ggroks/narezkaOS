@@ -355,6 +355,7 @@ class FramingPayload(FramingConfig):
 
     subtitles_enabled: bool = True
     loudnorm_enabled: bool = True
+    chat_ignore_start: bool = True
 
 
 def _framing_state(video_id: str, project: str) -> tuple[Any, Any, Framing, int, int]:
@@ -387,6 +388,17 @@ def framing(video_id: str, project: str = "default") -> dict[str, Any]:
             split_available = False
 
     options = load_options(ctx)
+    stored = {}
+    if Artifact(paths.framing).exists():
+        try:
+            stored = Artifact(paths.framing).read_json()
+        except ValueError:
+            stored = {}
+    options["chat_ignore_start"] = (
+        stored.get("chat_ignore_start")
+        if isinstance(stored.get("chat_ignore_start"), bool)
+        else ctx.config.candidates.chat_ignore_start
+    )
     return {
         "current": {**current.__dict__, **options},
         "split_available": split_available,

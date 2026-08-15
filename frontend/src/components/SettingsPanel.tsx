@@ -3,6 +3,8 @@ import type { Framing } from "../api";
 type Props = {
   value: Framing;
   onChange: (patch: Partial<Framing>) => void;
+  /** Пересчёт отбора, а не только сборки: настройка выше по пайплайну. */
+  onReanalyse?: () => void;
   /** Раскладка «сплит» доступна только там, где найдена вебка наложением. */
   splitAvailable: boolean;
   disabled?: boolean;
@@ -16,7 +18,9 @@ type Props = {
  * нужен ролик без субтитров под свой монтаж, кому-то — без нормализации
  * громкости, потому что звук уже сведён.
  */
-export function SettingsPanel({ value, onChange, splitAvailable, disabled }: Props) {
+export function SettingsPanel({
+  value, onChange, onReanalyse, splitAvailable, disabled,
+}: Props) {
   return (
     <div className="options">
       <Toggle
@@ -37,6 +41,19 @@ export function SettingsPanel({ value, onChange, splitAvailable, disabled }: Pro
         checked={value.layout === "split"}
         disabled={disabled || !splitAvailable}
         onChange={(on) => onChange({ layout: on ? "split" : "single" })}
+      />
+
+      {/* Настройка выше по пайплайну: меняет отбор моментов, а не сборку,
+          поэтому и пересчитывать надо с отбора. */}
+      <Toggle
+        label="Пропускать приветствия"
+        hint="В начале записи здороваются, а не реагируют"
+        checked={value.chat_ignore_start}
+        disabled={disabled}
+        onChange={(chat_ignore_start) => {
+          onChange({ chat_ignore_start });
+          onReanalyse?.();
+        }}
       />
 
       <Toggle

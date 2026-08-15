@@ -246,6 +246,7 @@ def plan_split(
     cam: tuple[int, int, int, int],
     *,
     face: tuple[int, int, int, int] | None = None,
+    content: tuple[int, int, int, int] | None = None,
     top_share: float = SPLIT_TOP_SHARE,
     anchor: Anchor = "center",
 ) -> SplitPlan | None:
@@ -285,21 +286,26 @@ def plan_split(
             _even(fitted_h),
         )
 
-    # Контент: часть кадра, свободная от вебки. Если вебка прижата к верху,
-    # берём то, что ниже неё, иначе — весь кадр.
-    region_y = cam_y + cam_h if cam_y < source_h * 0.25 else 0
-    region_h = source_h - region_y
-    if region_h < source_h * 0.4:
-        region_y, region_h = 0, source_h
+    # Контент: найденная область проигрываемого видео, иначе — часть кадра,
+    # свободная от вебки. Без области нижняя полоса режется по центру
+    # и захватывает интерфейс: панель плеера, ленту сообщений, поля страницы.
+    if content is not None:
+        region_x, region_y, region_w, region_h = content
+    else:
+        region_x, region_w = 0, source_w
+        region_y = cam_y + cam_h if cam_y < source_h * 0.25 else 0
+        region_h = source_h - region_y
+        if region_h < source_h * 0.4:
+            region_y, region_h = 0, source_h
 
     main_ratio = out_w / main_height
-    main_w, main_h = _fit_ratio(source_w, region_h, main_ratio)
+    main_w, main_h = _fit_ratio(region_w, region_h, main_ratio)
     if anchor == "left":
-        main_x = 0
+        main_x = region_x
     elif anchor == "right":
-        main_x = source_w - main_w
+        main_x = region_x + region_w - main_w
     else:
-        main_x = (source_w - main_w) // 2
+        main_x = region_x + (region_w - main_w) // 2
 
     main_crop = (
         _even(main_x),

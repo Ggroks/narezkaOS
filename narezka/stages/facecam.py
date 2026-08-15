@@ -23,9 +23,17 @@ from narezka.core.stage import Device, Stage, StageContext, StageSkipped
 
 FACECAM_NAME = "facecam.json"
 
-#: Сколько кадров пробовать на клип. Больше не нужно: вебка неподвижна,
-#: и семи проб хватает, чтобы отличить её от лица в проигрываемом видео.
+#: Сколько кадров пробовать на клип для поиска вебки. Больше не нужно:
+#: вебка неподвижна, и семи проб хватает, чтобы отличить её от лица
+#: в проигрываемом видео.
 SAMPLES_PER_CLIP = 7
+
+#: Для поиска области контента нужны **близкие** кадры, а не разнесённые.
+#: Между пробами в разных концах клипа меняется вообще всё, движение выходит
+#: одинаково высоким по всему экрану, и отличить видео от интерфейса нельзя.
+#: На первом прогоне из-за этого область не нашлась ни в одном клипе.
+MOTION_SAMPLES = 6
+MOTION_STEP = 1.0
 
 
 def sample_frames(source, times: list[float]):
@@ -51,7 +59,9 @@ def sample_frames(source, times: list[float]):
 
 class FacecamStage(Stage):
     name = "facecam"
-    version = 1
+    #: v3 — область контента ищется по близким кадрам: на разнесённых
+    #: движение одинаково высоко по всему экрану и ничего не различает.
+    version = 3
     device = Device.ANY
     optional = True
     description = "Поиск окна вебкамеры для раскладки «сплит»"
@@ -97,7 +107,19 @@ class FacecamStage(Stage):
                 ctx.log.info("клип %d: вебка не найдена", clip["index"])
                 continue
 
-            found[str(clip["index"])] = result.as_dict()
+            entry = result.as_dict()
+            if not result.full_frame:
+                # Область контента нужна нижней полосе сплита: без неё она
+                # режется по центру и захватывает интерфейс плеера.
+                middle = (clip["start"] + clip["end"]) / 2
+                burst = sample_frames(
+                    source,
+                    [middle + i * MOTION_STEP for i in range(MOTION_SAMPLES)],
+                )
+                content = facecam.detect_content(burst, exclude=result.rect)
+                if content is not None:
+                    entry["content"] = content.as_dict()
+            found[str(clip["index"])] = entry
             ctx.log.info(
                 "клип %d: %s %dx%d, уверенность %.2f",
                 clip["index"],

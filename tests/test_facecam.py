@@ -118,3 +118,61 @@ def test_split_filter_stacks_two_bands() -> None:
     assert "vstack=inputs=2" in chain
     assert chain.count("[0:v]") == 2
     assert "subtitles=00.ass" in chain
+
+
+# --- область проигрываемого контента ---------------------------------------
+
+
+def synthetic_frames(count=6, width=320, height=180):
+    """Кадры, где движется только прямоугольник в центре — как проигрываемое
+    видео на неподвижной странице."""
+    frames = []
+    rng = np.random.default_rng(7)
+    for _ in range(count):
+        frame = np.full((height, width, 3), 40, dtype=np.uint8)
+        frame[60:140, 100:240] = rng.integers(0, 255, (80, 140, 3), dtype=np.uint8)
+        frames.append(frame)
+    return frames
+
+
+def test_content_region_finds_the_moving_rectangle() -> None:
+    """Признак — движение: у проигрываемого видео оно непрерывное,
+    а интерфейс браузера неподвижен."""
+    rect = facecam.detect_content(synthetic_frames())
+    assert rect is not None
+    assert 80 <= rect.x <= 120 and 40 <= rect.y <= 80
+    assert 110 <= rect.width <= 180 and 50 <= rect.height <= 120
+
+
+def test_static_frames_have_no_content_region() -> None:
+    frames = [np.full((180, 320, 3), 40, dtype=np.uint8) for _ in range(6)]
+    assert facecam.detect_content(frames) is None
+
+
+def test_single_frame_cannot_show_motion() -> None:
+    assert facecam.detect_content(synthetic_frames(count=1)) is None
+
+
+def test_webcam_area_is_excluded() -> None:
+    """Вебка тоже подвижна: без исключения победила бы она сама,
+    и нижняя полоса показала бы лицо второй раз."""
+    frames = synthetic_frames()
+    rng = np.random.default_rng(3)
+    for frame in frames:
+        frame[0:50, 0:70] = rng.integers(0, 255, (50, 70, 3), dtype=np.uint8)
+
+    rect = facecam.detect_content(frames, exclude=facecam.Rect(0, 0, 70, 50))
+    assert rect is not None
+    assert rect.x >= 70 or rect.y >= 50
+
+
+def test_split_uses_the_content_region() -> None:
+    """Без области нижняя полоса режется по центру и захватывает интерфейс."""
+    without = plan_split(1280, 720, 1080, 1920, (0, 0, 281, 210))
+    with_content = plan_split(
+        1280, 720, 1080, 1920, (0, 0, 281, 210), content=(320, 180, 640, 360)
+    )
+    assert with_content.main_crop != without.main_crop
+    x, y, w, h = with_content.main_crop
+    assert x >= 318 and y >= 178
+    assert x + w <= 320 + 640 + 2

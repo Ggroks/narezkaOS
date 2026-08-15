@@ -91,8 +91,8 @@ def source_size(metadata: dict[str, Any]) -> tuple[int, int]:
 
 class RenderStage(Stage):
     name = "render"
-    #: v6 — субтитры и нормализация громкости отключаются по отдельности.
-    version = 6
+    #: v7 — нижняя полоса сплита режется по найденной области контента.
+    version = 7
     device = Device.ANY
     description = "Вертикальные ролики 9:16 с вшитыми субтитрами"
 
@@ -264,10 +264,15 @@ class RenderStage(Stage):
         if not cam or cam.get("full_frame"):
             return None
         face = cam.get("face") or {}
+        content = cam.get("content") or {}
         return plan_split(
             src_w, src_h, short.width, short.height,
             (cam["x"], cam["y"], cam["width"], cam["height"]),
             face=(face["x"], face["y"], face["width"], face["height"]) if face else None,
+            content=(
+                (content["x"], content["y"], content["width"], content["height"])
+                if content else None
+            ),
             anchor=framing.anchor,
         )
 

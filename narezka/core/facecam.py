@@ -204,3 +204,94 @@ def detect(
         )
 
     return None
+
+
+# --- область проигрываемого контента ---------------------------------------
+
+#: Доля кадра, ниже которой область не считается контентом: мелкие
+#: подвижные пятна — это курсор, бегущая строка чата или значки.
+MIN_CONTENT_SHARE = 0.05
+
+#: Насколько выше медианы должно быть движение, чтобы точка считалась
+#: подвижной. Порог относительный: у тёмной записи и у яркой абсолютный
+#: разброс отличается в разы.
+MOTION_FACTOR = 1.8
+
+
+def detect_content(frames: list[np.ndarray], exclude: Rect | None = None) -> Rect | None:
+    """Прямоугольник проигрываемого контента по движению между кадрами.
+
+    Нужен нижней полосе сплита. Без него она режется по центру области под
+    вебкой и захватывает интерфейс: панель плеера, ленту сообщений, поля
+    страницы. Смысла в них нет, а место в кадре они занимают.
+
+    Признак — движение: у проигрываемого видео оно непрерывное, а интерфейс
+    браузера неподвижен. Область вебки исключается: она тоже подвижна,
+    и без исключения победила бы она сама.
+    """
+    import cv2  # noqa: PLC0415
+
+    if len(frames) < 2:
+        return None
+
+    height, width = frames[0].shape[:2]
+    # Считаем на уменьшенных кадрах: границы области нужны с точностью
+    # до десятка пикселей, а работы становится в двадцать раз меньше.
+    scale = 4
+    small = [
+        cv2.cvtColor(cv2.resize(f, (width // scale, height // scale)), cv2.COLOR_BGR2GRAY).astype(np.float32)
+        for f in frames
+    ]
+    motion = np.stack(small).std(axis=0)
+
+    if exclude is not None:
+        motion[
+            exclude.y // scale : max(exclude.bottom // scale, exclude.y // scale + 1),
+            exclude.x // scale : max(exclude.right // scale, exclude.x // scale + 1),
+        ] = 0.0
+
+    threshold = max(float(np.median(motion)) * MOTION_FACTOR, 4.0)
+    mask = (motion > threshold).astype(np.uint8)
+    if mask.sum() == 0:
+        return None
+
+    # Смыкание закрывает разрывы: ровные участки внутри кадра видео
+    # (небо, стена) движения не дают и рвут область на куски.
+    mask = cv2.morphologyEx(mask * 255, cv2.MORPH_CLOSE, np.ones((7, 7), np.uint8))
+    count, _, stats, _ = cv2.connectedComponentsWithStats(mask)
+    if count < 2:
+        return None
+
+    index = max(range(1, count), key=lambda i: stats[i, cv2.CC_STAT_AREA])
+    x, y, w, h, area = stats[index]
+    if area / mask.size < MIN_CONTENT_SHARE:
+        return None
+
+    # Рамка компоненты обычно шире самого видео: страница вокруг тоже слегка
+    # шевелится и смыкание притягивает её к области. Подрезаем края по строкам
+    # и столбцам, где движение заметно слабее, чем в середине области.
+    box = motion[y : y + h, x : x + w]
+    top, bottom = _dense_span(box.mean(axis=1))
+    left, right = _dense_span(box.mean(axis=0))
+
+    return Rect(
+        (x + left) * scale,
+        (y + top) * scale,
+        max(right - left, 1) * scale,
+        max(bottom - top, 1) * scale,
+    ).clamp(width, height)
+
+
+#: Доля от самой подвижной строки, ниже которой край считается не контентом,
+#: а окружением: страницей, панелью плеера, полями.
+EDGE_KEEP = 0.45
+
+
+def _dense_span(profile: np.ndarray) -> tuple[int, int]:
+    """Границы участка, где движение держится выше доли от максимума."""
+    if profile.size == 0:
+        return 0, 1
+    keep = np.flatnonzero(profile >= profile.max() * EDGE_KEEP)
+    if keep.size == 0:
+        return 0, int(profile.size)
+    return int(keep[0]), int(keep[-1] + 1)

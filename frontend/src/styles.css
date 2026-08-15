@@ -1040,3 +1040,13 @@ details.section .section-body { padding: 0 14px 14px; }
 
 .editor-main { min-inline-size: 0; }
 .editor-main .card:last-child { margin-block-end: 0; }
+
+/* Карточка внутри свёрнутого раздела не рисует вторую рамку поверх первой. */
+details.section .section-body > .card {
+  background: none;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  margin: 0;
+}
+details.section .section-body > .card > h2 { display: none; }

@@ -285,14 +285,22 @@ export function VideoDetail({ videoId, onBack }: Props) {
         </aside>
       </div>
 
+      {/* Кадрирование убрано под сворачивание: настраивают его один раз
+          на видео, а переключатели справа трогают постоянно. Держать рядом
+          две панели настроек — значит заставлять выбирать между ними. */}
       {meta.has_video !== false && (
-        <FramingPanel
-          videoId={videoId}
-          busy={running}
-          // Кадрирование входит в ключ кэша, поэтому пересчёта всего пайплайна
-          // не нужно — достаточно перерендерить ролики.
-          onSaved={() => start("render", true)}
-        />
+        <details className="section">
+          <summary>Кадрирование и предпросмотр</summary>
+          <div className="section-body">
+            <FramingPanel
+              videoId={videoId}
+              busy={running}
+              // Кадрирование входит в ключ кэша, поэтому пересчёта всего
+              // пайплайна не нужно — достаточно перерендерить ролики.
+              onSaved={() => start("render", true)}
+            />
+          </div>
+        </details>
       )}
 
       {shorts && shorts.files.length > 0 && <ShortsView videoId={videoId} shorts={shorts} />}

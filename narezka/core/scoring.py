@@ -27,12 +27,18 @@ MEASURED_FACTOR = "audio"
 #: на этапе 4 вместе с компьютерным зрением.
 VISUAL_FACTOR = "visual"
 
+#: Факторы, измеряемые разбором звука (§10). Как и `audio`, у модели о них
+#: не спрашивают: она читает текст и записи не слышит. Без стадии audiotags
+#: остаются None — «не измерено», а не «нет смеха».
+AUDIO_TAG_FACTORS = ("laughter",)
+
 #: Штраф, который виден в тексте: обрыв без развязки (§15).
 TEXT_PENALTIES = ("unresolved_ending",)
 
-#: Штраф, требующий разбора звука (§10, §59). Модель его не слышит, а её
-#: «0.0» неотличимо от проверенного отсутствия музыки — и потому опаснее
-#: пропуска. Появится вместе с аудио-тегами на этапе 3.
+#: Штрафы, которые берутся из разбора звука, а не из ответа модели (§10, §59).
+#: Модель музыку не слышит, и её «0.0» неотличимо от проверенного отсутствия —
+#: поэтому без измерения здесь остаётся None, а не ноль. Измерение приходит
+#: со стадии audiotags; без неё штраф так и остаётся неизвестным.
 UNMEASURED_PENALTIES = ("music_present",)
 
 PENALTIES = (*TEXT_PENALTIES, *UNMEASURED_PENALTIES)
@@ -153,6 +159,8 @@ def build_clip(
     model: str,
     min_duration: float = 0.0,
     max_duration: float = float("inf"),
+    measured_penalties: dict[str, float] | None = None,
+    measured_factors: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     """Собирает запись клипа по схеме §12.
 
@@ -164,14 +172,21 @@ def build_clip(
     factors[MEASURED_FACTOR] = audio_factor(candidate.get("signals"))
     # Визуальный фактор существует в схеме, но честно помечен неизмеренным.
     factors[VISUAL_FACTOR] = None
+    for name in AUDIO_TAG_FACTORS:
+        factors[name] = None
+    # Измеренное со стадии audiotags: смех слышен модели не больше, чем
+    # музыка, и спрашивать о нём по тексту бессмысленно.
+    for name, value in (measured_factors or {}).items():
+        factors[name] = clamp01(value)
 
     penalties: dict[str, Any] = {
         name: clamp01(verdict.get("penalties", {}).get(name)) for name in TEXT_PENALTIES
     }
     # Неизмеренное остаётся None: ноль здесь читался бы как «проверено,
-    # музыки нет», хотя проверять пока нечем.
+    # музыки нет», хотя проверить было нечем. Измерение подставляется только
+    # если оно действительно есть.
     for name in UNMEASURED_PENALTIES:
-        penalties[name] = None
+        penalties[name] = (measured_penalties or {}).get(name)
 
     start = float(verdict.get("start", candidate["start"]))
     end = float(verdict.get("end", candidate["end"]))

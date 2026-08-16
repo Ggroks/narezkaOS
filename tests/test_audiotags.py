@@ -84,3 +84,46 @@ def test_empty_audio_gives_empty_tracks():
     result = tagger.tag(np.zeros(0, dtype=np.float32))
     assert result.frames == 0
     assert set(result.scores) == set(TAGS)
+
+
+def test_every_tag_has_its_own_switch():
+    """Каждый тег включается отдельно.
+
+    Считать то, чем не пользуются, значит платить временем и местом за ничто:
+    аплодисменты и толпа осмысленны лишь на записях с залом.
+    """
+    from narezka.core.config import AudioTagsConfig
+
+    cfg = AudioTagsConfig()
+    for tag in TAGS:
+        assert hasattr(cfg, tag), f"у тега {tag} нет переключателя"
+
+
+def test_hall_only_tags_are_off_by_default():
+    """Аплодисменты и толпа выключены: на записи одного стримера их нет."""
+    from narezka.core.config import AudioTagsConfig
+
+    cfg = AudioTagsConfig()
+    assert cfg.laughter and cfg.music
+    assert not cfg.applause and not cfg.crowd
+
+
+def test_switches_reach_the_cache_key():
+    """Выбор тегов входит в ключ кэша.
+
+    Иначе, включив музыку, пользователь получил бы прежний результат
+    из кэша — молча и без объяснений.
+    """
+    from narezka.core.config import AudioTagsConfig
+    from narezka.stages.audiotags import AudioTagsStage
+
+    class Ctx:
+        class config:
+            audiotags = AudioTagsConfig()
+        class paths:
+            pass
+
+    first = AudioTagsStage().config_slice(Ctx())
+    Ctx.config.audiotags = AudioTagsConfig(crowd=True)
+    second = AudioTagsStage().config_slice(Ctx())
+    assert first != second

@@ -268,3 +268,32 @@ def test_build_clip_applies_the_limits() -> None:
         min_duration=15, max_duration=90,
     )
     assert clip["duration"] == 15.0
+
+
+def test_music_penalty_is_none_without_measurement():
+    """Без разбора звука штраф за музыку неизвестен, а не равен нулю.
+
+    Ноль читался бы как «проверено, музыки нет» — и потому опаснее пропуска.
+    """
+    clip = build_clip(
+        video_id="v", index=0,
+        candidate={"start": 0.0, "end": 30.0, "signals": {}},
+        verdict={"factors": {"semantic": 0.8}}, weights={"semantic": 1.0},
+        schema_version=1, model="test",
+    )
+    assert clip["penalties"]["music_present"] is None
+
+
+def test_measured_music_lowers_the_score():
+    """Измеренная музыка снижает оценку: ролик с ней ловит Content ID."""
+    common = dict(
+        video_id="v", index=0,
+        candidate={"start": 0.0, "end": 30.0, "signals": {}},
+        verdict={"factors": {"semantic": 0.9}}, weights={"semantic": 1.0},
+        schema_version=1, model="test",
+    )
+    clean = build_clip(**common)
+    musical = build_clip(**common, measured_penalties={"music_present": 0.9})
+
+    assert musical["penalties"]["music_present"] == 0.9
+    assert musical["interest_score"] < clean["interest_score"]

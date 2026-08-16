@@ -118,6 +118,12 @@ export type Framing = {
   use_speech_rate: boolean;
   use_chat: boolean;
   use_chat_reactions: boolean;
+  /** Теги звука: каждый считается и учитывается отдельно. */
+  tag_laughter: boolean;
+  tag_music: boolean;
+  tag_shout: boolean;
+  tag_applause: boolean;
+  tag_crowd: boolean;
   preset: FramingPreset;
   side_crop: number;
   anchor: "center" | "left" | "right";

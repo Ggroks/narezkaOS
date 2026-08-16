@@ -96,6 +96,49 @@ export function SettingsPanel({
         />
       </div>
 
+      {/* Теги звука. Смех полезен почти всем, музыка нужна тем, кто
+          публикует на площадках с Content ID, аплодисменты и толпа
+          осмысленны лишь на записях с залом. Считать то, чем не
+          пользуются, значит платить временем за ничто. */}
+      <div className="choice">
+        <span className="choice-label">Что слышать в звуке</span>
+        <Toggle
+          label="Смех"
+          hint="повышает оценку момента; сильнейший признак удачного"
+          checked={value.tag_laughter}
+          disabled={disabled}
+          onChange={(v) => onChange({ tag_laughter: v })}
+        />
+        <Toggle
+          label="Музыка"
+          hint="снижает оценку: риск Content ID на площадках"
+          checked={value.tag_music}
+          disabled={disabled}
+          onChange={(v) => onChange({ tag_music: v })}
+        />
+        <Toggle
+          label="Крик"
+          hint="и восторг, и испуг — сам по себе неоднозначен"
+          checked={value.tag_shout}
+          disabled={disabled}
+          onChange={(v) => onChange({ tag_shout: v })}
+        />
+        <Toggle
+          label="Аплодисменты"
+          hint="имеет смысл только на записях с залом"
+          checked={value.tag_applause}
+          disabled={disabled}
+          onChange={(v) => onChange({ tag_applause: v })}
+        />
+        <Toggle
+          label="Шум толпы"
+          hint="отличает публичное событие от студии"
+          checked={value.tag_crowd}
+          disabled={disabled}
+          onChange={(v) => onChange({ tag_crowd: v })}
+        />
+      </div>
+
       <Toggle
         label="Субтитры"
         hint="Вшиваются в кадр, с подсветкой слова"

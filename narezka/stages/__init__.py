@@ -14,6 +14,7 @@ from narezka.stages.extract_audio import ExtractAudioStage
 from narezka.stages.facecam import FacecamStage
 from narezka.stages.llm_select import LlmSelectStage
 from narezka.stages.metadata import MetadataStage
+from narezka.stages.audiotags import AudioTagsStage
 from narezka.stages.timeline import TimelineStage
 from narezka.stages.probe import ProbeStage
 from narezka.stages.render import RenderStage
@@ -31,6 +32,9 @@ PIPELINE: list[Stage] = [
     # Ось времени идёт до отбора: если паузы вырезаются, кандидаты должны
     # искаться уже по правленому времени, иначе их границы указывали бы
     # на места, которых в ролике нет.
+    # Теги звука до отбора: смех работает признаком, музыка — штрафом,
+    # и оба нужны уже на стадии оценки кандидатов.
+    AudioTagsStage(),
     TimelineStage(),
     CandidatesStage(),
     LlmSelectStage(),

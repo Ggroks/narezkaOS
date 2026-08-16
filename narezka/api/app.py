@@ -430,6 +430,12 @@ class FramingPayload(FramingConfig):
     use_speech_rate: bool | None = None
     use_chat: bool | None = None
     use_chat_reactions: bool | None = None
+    #: Теги звука — каждый отдельно (§43).
+    tag_laughter: bool | None = None
+    tag_music: bool | None = None
+    tag_shout: bool | None = None
+    tag_applause: bool | None = None
+    tag_crowd: bool | None = None
 
 
 def _framing_state(video_id: str, project: str) -> tuple[Any, Any, Framing, int, int]:
@@ -474,6 +480,9 @@ def framing(video_id: str, project: str = "default") -> dict[str, Any]:
     for flag in ("use_loudness", "use_speech_rate", "use_chat", "use_chat_reactions"):
         value = stored.get(flag)
         options[flag] = getattr(ctx.config.candidates, flag) if value is None else value
+    for tag in ("laughter", "music", "shout", "applause", "crowd"):
+        value = stored.get(f"tag_{tag}")
+        options[f"tag_{tag}"] = getattr(ctx.config.audiotags, tag) if value is None else value
     options["chat_ignore_start"] = (
         stored.get("chat_ignore_start")
         if isinstance(stored.get("chat_ignore_start"), bool)

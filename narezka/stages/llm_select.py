@@ -133,6 +133,7 @@ class LlmSelectStage(Stage):
         if not verdicts:
             raise StageSkipped("ни один пакет не оценён: " + "; ".join(failures[:3]))
 
+        tags = self._audio_tags(ctx)
         weights = ctx.config.score.weights
         clips = [
             build_clip(
@@ -145,6 +146,7 @@ class LlmSelectStage(Stage):
                 model=", ".join(sorted(models_used)),
                 min_duration=ctx.config.output.short.min_duration,
                 max_duration=ctx.config.output.short.max_duration,
+                **self._measured(tags, candidate, ctx),
             )
             for index, candidate in enumerate(candidates)
             if index in verdicts
@@ -180,6 +182,53 @@ class LlmSelectStage(Stage):
         )
         if failures:
             ctx.log.warning("пакетов не оценено: %d", len(failures))
+
+    @staticmethod
+    def _audio_tags(ctx: StageContext) -> dict[str, Any] | None:
+        """Дорожки тегов, если стадия audiotags выполнялась.
+
+        Нет артефакта — теги просто не измерены, и штраф за музыку остаётся
+        неизвестным, а не нулевым: это разные вещи (§54).
+        """
+        artifact = Artifact(ctx.paths.analysis / "audiotags.json")
+        if not artifact.exists():
+            return None
+        try:
+            data = artifact.read_json()
+            return {
+                "hop": float(data.get("hop", 0.48)),
+                "scores": {k: v for k, v in data.get("scores", {}).items()},
+            }
+        except (ValueError, KeyError, TypeError):
+            ctx.log.warning("теги звука не читаются — оценка без них")
+            return None
+
+    @staticmethod
+    def _measured(tags, candidate, ctx) -> dict[str, Any]:
+        """Измеренные признаки и штрафы для клипа."""
+        if not tags:
+            return {}
+        hop = tags["hop"]
+        start, end = float(candidate["start"]), float(candidate["end"])
+        a, b = int(start / hop), int(end / hop)
+
+        result: dict[str, Any] = {}
+        music = tags["scores"].get("music")
+        if music is not None and b > a:
+            window = music[a:b]
+            # Доля ролика под музыку, а не пик: одиночный такт не опасен,
+            # опасна музыка на протяжении всего ролика.
+            share = sum(1 for v in window if v >= ctx.config.audiotags.min_score) / len(window)
+            result["measured_penalties"] = {
+                "music_present": round(share * ctx.config.audiotags.music_penalty / 0.25, 4)
+                if ctx.config.audiotags.music_penalty else 0.0
+            }
+
+        laughter = tags["scores"].get("laughter")
+        if laughter is not None and b > a:
+            # Смех — по пику: он длится секунду посреди речи.
+            result["measured_factors"] = {"laughter": max(laughter[a:b], default=0.0)}
+        return result
 
     def _ask(
         self,

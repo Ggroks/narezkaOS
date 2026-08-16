@@ -180,6 +180,31 @@ class CandidatesConfig(BaseModel):
     max_coverage: float = 0.3
 
 
+class AudioTagsConfig(BaseModel):
+    """Теги звука (§10). Каждый включается отдельно.
+
+    Смех полезен почти всем, музыка нужна тем, кто публикует на площадках
+    с Content ID, а аплодисменты и толпа осмысленны лишь на записях с залом.
+    Считать то, чем не пользуются, значит платить временем и местом за ничто.
+    """
+
+    enabled: bool = True
+    #: Смех — сильнейший признак удачного момента на стриме.
+    laughter: bool = True
+    #: Музыка — штраф, а не признак: риск Content ID (§54).
+    music: bool = True
+    #: Крик: и восторг, и испуг. Сам по себе неоднозначен.
+    shout: bool = True
+    #: Аплодисменты и одобрительный гул — только для записей с залом.
+    applause: bool = False
+    #: Толпа: фон стадиона, отличает публичное событие от студии.
+    crowd: bool = False
+    #: Ниже этой уверенности тег не засчитывается.
+    min_score: float = Field(default=0.3, gt=0, le=1.0)
+    #: Насколько музыка снижает оценку клипа, если занимает его целиком.
+    music_penalty: float = Field(default=0.25, ge=0, le=1.0)
+
+
 class TimelineConfig(BaseModel):
     """Ось времени и удаление пауз (§16).
 
@@ -219,6 +244,10 @@ class ScoreConfig(BaseModel):
             "audio": 0.10,
             "novelty": 0.05,
             "visual": 0.05,
+            # Смех измеряется, а не спрашивается у модели: она читает текст
+            # и записи не слышит. Вес небольшой — смех подтверждает удачный
+            # момент, но сам по себе не делает его интересным.
+            "laughter": 0.05,
         }
     )
 
@@ -242,6 +271,7 @@ class Config(BaseModel):
     candidates: CandidatesConfig = Field(default_factory=CandidatesConfig)
     subtitles: SubtitlesConfig = Field(default_factory=SubtitlesConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
+    audiotags: AudioTagsConfig = Field(default_factory=AudioTagsConfig)
     timeline: TimelineConfig = Field(default_factory=TimelineConfig)
     funnel: FunnelConfig = Field(default_factory=FunnelConfig)
     score: ScoreConfig = Field(default_factory=ScoreConfig)

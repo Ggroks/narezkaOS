@@ -1,4 +1,5 @@
-import { formatDuration, type ShortsIndex } from "../api";
+import { useEffect, useState } from "react";
+import { api, formatDuration, type ShortsIndex } from "../api";
 
 type Props = { videoId: string; shorts: ShortsIndex };
 
@@ -17,6 +18,24 @@ const BACKGROUND_LABEL: Record<string, string> = {
  * включая то, не залезли ли субтитры в зону интерфейса платформы (§60).
  */
 export function ShortsView({ videoId, shorts }: Props) {
+  // Заголовок показывается на самом ролике, а не только в отдельном разделе:
+  // ролик и его название — одно и то же, разносить их по экрану незачем.
+  const [titles, setTitles] = useState<Record<number, string>>({});
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .publish(videoId)
+      .then((data) => {
+        if (!alive) return;
+        setTitles(Object.fromEntries(data.clips.map((c) => [c.index, c.title])));
+      })
+      .catch(() => setTitles({})); // текстов ещё нет — это нормальный ход работы
+    return () => {
+      alive = false;
+    };
+  }, [videoId]);
+
   return (
     <section className="card" aria-labelledby="shorts-heading">
       <h2 id="shorts-heading">Готовые ролики ({shorts.files.length})</h2>
@@ -43,6 +62,11 @@ export function ShortsView({ videoId, shorts }: Props) {
               src={`/api/videos/${videoId}/shorts/${file.index}/media`}
             />
             <figcaption className="small dim">
+              {titles[file.index] ? (
+                <span className="short-title">{titles[file.index]}</span>
+              ) : (
+                <span className="short-title dim">Ролик {file.index + 1}</span>
+              )}
               {file.interest_score != null && (
                 <span title={file.explanation ?? undefined}>
                   оценка <b className="tnum">{file.interest_score.toFixed(2)}</b>

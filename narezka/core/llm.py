@@ -240,6 +240,60 @@ def _post_once(client: httpx.Client, model: str, payload: dict[str, Any]) -> dic
     raise LlmError(detail)
 
 
+def process_batches(
+    batches: list[Any],
+    ask: Any,
+    log: Any,
+    *,
+    label: str = "пакет",
+    retry_rounds: int = 2,
+    pause: float = 20.0,
+) -> tuple[dict[int, Any], set[str], list[str]]:
+    """Прогоняет пакеты через модель, повторяя упавшие отдельным заходом.
+
+    Замерено на пятичасовой записи: один пакет из тридцати отказал, и шесть
+    роликов остались без текстов при живой в остальном стадии. Пропуск внутри
+    прохода — не отказоустойчивость: у бесплатных моделей занятость пула
+    обычное состояние, и та же попытка минутой позже проходит.
+
+    Поэтому упавшие складываются и повторяются **после** основного прохода:
+    к тому моменту пул успевает освободиться, а пауза между заходами не
+    тормозит удачные пакеты. Возвращает ответы, использованные модели и
+    описания отказов, переживших все заходы.
+    """
+    answers: dict[int, Any] = {}
+    models_used: set[str] = set()
+    pending = list(enumerate(batches, start=1))
+    failures: dict[int, str] = {}
+
+    for round_number in range(retry_rounds + 1):
+        if not pending:
+            break
+        if round_number:
+            log.info("повтор %d: пакетов %d", round_number, len(pending))
+            time.sleep(pause)
+
+        retry: list[tuple[int, Any]] = []
+        for number, batch in pending:
+            log.info("%s %d из %d", label, number, len(batches))
+            try:
+                answered, model = ask(batch)
+            except (LlmError, ValueError) as exc:
+                failures[number] = f"{label} {number}: {exc}"
+                # Ошибка разбора ответа не лечится ожиданием: модель ответила,
+                # но не тем. Повторять стоит только временный отказ.
+                if isinstance(exc, RateLimited) or not isinstance(exc, ValueError):
+                    retry.append((number, batch))
+                log.warning("%s %d не прошёл — %s", label, number, exc)
+                continue
+            answers.update(answered)
+            models_used.add(model)
+            failures.pop(number, None)
+        pending = retry
+
+    return answers, models_used, list(failures.values())
+
+
 def chat(
     key: str,
     models: list[str],

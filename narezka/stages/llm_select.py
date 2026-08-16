@@ -81,7 +81,8 @@ class LlmSelectStage(Stage):
     name = "llm_select"
     #: v2 — уточнённые границы проверяются против ограничений площадки:
     #: модель о них не знает и однажды ужала клип до шести секунд (§17).
-    version = 2
+    #: v3 — упавшие пакеты повторяются, а не теряются вместе с оценками.
+    version = 3
     device = Device.ANY
     optional = True
     description = "Отбор моментов моделью: оценка, уточнение границ, топ-N"
@@ -120,25 +121,13 @@ class LlmSelectStage(Stage):
         transcript = Artifact(ctx.paths.transcript / TRANSCRIPT_NAME).read_json()
         chain = [ctx.config.llm.model, *ctx.config.llm.fallback_models]
 
-        verdicts: dict[int, dict[str, Any]] = {}
-        models_used: set[str] = set()
-        failures: list[str] = []
-
-        for offset in range(0, len(candidates), BATCH_SIZE):
-            batch = list(enumerate(candidates))[offset : offset + BATCH_SIZE]
-            ctx.log.info(
-                "пакет %d–%d из %d", offset + 1, offset + len(batch), len(candidates)
-            )
-            try:
-                answered, model = self._ask(ctx, key, chain, batch, transcript)
-            except (llm.LlmError, ValueError) as exc:
-                # Отказ по одному пакету не должен терять остальные: у
-                # бесплатных моделей занятость пула — обычное состояние.
-                failures.append(f"пакет {offset // BATCH_SIZE + 1}: {exc}")
-                ctx.log.warning("пакет пропущен — %s", exc)
-                continue
-            verdicts.update(answered)
-            models_used.add(model)
+        numbered = list(enumerate(candidates))
+        batches = [numbered[i : i + BATCH_SIZE] for i in range(0, len(numbered), BATCH_SIZE)]
+        verdicts, models_used, failures = llm.process_batches(
+            batches,
+            lambda batch: self._ask(ctx, key, chain, batch, transcript),
+            ctx.log,
+        )
 
         if not verdicts:
             raise StageSkipped("ни один пакет не оценён: " + "; ".join(failures[:3]))

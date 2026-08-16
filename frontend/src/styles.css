@@ -1065,3 +1065,11 @@ details.section .section-body > .card > h2 { display: none; }
 .choice select:disabled { opacity: 0.5; }
 /* Недоступный вариант виден, но не выбирается — честнее, чем прятать. */
 .choice option:disabled { color: var(--text-faint); }
+
+/* Заголовок ролика — первым и во всю ширину карточки: остальное подпись. */
+.short-title {
+  flex-basis: 100%;
+  color: var(--text);
+  font-weight: 600;
+  line-height: 1.35;
+}

@@ -26,7 +26,8 @@ class MetadataStage(Stage):
     name = "metadata"
     #: v2 — клипы объявлены входом: без этого тексты брались из кэша после
     #: пересчёта отбора и относились к другим границам.
-    version = 2
+    #: v3 — упавшие пакеты повторяются, а не теряются вместе с текстами.
+    version = 3
     device = Device.ANY
     optional = True
     description = "Заголовок, описание и хэштеги для каждого клипа"
@@ -70,21 +71,12 @@ class MetadataStage(Stage):
         transcript = Artifact(ctx.paths.transcript / TRANSCRIPT_NAME).read_json()
         chain = [ctx.config.llm.model, *ctx.config.llm.fallback_models]
 
-        answers: dict[int, dict[str, Any]] = {}
-        models_used: set[str] = set()
-        failures: list[str] = []
-
-        for offset in range(0, len(clips), BATCH_SIZE):
-            batch = clips[offset : offset + BATCH_SIZE]
-            ctx.log.info("пакет %d–%d из %d", offset + 1, offset + len(batch), len(clips))
-            try:
-                answered, model = self._ask(ctx, key, chain, batch, transcript)
-            except (llm.LlmError, ValueError) as exc:
-                failures.append(f"пакет {offset // BATCH_SIZE + 1}: {exc}")
-                ctx.log.warning("пакет пропущен — %s", exc)
-                continue
-            answers.update(answered)
-            models_used.add(model)
+        batches = [clips[i : i + BATCH_SIZE] for i in range(0, len(clips), BATCH_SIZE)]
+        answers, models_used, failures = llm.process_batches(
+            batches,
+            lambda batch: self._ask(ctx, key, chain, batch, transcript),
+            ctx.log,
+        )
 
         if not answers:
             raise StageSkipped("ни один пакет не обработан: " + "; ".join(failures[:3]))

@@ -219,7 +219,7 @@ export function ReviewView({ videoId, durationSeconds }: Props) {
     return (
       <section className="card">
         <h2>Обзор моментов</h2>
-        <p className="empty">Кандидатов нет — запустите стадию candidates.</p>
+        <p className="empty">Моменты ещё не найдены. Запустите обработку — они появятся после разбора звука и речи.</p>
       </section>
     );
   }
@@ -242,7 +242,7 @@ export function ReviewView({ videoId, durationSeconds }: Props) {
           {stats.edited > 0 && ` · ${stats.edited} с правкой границ`}
         </span>
         {stats.scored === 0 && (
-          <span className="badge warn">модель не оценивала — запустите llm_select</span>
+          <span className="badge warn">модель ещё не оценивала этот момент</span>
         )}
       </div>
 

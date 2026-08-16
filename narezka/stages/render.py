@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from narezka.core.cuts import clip_cuts
+from narezka.core.edl import Edl
 from narezka.core.encoders import video_args
 from narezka.core.artifacts import Artifact
 from narezka.core.config import FramingConfig
@@ -161,6 +163,9 @@ class RenderStage(Stage):
 
         ctx.log.info(describe_source(clip_source, len(clips)))
         cams = self._facecams(ctx)
+        edl = self._edl(ctx)
+        if not edl.is_identity:
+            ctx.log.info("правки оси времени применяются: отрезков %d", len(edl.spans))
 
         rendered: list[dict[str, Any]] = []
         for clip in clips:
@@ -169,7 +174,17 @@ class RenderStage(Stage):
             if options["subtitles_enabled"] and name is None:
                 continue
 
-            duration = clip["end"] - clip["start"]
+            # Клип берётся в исходном времени: ffmpeg перематывает по нему,
+            # а вырезки применяет уже внутри отрезка. Границы в клипе после
+            # стадии timeline хранятся в выходном времени, поэтому нужен
+            # обратный пересчёт — иначе рендерился бы не тот кусок.
+            source_start = clip.get("source_start", clip["start"])
+            source_end = clip.get("source_end", clip["end"])
+            cut_video, cut_audio, duration = clip_cuts(edl, source_start, source_end)
+            if duration <= 0:
+                ctx.log.warning("клип %d вырезан целиком — пропущен", index)
+                continue
+
             target = Artifact(ctx.paths.shorts / f"{index:02d}.mp4")
             ctx.log.info("рендер %d: %.1f с", index, duration)
             ctx.progress(len(rendered) + 1, len(clips), "рендер")
@@ -181,8 +196,10 @@ class RenderStage(Stage):
                     self._command(
                         split=split,
                         source=source,
-                        start=clip["start"],
+                        start=source_start,
                         duration=duration,
+                        cut_video=cut_video,
+                        cut_audio=cut_audio,
                         subtitle_name=name,
                         loudnorm=options["loudnorm_enabled"],
                         output=tmp,
@@ -254,6 +271,21 @@ class RenderStage(Stage):
         except ValueError:
             return {}
 
+    def _edl(self, ctx: StageContext) -> Edl:
+        """Ось времени. Нет артефакта — правок нет, а не ошибка.
+
+        Стадия timeline необязательна: без неё рендер работает ровно как
+        раньше, и это единственная развилка на весь модуль.
+        """
+        artifact = Artifact(ctx.paths.analysis / "timeline.json")
+        if not artifact.exists():
+            return Edl.identity()
+        try:
+            return Edl.from_dict(artifact.read_json().get("edl", {}))
+        except (ValueError, KeyError, TypeError):
+            ctx.log.warning("ось времени не читается — рендер без правок")
+            return Edl.identity()
+
     @staticmethod
     def _split_for(clip, cams, framing, src_w, src_h, short):
         """Раскладка сплита для клипа — если она вообще применима.
@@ -306,6 +338,8 @@ class RenderStage(Stage):
         height: int,
         crf: int,
         fps: int | None = None,
+        cut_video: str = "",
+        cut_audio: str = "",
         encoder: str = "cpu",
         pix_fmt: str,
         faststart: bool,
@@ -343,6 +377,8 @@ class RenderStage(Stage):
                 # Хвост вставляется перед меткой выхода: [v] должна остаться
                 # последней, иначе ffmpeg не найдёт, что кодировать.
                 video_filter = video_filter.replace("[v]", f"{hw_tail}[v]")
+            if cut_video:
+                video_filter = _prepend_cut(video_filter, cut_video)
             args += ["-filter_complex", video_filter, "-map", "[v]", "-map", "0:a:0"]
         else:
             args += [
@@ -354,8 +390,13 @@ class RenderStage(Stage):
                 "-map", "[v]", "-map", "1:a:0",
             ]
 
+        # Звуковые фильтры собираются в один -af: второй такой параметр молча
+        # затирает первый, и нормализация громкости просто исчезла бы.
+        audio_chain = [cut_audio] if cut_audio else []
         if loudnorm:
-            args += ["-af", f"loudnorm=I={lufs}:TP=-1.5:LRA=11"]
+            audio_chain.append(f"loudnorm=I={lufs}:TP=-1.5:LRA=11")
+        if audio_chain:
+            args += ["-af", ",".join(audio_chain)]
         args += codec_args + [
             "-c:a", "aac",
             "-b:a", "160k",
@@ -368,3 +409,27 @@ class RenderStage(Stage):
             args += ["-movflags", "+faststart"]
         args.append(str(output))
         return args
+
+
+def _prepend_cut(chain: str, cut: str) -> str:
+    """Ставит отбор кадров перед цепочкой кадрирования.
+
+    Первым, до масштабирования и размытия: обрабатывать кадры, которые всё
+    равно будут выброшены, незачем.
+
+    Цепочка ветвится — размытый фон и содержимое читают исходник каждый
+    по-своему, — а метку выхода фильтра ffmpeg разрешает потребить лишь
+    однажды. Поэтому после отбора ставится `split` ровно на столько веток,
+    сколько их в цепочке, и каждая получает свою метку.
+    """
+    branches = chain.count("[0:v]")
+    if branches == 0:
+        return chain
+    labels = [f"[cut{i}]" for i in range(branches)]
+    if branches > 1:
+        head = f"[0:v]{cut},split={branches}{''.join(labels)};"
+    else:
+        head = f"[0:v]{cut}{labels[0]};"
+    for label in labels:
+        chain = chain.replace("[0:v]", label, 1)
+    return head + chain

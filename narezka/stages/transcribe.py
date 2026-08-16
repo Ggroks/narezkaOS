@@ -117,6 +117,7 @@ class TranscribeStage(Stage):
                     "кусок %d из %d: %.0f–%.0f с из %.0f",
                     number, len(starts), offset, finish / rate, total_seconds,
                 )
+                ctx.progress(number, len(starts), "расшифровка")
 
             piece = samples[begin:finish].astype(np.float32)
             segment_iter, chunk_info = model.transcribe(

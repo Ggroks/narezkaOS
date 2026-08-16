@@ -171,6 +171,7 @@ class RenderStage(Stage):
             duration = clip["end"] - clip["start"]
             target = Artifact(ctx.paths.shorts / f"{index:02d}.mp4")
             ctx.log.info("рендер %d: %.1f с", index, duration)
+            ctx.progress(len(rendered) + 1, len(clips), "рендер")
 
             split = self._split_for(clip, cams, framing, src_w, src_h, short)
 

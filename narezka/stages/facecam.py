@@ -111,7 +111,8 @@ class FacecamStage(Stage):
         source = find_source(ctx.paths.source)
         found: dict[str, Any] = {}
 
-        for clip in clips:
+        for done, clip in enumerate(clips, start=1):
+            ctx.progress(done, len(clips), "поиск вебки")
             step = (clip["end"] - clip["start"]) / (SAMPLES_PER_CLIP + 1)
             times = [clip["start"] + step * (i + 1) for i in range(SAMPLES_PER_CLIP)]
             frames = sample_frames(source, times, log=ctx.log)

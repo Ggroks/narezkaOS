@@ -127,6 +127,7 @@ class LlmSelectStage(Stage):
             batches,
             lambda batch: self._ask(ctx, key, chain, batch, transcript),
             ctx.log,
+            on_progress=lambda done, _t, note: ctx.progress(done, len(candidates), note),
         )
 
         if not verdicts:

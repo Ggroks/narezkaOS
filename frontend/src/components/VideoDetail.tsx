@@ -161,6 +161,11 @@ export function VideoDetail({ videoId, onBack }: Props) {
   const activeStage = running
     ? [...events].reverse().find((e) => e.event === "started")?.stage
     : undefined;
+  // Последняя отметка о ходе работы. Без неё долгая стадия выглядит зависшей:
+  // отбор на пятичасовой записи молчит три четверти часа.
+  const progress = running
+    ? [...events].reverse().find((e) => e.event === "progress" && e.stage === activeStage)
+    : undefined;
 
   return (
     <>
@@ -217,7 +222,17 @@ export function VideoDetail({ videoId, onBack }: Props) {
               <div key={stage.name} className={`stage${isActive ? " active" : ""}`}>
                 <div className="name mono">{stage.name}</div>
                 <div className="grow small dim">{stage.description}</div>
-                {isActive && <span className="badge run">выполняется…</span>}
+                {isActive && progress?.total ? (
+                  <span className="badge run tnum" title={progress.note ?? undefined}>
+                    {progress.done} из {progress.total}
+                  </span>
+                ) : (
+                  isActive && (
+                    <span className="badge run">
+                      {progress?.note ?? "выполняется…"}
+                    </span>
+                  )
+                )}
                 {!isActive && outcome && (
                   <span className={`badge ${OUTCOME_BADGE[outcome] ?? ""}`}>
                     {OUTCOME_LABEL[outcome] ?? outcome}

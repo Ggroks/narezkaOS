@@ -8,6 +8,7 @@ BAZA.md §43 и §58. Стадия — чистая функция «артеф�
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import StrEnum
@@ -33,6 +34,16 @@ class StageContext:
     config: Config
     device: DeviceInfo
     log: logging.Logger
+    #: Сообщить о ходе долгой стадии: сделано из скольких и что именно.
+    #: Долгие стадии без этого выглядят зависшими — на пятичасовой записи
+    #: отбор молчал 43 минуты, и понять, идёт ли работа, было нечем.
+    #: None — запуск без наблюдателя (CLI без задачи), вызов ничего не стоит.
+    on_progress: Callable[[int, int, str], None] | None = None
+
+    def progress(self, done: int, total: int, note: str = "") -> None:
+        """Отметить продвижение. Безопасно вызывать всегда."""
+        if self.on_progress is not None:
+            self.on_progress(done, total, note)
 
 
 class StageSkipped(Exception):

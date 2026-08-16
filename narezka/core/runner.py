@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from enum import StrEnum
 
@@ -64,6 +64,13 @@ def run_stage(
 ) -> StageResult:
     """Запускает стадию и сообщает наблюдателю о начале и об итоге."""
     _notify(observer, stage.name, "started")
+    if observer is not None:
+        ctx = replace(
+            ctx,
+            on_progress=lambda done, total, note: _notify(
+                observer, stage.name, "progress", done=done, total=total, note=note
+            ),
+        )
     result = _run_stage_inner(stage, ctx, force=force)
     _notify(
         observer,

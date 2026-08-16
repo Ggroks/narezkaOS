@@ -248,6 +248,7 @@ def process_batches(
     label: str = "пакет",
     retry_rounds: int = 2,
     pause: float = 20.0,
+    on_progress: Any = None,
 ) -> tuple[dict[int, Any], set[str], list[str]]:
     """Прогоняет пакеты через модель, повторяя упавшие отдельным заходом.
 
@@ -289,6 +290,8 @@ def process_batches(
             answers.update(answered)
             models_used.add(model)
             failures.pop(number, None)
+            if on_progress is not None:
+                on_progress(len(answers), 0, f"{label} {number} из {len(batches)}")
         pending = retry
 
     return answers, models_used, list(failures.values())

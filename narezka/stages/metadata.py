@@ -76,6 +76,7 @@ class MetadataStage(Stage):
             batches,
             lambda batch: self._ask(ctx, key, chain, batch, transcript),
             ctx.log,
+            on_progress=lambda done, _t, note: ctx.progress(done, len(clips), note),
         )
 
         if not answers:

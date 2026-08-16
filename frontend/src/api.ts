@@ -62,6 +62,10 @@ export type JobEvent = {
   reason?: string;
   message?: string;
   status?: string;
+  /** Ход долгой стадии: сделано из скольких и что именно сейчас идёт. */
+  done?: number;
+  total?: number;
+  note?: string;
 };
 
 export type JobSnapshot = {

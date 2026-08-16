@@ -60,6 +60,42 @@ export function SettingsPanel({
         </label>
       )}
 
+      {/* Сигналы поиска моментов. Материал бывает разный: на музыкальном
+          стриме громкость ровная и ничего не различает, на записи без чата
+          чат бесполезен. Выключенный сигнал исключается из расчёта, а не
+          обнуляется — иначе он тянул бы оценку вниз как измеренный ноль. */}
+      <div className="choice">
+        <span className="choice-label">По чему искать моменты</span>
+        <Toggle
+          label="Громкость"
+          hint="всплеск звука; на музыке почти не различает"
+          checked={value.use_loudness}
+          disabled={disabled}
+          onChange={(v) => onChange({ use_loudness: v })}
+        />
+        <Toggle
+          label="Плотность речи"
+          hint="слов в секунду: спор и объяснение звучат по-разному"
+          checked={value.use_speech_rate}
+          disabled={disabled}
+          onChange={(v) => onChange({ use_speech_rate: v })}
+        />
+        <Toggle
+          label="Активность чата"
+          hint="сколько пишут; нужна запись с Twitch"
+          checked={value.use_chat}
+          disabled={disabled}
+          onChange={(v) => onChange({ use_chat: v })}
+        />
+        <Toggle
+          label="Реакции в чате"
+          hint="смайлы, повторы, междометия — пишут ли в ответ на происходящее"
+          checked={value.use_chat_reactions}
+          disabled={disabled}
+          onChange={(v) => onChange({ use_chat_reactions: v })}
+        />
+      </div>
+
       <Toggle
         label="Субтитры"
         hint="Вшиваются в кадр, с подсветкой слова"

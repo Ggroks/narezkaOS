@@ -208,6 +208,90 @@ def deduplicate(
     return sorted(kept, key=lambda c: c["start"])
 
 
+#: Символы, которыми зритель реагирует, а не разговаривает. Сюда попадают
+#: эмодзи, но главное — не они: на Twitch реакция идёт смайлами канала
+#: (KEKW, PogChamp, Sadge) и повторами одного слова. Список общих ловит
+#: базовый случай, остальное берёт правило повтора.
+REACTION_WORDS = frozenset({
+    "kekw", "lul", "lmao", "pog", "pogchamp", "poggers", "monkas", "sadge",
+    "omegalul", "ez", "gg", "f", "ахах", "ахахах", "хаха", "лол", "кек", "жиза",
+})
+
+#: Со скольких одинаковых сообщений подряд считать это волной. Двух мало:
+#: совпадения случаются. Три — уже согласие зала.
+WAVE_REPEATS = 3
+
+
+def _is_reaction(text: str) -> bool:
+    """Сообщение — реакция, а не разговор.
+
+    Реакция короткая и состоит из смайлов, повторов или междометий. Отличать
+    её от обычной реплики полезно потому, что сто сообщений «согласен» и сто
+    «KEKW» означают разное: первое — обсуждение, второе — момент смешной.
+    """
+    stripped = text.strip().lower()
+    if not stripped or len(stripped) > 40:
+        return False
+    words = stripped.split()
+    if not words:
+        return False
+    # Все слова из словаря реакций либо одно слово повторено несколько раз.
+    if all(w.strip("!?.,") in REACTION_WORDS for w in words):
+        return True
+    return len(words) >= 2 and len(set(words)) == 1
+
+
+def chat_reaction_share(
+    messages: list[dict],
+    window_count: int,
+    window_seconds: float,
+    *,
+    skip_bots: bool = True,
+) -> np.ndarray:
+    """Доля реакций в чате по окнам — отдельный признак от плотности.
+
+    BAZA.md §41. Плотность отвечает на вопрос «много ли пишут», а доля
+    реакций — «пишут ли они в ответ на происходящее». Спор в чате даёт
+    высокую плотность при нулевой доле реакций, а удачная шутка — наоборот:
+    сообщений может быть немного, но почти все они смайлы.
+
+    Возвращается доля, а не количество: количество уже учтено плотностью,
+    и складывать два признака, меняющихся вместе, значит считать один дважды.
+    """
+    totals = np.zeros(window_count, dtype=np.float64)
+    reactions = np.zeros(window_count, dtype=np.float64)
+    if window_count <= 0 or window_seconds <= 0:
+        return reactions
+
+    runs: dict[int, tuple[str, int]] = {}
+    for message in messages:
+        if skip_bots and message.get("is_bot"):
+            continue
+        at = message.get("at")
+        if at is None:
+            continue
+        index = int(at / window_seconds)
+        if not 0 <= index < window_count:
+            continue
+        text = str(message.get("text", ""))
+        totals[index] += 1
+
+        # Волна одинаковых сообщений засчитывается как реакция целиком:
+        # когда зал повторяет одно и то же, это и есть реакция, даже если
+        # само слово в словарь не попало.
+        previous, count = runs.get(index, ("", 0))
+        normalized = text.strip().lower()
+        count = count + 1 if normalized == previous else 1
+        runs[index] = (normalized, count)
+
+        if _is_reaction(text) or count >= WAVE_REPEATS:
+            reactions[index] += 1
+
+    with np.errstate(invalid="ignore", divide="ignore"):
+        share = np.where(totals > 0, reactions / totals, 0.0)
+    return share
+
+
 def chat_rate(
     messages: list[dict],
     window_count: int,

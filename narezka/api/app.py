@@ -425,6 +425,11 @@ class FramingPayload(FramingConfig):
     llm_model: str | None = None
     detector_backend: str | None = None
     encoder: str | None = None
+    #: Сигналы анализа — каждый отключается отдельно (§43).
+    use_loudness: bool | None = None
+    use_speech_rate: bool | None = None
+    use_chat: bool | None = None
+    use_chat_reactions: bool | None = None
 
 
 def _framing_state(video_id: str, project: str) -> tuple[Any, Any, Framing, int, int]:
@@ -466,6 +471,9 @@ def framing(video_id: str, project: str = "default") -> dict[str, Any]:
     options["llm_model"] = stored.get("llm_model") or ctx.config.llm.model
     options["detector_backend"] = stored.get("detector_backend") or ctx.config.detector.backend
     options["encoder"] = stored.get("encoder") or ctx.config.output.encoder
+    for flag in ("use_loudness", "use_speech_rate", "use_chat", "use_chat_reactions"):
+        value = stored.get(flag)
+        options[flag] = getattr(ctx.config.candidates, flag) if value is None else value
     options["chat_ignore_start"] = (
         stored.get("chat_ignore_start")
         if isinstance(stored.get("chat_ignore_start"), bool)

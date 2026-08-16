@@ -12,11 +12,14 @@ BAZA.md §11. Дешёвые сигналы по всему материалу �
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 
 from narezka.core.artifacts import Artifact
 from narezka.core.signals import (
     chat_rate,
+    chat_reaction_share,
     forward_average,
     deduplicate,
     limit_coverage,
@@ -107,20 +110,36 @@ class CandidatesStage(Stage):
         density = speech_density(segments, track.count, cfg.window_seconds)
         density_z = robust_z(density)
 
-        chat, chat_z, chat_stats = self._chat_signal(ctx, track.count, cfg)
+        chat, chat_z, reaction_z, chat_stats = self._chat_signal(ctx, track.count, cfg)
 
-        # Вес недоступного сигнала не пропадает, а распределяется между
-        # остальными: иначе запись без чата получала бы систематически более
-        # низкие оценки просто из-за отсутствия источника.
-        weights = {"loudness": cfg.loudness_weight, "density": cfg.density_weight}
-        if chat_z is not None:
-            weights["chat"] = cfg.chat_weight
-        total = sum(weights.values()) or 1.0
-        weights = {name: value / total for name, value in weights.items()}
+        # Сигнал участвует, если он и доступен, и включён. Вес выбывшего
+        # не пропадает, а распределяется между остальными: иначе запись без
+        # чата получала бы систематически более низкие оценки просто из-за
+        # отсутствия источника, а выключенный вручную сигнал вёл бы себя как
+        # измеренный ноль и тянул оценку вниз.
+        active: dict[str, tuple[float, Any]] = {}
+        if cfg.use_loudness:
+            active["loudness"] = (cfg.loudness_weight, loudness_z)
+        if cfg.use_speech_rate:
+            active["density"] = (cfg.density_weight, density_z)
+        if chat_z is not None and cfg.use_chat:
+            active["chat"] = (cfg.chat_weight, chat_z)
+        if reaction_z is not None and cfg.use_chat_reactions:
+            # Доля реакций весит меньше плотности: она уточняет уже найденный
+            # всплеск, а не находит его сама.
+            active["chat_reactions"] = (cfg.chat_weight * 0.5, reaction_z)
 
-        score = weights["loudness"] * loudness_z + weights["density"] * density_z
-        if chat_z is not None:
-            score = score + weights["chat"] * chat_z
+        if not active:
+            raise StageSkipped("все сигналы анализа выключены — искать моменты нечем")
+
+        total = sum(weight for weight, _ in active.values()) or 1.0
+        weights = {name: weight / total for name, (weight, _) in active.items()}
+        ctx.log.info(
+            "сигналы: %s",
+            ", ".join(f"{name} {weights[name]:.2f}" for name in sorted(weights)),
+        )
+
+        score = sum(weights[name] * values for name, (_, values) in active.items())
 
         peaks = find_peaks(
             score,
@@ -181,19 +200,19 @@ class CandidatesStage(Stage):
             )
 
     def _chat_signal(self, ctx: StageContext, window_count: int, cfg):
-        """Всплеск чата, если он есть. Иначе сигнал просто отсутствует."""
+        """Всплеск чата и доля реакций. Возвращает (rate, z, reaction_z, stats)."""
         artifact = Artifact(ctx.paths.analysis / CHAT_NAME)
         if not artifact.exists():
-            return None, None, {"chat": "нет"}
+            return None, None, None, {"chat": "нет"}
 
         try:
             messages = artifact.read_json().get("messages", [])
         except ValueError:
             ctx.log.warning("файл чата не читается — сигнал пропущен")
-            return None, None, {"chat": "не читается"}
+            return None, None, None, {"chat": "не читается"}
 
         if not messages:
-            return None, None, {"chat": "пусто"}
+            return None, None, None, {"chat": "пусто"}
 
         rate = chat_rate(
             messages, window_count, cfg.window_seconds,
@@ -211,10 +230,25 @@ class CandidatesStage(Stage):
             normalized[:windows] = 0.0
             ctx.log.info("приветствия в первых %.0f с не учитываются", ignore)
 
-        ctx.log.info(
-            "чат: %d сообщений, в среднем %.2f в секунду", len(messages), float(rate.mean())
+        # Доля реакций считается по тем же окнам и глушится в том же начале:
+        # приветствие «привет всем» тоже похоже на волну повторов.
+        share = chat_reaction_share(
+            messages, window_count, cfg.window_seconds,
+            skip_bots=not cfg.chat_include_bots,
         )
-        return rate, normalized, {"chat_messages": len(messages), "chat_ignored_start": ignore}
+        reaction_z = robust_z(share)
+        if ignore > 0:
+            reaction_z[: min(int(ignore / cfg.window_seconds), reaction_z.size)] = 0.0
+
+        ctx.log.info(
+            "чат: %d сообщений, в среднем %.2f в секунду, реакций %.0f%%",
+            len(messages), float(rate.mean()), float(share.mean() * 100),
+        )
+        return rate, normalized, reaction_z, {
+            "chat_messages": len(messages),
+            "chat_ignored_start": ignore,
+            "chat_reaction_share": round(float(share.mean()), 3),
+        }
 
     def _build(
         self,

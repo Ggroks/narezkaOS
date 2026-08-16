@@ -113,6 +113,11 @@ export type Framing = {
   detector_backend: string | null;
   /** Чем сжимать: cpu — качество, gpu — скорость. */
   encoder: string | null;
+  /** Сигналы анализа: каждый отключается отдельно. */
+  use_loudness: boolean;
+  use_speech_rate: boolean;
+  use_chat: boolean;
+  use_chat_reactions: boolean;
   preset: FramingPreset;
   side_crop: number;
   anchor: "center" | "left" | "right";

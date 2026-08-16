@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type Health, type VideoSummary } from "./api";
-import { Sidebar } from "./components/Sidebar";
+import { Chrome, type StageInfo } from "./components/Chrome";
 import { VideoList } from "./components/VideoList";
 import { VideoDetail } from "./components/VideoDetail";
 
@@ -27,24 +27,21 @@ function useHashRoute(): [string | null, (id: string | null) => void] {
   return [videoId, navigate];
 }
 
+/** Шесть этапов пути. Состояния пока заглушены — подключаются со стадиями. */
+const PROJECT_STAGES: StageInfo[] = [
+  { id: "source", title: "источник", state: "done" },
+  { id: "analysis", title: "анализ", state: "done" },
+  { id: "moments", title: "моменты", state: "running" },
+  { id: "frame", title: "кадр", state: "waiting" },
+  { id: "style", title: "стиль", state: "waiting" },
+  { id: "export", title: "экспорт", state: "locked", blockedBy: "сначала выберите моменты" },
+];
+
 export function App() {
   const [videoId, navigate] = useHashRoute();
   const [videos, setVideos] = useState<VideoSummary[]>([]);
   const [health, setHealth] = useState<Health | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // Состояние панели переживает перезагрузку: ширина рабочей области —
-  // личная привычка, и переустанавливать её каждый раз раздражает.
-  const [collapsed, setCollapsed] = useState(
-    () => localStorage.getItem("rail-collapsed") === "1",
-  );
-
-  const toggleRail = useCallback(() => {
-    setCollapsed((was) => {
-      localStorage.setItem("rail-collapsed", was ? "0" : "1");
-      return !was;
-    });
-  }, []);
-
   const refresh = useCallback(async () => {
     try {
       setVideos(await api.videos());
@@ -64,32 +61,27 @@ export function App() {
   }, [refresh]);
 
   return (
-    <div className={`app${collapsed ? " rail-collapsed" : ""}`}>
+    <Chrome
+      projectName={videos.find((v) => v.video_id === videoId)?.title}
+      source={health ? { duration: health.device.kind === "cuda" ? "видеокарта" : "процессор", size: health.device.name } : null}
+      queue={{ waiting: 0, running: 0 }}
+      filters={videoId ? undefined : <span className="rail-hint">библиотека проектов</span>}
+      stages={videoId ? PROJECT_STAGES : undefined}
+      activeStage={videoId ? "source" : undefined}
+    >
       <a href="#content" className="sr-only">
         Перейти к содержимому
       </a>
-      <Sidebar
-        view={videoId ? "video" : "library"}
-        videoTitle={videos.find((v) => v.video_id === videoId)?.title}
-        health={health}
-        collapsed={collapsed}
-        onToggle={toggleRail}
-        onHome={() => navigate(null)}
-        count={videos.length}
-      />
-
-      <main id="content">
-        {error && (
+      {error && (
           <div className="error" role="alert">
             {error}
           </div>
         )}
-        {videoId ? (
-          <VideoDetail videoId={videoId} onBack={() => navigate(null)} />
-        ) : (
-          <VideoList videos={videos} onOpen={(id) => navigate(id)} onChanged={refresh} />
-        )}
-      </main>
-    </div>
+      {videoId ? (
+        <VideoDetail videoId={videoId} onBack={() => navigate(null)} />
+      ) : (
+        <VideoList videos={videos} onOpen={(id) => navigate(id)} onChanged={refresh} />
+      )}
+    </Chrome>
   );
 }

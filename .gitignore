@@ -39,3 +39,6 @@ frontend/skills-lock.json
 # Веса YOLOX (20 МБ) не в репозитории: в отличие от 230-килобайтной модели
 # лиц, это заметный вес в каждом клоне ради ещё не доказавшего себя бэкенда.
 assets/models/yolox_tiny.onnx
+
+# Веса YAMNet (15 МБ) не в репозитории — как и YOLOX.
+assets/models/yamnet.onnx

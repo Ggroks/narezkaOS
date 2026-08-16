@@ -190,6 +190,7 @@ class RenderStage(Stage):
                         width=short.width,
                         height=short.height,
                         crf=out.crf,
+                        fps=out.fps,
                         pix_fmt=out.pix_fmt,
                         faststart=out.faststart,
                         lufs=out.loudness_target_lufs,
@@ -301,6 +302,7 @@ class RenderStage(Stage):
         width: int,
         height: int,
         crf: int,
+        fps: int | None = None,
         pix_fmt: str,
         faststart: bool,
         lufs: float,
@@ -321,12 +323,13 @@ class RenderStage(Stage):
             args += ["-ss", f"{start:.3f}", "-i", str(source), "-t", f"{duration:.3f}"]
             if split is not None:
                 video_filter = build_split_filter(
-                    split, width, subtitle_name, fonts_dir=escape_for_filter(fonts_dir())
+                    split, width, subtitle_name,
+                    fonts_dir=escape_for_filter(fonts_dir()), fps=fps,
                 )
             else:
                 video_filter = build_filter(
                     plan, framing, width, height, subtitle_name,
-                    fonts_dir=escape_for_filter(fonts_dir()),
+                    fonts_dir=escape_for_filter(fonts_dir()), fps=fps,
                 )
             args += ["-filter_complex", video_filter, "-map", "[v]", "-map", "0:a:0"]
         else:

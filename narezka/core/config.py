@@ -109,6 +109,10 @@ class OutputConfig(BaseModel):
     subtitles_enabled: bool = True
     loudnorm_enabled: bool = True
     loudness_target_lufs: float = -14.0
+    #: Кадров в секунду на выходе. Замер на записи 720p60: ограничение 30-ю
+    #: снимает 36% времени рендера и 11% веса файла, а вертикальные ролики
+    #: платформы и так показывают в 30. None — оставить как в исходнике.
+    fps: int | None = 30
     crf: int = 20
     pix_fmt: str = "yuv420p"
     faststart: bool = True

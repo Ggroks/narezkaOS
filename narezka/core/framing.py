@@ -193,6 +193,7 @@ def build_filter(
     out_h: int,
     subtitle_name: str | None = None,
     fonts_dir: str | None = None,
+    fps: int | None = None,
 ) -> str:
     """Строка filter_complex для ffmpeg.
 
@@ -208,7 +209,12 @@ def build_filter(
     """
     source_crop = f"crop={plan.crop_w}:{plan.crop_h}:{plan.crop_x}:{plan.crop_y}"
 
-    content = f"[0:v]{source_crop},scale={plan.scaled_w}:{plan.scaled_h}"
+    # Прореживание кадров идёт первым фильтром, до масштабирования и
+    # размытия: иначе вся тяжёлая обработка считается по всем кадрам, а
+    # лишние выбрасываются в самом конце. Замер на 720p60: ограничение
+    # в начале цепочки снимает треть времени, в конце — не даёт ничего.
+    decimate = f"fps={fps}," if fps else ""
+    content = f"[0:v]{decimate}{source_crop},scale={plan.scaled_w}:{plan.scaled_h}"
 
     if plan.full_bleed:
         base = content
@@ -221,7 +227,7 @@ def build_filter(
         base = f"{content},pad={out_w}:{out_h}:0:{plan.offset_y}:{framing.color}"
     else:
         backdrop = (
-            f"[0:v]scale={out_w}:{out_h}:force_original_aspect_ratio=increase,"
+            f"[0:v]{decimate}scale={out_w}:{out_h}:force_original_aspect_ratio=increase,"
             f"crop={out_w}:{out_h}"
         )
         if framing.blur_sigma > 0:
@@ -370,13 +376,16 @@ def build_split_filter(
     out_w: int,
     subtitle_name: str | None = None,
     fonts_dir: str | None = None,
+    fps: int | None = None,
 ) -> str:
     """Цепочка фильтров для сплита: две полосы одна над другой."""
+    # Как и в одиночной раскладке — прореживание до кропа и масштабирования.
+    decimate = f"fps={fps}," if fps else ""
     cx, cy, cw, ch = plan.cam_crop
     mx, my, mw, mh = plan.main_crop
     base = (
-        f"[0:v]crop={cw}:{ch}:{cx}:{cy},scale={out_w}:{plan.cam_height}[cam];"
-        f"[0:v]crop={mw}:{mh}:{mx}:{my},scale={out_w}:{plan.main_height}[main];"
+        f"[0:v]{decimate}crop={cw}:{ch}:{cx}:{cy},scale={out_w}:{plan.cam_height}[cam];"
+        f"[0:v]{decimate}crop={mw}:{mh}:{mx}:{my},scale={out_w}:{plan.main_height}[main];"
         f"[cam][main]vstack=inputs=2"
     )
     if subtitle_name is None:

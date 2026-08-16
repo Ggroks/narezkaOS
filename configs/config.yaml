@@ -81,6 +81,7 @@ output:
     color: "0x14171c"
 
   loudness_target_lufs: -14
+  fps: 30              # кадров/с на выходе; пусто — как в исходнике
   crf: 20
   pix_fmt: yuv420p
   faststart: true

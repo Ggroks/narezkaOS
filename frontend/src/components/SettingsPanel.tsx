@@ -159,6 +159,60 @@ export function SettingsPanel({
         onChange={(on) => onChange({ layout: on ? "split" : "single" })}
       />
 
+      {/* Слежение — третья раскладка наравне со сплитом и подложкой.
+          Взаимоисключающие: кадр может быть либо разрезан надвое, либо
+          узким и ведомым за головой. */}
+      <Toggle
+        label="Следить за лицом"
+        hint="Узкий кадр едет за головой — она всегда в центре"
+        checked={value.layout === "track"}
+        disabled={disabled}
+        onChange={(on) => onChange({ layout: on ? "track" : "single" })}
+      />
+
+      {value.layout === "track" && (
+        <div className="choice">
+          <span className="choice-label">Насколько цепко держать лицо</span>
+          <label className="slider">
+            <span className="small dim">
+              плавно ← {(value.track_smoothing ?? 0.6).toFixed(2)} → цепко
+            </span>
+            <input
+              type="range"
+              min={0.05}
+              max={1}
+              step={0.05}
+              value={value.track_smoothing ?? 0.6}
+              disabled={disabled}
+              onChange={(e) => onChange({ track_smoothing: Number(e.target.value) })}
+            />
+          </label>
+          <span className="choice-hint">
+            Цепко — лицо всегда в центре, рамка повторяет каждое движение.
+            Плавно — кадр спокойнее, но лицо гуляет по экрану.
+          </span>
+
+          <label className="slider">
+            <span className="small dim">
+              зона покоя {Math.round((value.track_dead_zone ?? 0) * 100)}% кадра
+            </span>
+            <input
+              type="range"
+              min={0}
+              max={0.4}
+              step={0.05}
+              value={value.track_dead_zone ?? 0}
+              disabled={disabled}
+              onChange={(e) => onChange({ track_dead_zone: Number(e.target.value) })}
+            />
+          </label>
+          <span className="choice-hint">
+            Пока лицо внутри зоны, рамка не двигается вовсе. Ноль — держать
+            в центре всегда.
+          </span>
+        </div>
+      )}
+
       {/* Настройка выше по пайплайну: меняет отбор моментов, а не сборку,
           поэтому и пересчитывать надо с отбора. */}
       <Toggle

@@ -436,6 +436,9 @@ class FramingPayload(FramingConfig):
     tag_shout: bool | None = None
     tag_applause: bool | None = None
     tag_crowd: bool | None = None
+    #: Слежение за лицом: насколько цепко рамка держит голову.
+    track_smoothing: float | None = None
+    track_dead_zone: float | None = None
 
 
 def _framing_state(video_id: str, project: str) -> tuple[Any, Any, Framing, int, int]:
@@ -483,6 +486,9 @@ def framing(video_id: str, project: str = "default") -> dict[str, Any]:
     for tag in ("laughter", "music", "shout", "applause", "crowd"):
         value = stored.get(f"tag_{tag}")
         options[f"tag_{tag}"] = getattr(ctx.config.audiotags, tag) if value is None else value
+    for knob in ("track_smoothing", "track_dead_zone"):
+        value = stored.get(knob)
+        options[knob] = getattr(ctx.config.output.framing, knob) if value is None else value
     options["chat_ignore_start"] = (
         stored.get("chat_ignore_start")
         if isinstance(stored.get("chat_ignore_start"), bool)

@@ -73,6 +73,9 @@ output:
     # приближённый контент снизу. Сплит работает там, где стадия facecam
     # нашла вебку наложением (§61).
     layout: single
+    track_smoothing: 0.6    # цепкость слежения: 1 — лицо строго в центре
+    track_dead_zone: 0.0    # зона покоя рамки в долях кадра; 0 — держать всегда
+    track_max_speed: 3.0    # предел скорости рамки, ширин кадра в секунду
     preset: balanced       # full | balanced | focus | fill | custom
     side_crop: 0.25        # используется при preset: custom
     anchor: center         # center | left | right

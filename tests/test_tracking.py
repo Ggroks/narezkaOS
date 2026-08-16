@@ -103,3 +103,40 @@ def test_interpolation_between_detections():
 
 def test_mismatched_input_is_rejected():
     assert smooth([1.0, 2.0], [0.0], WIDTH).x.size == 0
+
+
+def test_flat_expression_has_no_nesting():
+    """Выражение для ffmpeg — плоская сумма, а не вложенные условия.
+
+    Вложенность у ffmpeg ограничена: на 190 звеньях разбор падал с
+    «too many args», и слежение на длинном клипе не собиралось вовсе.
+    """
+    from narezka.core.tracking import crop_expression
+
+    points = [(i * 0.2, 400.0 + (i % 7) * 30) for i in range(200)]
+    expression = crop_expression(points, 405.0, 1280.0)
+
+    assert "if(" not in expression, "вложенных условий быть не должно"
+    assert expression.count("gte(t,") >= 190
+
+
+def test_expression_segments_do_not_overlap():
+    """Промежутки полуоткрытые: на стыке два звена сложились бы вдвое."""
+    from narezka.core.tracking import crop_expression
+
+    expression = crop_expression([(0.0, 400.0), (1.0, 600.0), (2.0, 400.0)], 405.0, 1280.0)
+    assert expression.count("lt(t,1.000)") == 1
+    assert expression.count("gte(t,1.000)") == 1
+
+
+def test_hard_tracking_follows_closely():
+    """При нулевой зоне покоя рамка повторяет движение почти полностью.
+
+    Замер на живом клипе: лицо ходит на 682 px, при зоне в четверть кадра
+    рамка проходила 399 px — слежение почти не читалось.
+    """
+    positions = [400.0 + i * 5 for i in range(60)]
+    loose = smooth(positions, times(60), WIDTH, smoothing=0.15, dead_zone=0.25)
+    tight = smooth(positions, times(60), WIDTH, smoothing=0.6, dead_zone=0.0)
+
+    assert tight.travel > loose.travel * 1.5

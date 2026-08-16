@@ -183,13 +183,26 @@ def crop_expression(
     if len(points) == 1:
         return f"{left(points[0][1]):.1f}"
 
-    # Собирается справа налево: последнее звено становится значением по
-    # умолчанию, и каждое предыдущее оборачивает его условием.
-    expression = f"{left(points[-1][1]):.1f}"
-    for (t0, x0), (t1, x1) in reversed(list(zip(points, points[1:], strict=False))):
+    # Плоская сумма, а не вложенные условия. Вложенность у ffmpeg ограничена,
+    # и на 190 звеньях разбор выражения падает с «too many args» — проверено.
+    # Здесь каждое звено умножается на признак своего промежутка и попадает
+    # в сумму, поэтому глубина всегда единица, какой бы длинной ни была
+    # траектория.
+    #
+    # Промежутки полуоткрытые: `between` включает оба конца, и на стыках
+    # два соседних звена сложились бы, дав скачок вдвое.
+    terms: list[str] = []
+    first_t = points[0][0]
+    terms.append(f"lt(t,{first_t:.3f})*{left(points[0][1]):.1f}")
+
+    for (t0, x0), (t1, x1) in zip(points, points[1:], strict=False):
         a, b = left(x0), left(x1)
         span = max(t1 - t0, 1e-6)
         slope = (b - a) / span
-        piece = f"{a:.1f}+{slope:.3f}*(t-{t0:.3f})"
-        expression = f"if(lt(t,{t1:.3f}),{piece},{expression})"
-    return expression
+        terms.append(
+            f"gte(t,{t0:.3f})*lt(t,{t1:.3f})*({a:.1f}+{slope:.4f}*(t-{t0:.3f}))"
+        )
+
+    last_t, last_x = points[-1]
+    terms.append(f"gte(t,{last_t:.3f})*{left(last_x):.1f}")
+    return "+".join(terms)

@@ -1086,3 +1086,44 @@ details.section .section-body > .card > h2 { display: none; }
   border-left: 2px solid var(--warn);
   border-radius: 0 var(--radius-small) var(--radius-small) 0;
 }
+
+/* Ползунок настройки: подпись сверху, дорожка во всю ширину. Значение
+   в подписи, а не рядом — иначе оно прыгает при перетаскивании. */
+.slider {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.slider input[type="range"] {
+  width: 100%;
+  height: 4px;
+  margin: 4px 0;
+  appearance: none;
+  background: var(--surface-3);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.slider input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 0;
+  cursor: grab;
+}
+
+.slider input[type="range"]::-moz-range-thumb {
+  width: 15px;
+  height: 15px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: grab;
+}
+
+.slider input[type="range"]:disabled { opacity: 0.45; cursor: not-allowed; }
+.slider input[type="range"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }

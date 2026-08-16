@@ -42,6 +42,49 @@ MOTION_STEP = 1.0
 FRAME_TIMEOUT = 30
 
 
+def sample_range(source, start: float, end: float, per_second: float, log=None):
+    """Кадры подряд с заданной частотой — одним процессом ffmpeg.
+
+    Для слежения кадры нужны сплошной лентой, и запускать ffmpeg на каждый —
+    самое дорогое, что можно придумать: на клипе в пятьдесят секунд это 259
+    запусков. Замер: так стадия шла 130 секунд на клип, одним процессом —
+    секунды. Разбросанные по записи пробы по-прежнему берёт `sample_frames`:
+    там перемотка действительно дешевле сплошного декодирования.
+
+    Кадры отдаются сырыми: кодировать их в PNG, чтобы тут же раскодировать
+    обратно, — лишняя работа на каждом кадре.
+    """
+    import cv2  # noqa: PLC0415
+    import numpy as np  # noqa: PLC0415
+
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=width,height", "-of", "csv=p=0", str(source)],
+        capture_output=True, text=True, check=False,
+    )
+    try:
+        width, height = (int(v) for v in probe.stdout.strip().split(",")[:2])
+    except ValueError:
+        if log:
+            log.warning("не удалось узнать размер кадра — слежение пропущено")
+        return []
+
+    result = subprocess.run(
+        ["ffmpeg", "-nostdin", "-v", "error", "-ss", f"{start:.3f}", "-i", str(source),
+         "-t", f"{end - start:.3f}", "-vf", f"fps={per_second}",
+         "-f", "rawvideo", "-pix_fmt", "bgr24", "-"],
+        capture_output=True, check=False, timeout=FRAME_TIMEOUT * 10,
+    )
+    size = width * height * 3
+    count = len(result.stdout) // size
+    if count == 0:
+        if log:
+            log.warning("кадры с %.1f по %.1f с не прочитаны", start, end)
+        return []
+    data = np.frombuffer(result.stdout[: count * size], dtype=np.uint8)
+    return list(data.reshape(count, height, width, 3))
+
+
 def sample_frames(source, times: list[float], log=None):
     """Кадры в заданные моменты. Читаются по одному, а не потоком:
     моменты разбросаны по записи, и перемотка дешевле декодирования."""
@@ -115,8 +158,11 @@ class FacecamStage(Stage):
             positions, moments, crop_width,
             smoothing=cfg.track_smoothing,
             dead_zone=cfg.track_dead_zone,
+            max_speed=cfg.track_max_speed,
         )
-        points = tracking.keyframes(track)
+        # Порог прореживания низкий: выражение теперь плоская сумма, глубина
+        # вложенности не растёт, и лишние точки стоят только длины строки.
+        points = tracking.keyframes(track, threshold=2.0)
         ctx.log.info(
             "клип %d: слежение — находок %d из %d, опорных точек %d, путь %.0f px",
             clip["index"], found, len(positions), len(points), track.travel,
@@ -220,9 +266,9 @@ def _track_points(
     Пять-десять раз в секунду достаточно (§17): между находками положение
     получается интерполяцией, а лицо не движется быстрее.
     """
+    frames = sample_range(source, start, end, per_second, log=log)
     step = 1.0 / per_second
-    moments = [start + i * step for i in range(int((end - start) * per_second))]
-    frames = sample_frames(source, moments, log=log)
+    moments = [start + i * step for i in range(len(frames))]
 
     positions: list[float | None] = []
     for frame in frames:

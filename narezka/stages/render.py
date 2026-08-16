@@ -79,7 +79,13 @@ def load_framing(ctx: StageContext) -> Framing:
         except ValueError:
             stored = {}
         if isinstance(stored, dict):
-            data.update({key: value for key, value in stored.items() if key in data})
+            # None означает «не задано вручную», а не «поставить пусто»:
+            # интерфейс присылает его для полей, которых человек не трогал,
+            # и без отсева он затирал бы значение из конфига.
+            data.update({
+                key: value for key, value in stored.items()
+                if key in data and value is not None
+            })
 
     # Через pydantic — чтобы правка, пришедшая из файла или по API, проходила
     # ту же проверку диапазонов, что и конфиг.

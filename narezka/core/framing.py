@@ -89,8 +89,9 @@ class Framing:
     #: одного набора: раскладка и её параметры не должны разъезжаться
     #: по разным местам.
     track_samples_per_second: float = 5.0
-    track_smoothing: float = 0.15
-    track_dead_zone: float = 0.25
+    track_smoothing: float = 0.6
+    track_dead_zone: float = 0.0
+    track_max_speed: float = 3.0
     background: Background = "blur"
     blur_sigma: float = 28.0
     color: str = "0x14171c"

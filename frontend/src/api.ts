@@ -102,7 +102,7 @@ export type FramingPreset = "full" | "balanced" | "focus" | "fill" | "custom";
 
 export type Framing = {
   /** single — исходник на подложке; split — вебка сверху, контент снизу. */
-  layout: "single" | "split";
+  layout: "single" | "split" | "track";
   /** Что вшивать в готовый ролик. Каждый пункт отключается отдельно. */
   subtitles_enabled: boolean;
   loudnorm_enabled: boolean;
@@ -124,6 +124,9 @@ export type Framing = {
   tag_shout: boolean;
   tag_applause: boolean;
   tag_crowd: boolean;
+  /** Слежение за лицом: цепкость рамки и мёртвая зона. */
+  track_smoothing: number;
+  track_dead_zone: number;
   preset: FramingPreset;
   side_crop: number;
   anchor: "center" | "left" | "right";

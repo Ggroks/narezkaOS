@@ -144,3 +144,22 @@ def test_survives_serialisation():
 def test_removed_reports_cut_seconds():
     edl = Edl.cut(100.0, [(30.0, 40.0)])
     assert edl.removed(100.0) == pytest.approx(10.0)
+
+
+def test_identity_survives_serialisation():
+    """Тождественность переживает запись и чтение.
+
+    Без явного признака оба состояния — «правок нет» и «вырезано всё» —
+    дают пустой список отрезков, и на границе сериализации тот же изъян
+    воспроизводился заново.
+    """
+    restored = Edl.from_dict(Edl.identity().as_dict())
+    assert restored.is_identity
+    assert restored.to_output(42.0) == 42.0
+
+
+def test_fully_cut_survives_serialisation():
+    """И обратное состояние тоже: вырезано всё — значит вырезано всё."""
+    restored = Edl.from_dict(Edl.cut(50.0, [(0.0, 50.0)]).as_dict())
+    assert not restored.is_identity
+    assert restored.to_output(25.0) is None

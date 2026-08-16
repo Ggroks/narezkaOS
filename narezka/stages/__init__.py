@@ -14,6 +14,7 @@ from narezka.stages.extract_audio import ExtractAudioStage
 from narezka.stages.facecam import FacecamStage
 from narezka.stages.llm_select import LlmSelectStage
 from narezka.stages.metadata import MetadataStage
+from narezka.stages.timeline import TimelineStage
 from narezka.stages.probe import ProbeStage
 from narezka.stages.render import RenderStage
 from narezka.stages.subtitles import SubtitlesStage
@@ -27,6 +28,10 @@ PIPELINE: list[Stage] = [
     # Чат читается до отбора: он один из сигналов воронки (§11, §41).
     ChatStage(),
     TranscribeStage(),
+    # Ось времени идёт до отбора: если паузы вырезаются, кандидаты должны
+    # искаться уже по правленому времени, иначе их границы указывали бы
+    # на места, которых в ролике нет.
+    TimelineStage(),
     CandidatesStage(),
     LlmSelectStage(),
     # После отбора: вебка ищется по тем отрезкам, что пойдут в ролики (§61).

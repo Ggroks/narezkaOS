@@ -237,11 +237,18 @@ class Edl:
         return first, last
 
     def as_dict(self) -> dict[str, Any]:
+        # Признак тождественности пишется явно. Без него запись и чтение
+        # превращали «правок нет» в «вырезано всё»: оба состояния дают
+        # пустой список отрезков. Это тот же изъян, что нашёлся в пересчёте,
+        # и на границе сериализации он воспроизводился заново.
         return {
+            "identity": self.identity_flag,
             "spans": [span.as_dict() for span in self.spans],
             "output_duration": round(self.output_duration, 3),
         }
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> "Edl":
+        if data.get("identity"):
+            return Edl.identity()
         return Edl.keep([(s["start"], s["end"]) for s in data.get("spans", [])])

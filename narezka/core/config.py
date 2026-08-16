@@ -180,6 +180,26 @@ class CandidatesConfig(BaseModel):
     max_coverage: float = 0.3
 
 
+class TimelineConfig(BaseModel):
+    """Ось времени и удаление пауз (§16).
+
+    По умолчанию выключено: удаление пауз заметно меняет готовый ролик,
+    а у кого-то паузы и есть манера речи. Включать молча за пользователя
+    нельзя — он это услышит, но не поймёт, откуда взялось.
+    """
+
+    remove_silence: bool = False
+    #: Пауза короче не трогается: на таких держится ритм речи.
+    min_pause_seconds: float = Field(default=0.7, gt=0)
+    #: Сколько паузы остаётся на месте. Речь встык звучит неестественно.
+    keep_pause_seconds: float = Field(default=0.25, ge=0)
+    #: Молчание до этой длины прямо перед репликой не режется: оно часть
+    #: реплики, и вырезав его, убиваешь шутку.
+    keep_before_speech_seconds: float = Field(default=2.0, ge=0)
+    #: Насколько тише уровня речи должно быть окно, чтобы считаться тишиной.
+    silence_drop_db: float = Field(default=30.0, gt=0)
+
+
 class FunnelConfig(BaseModel):
     max_candidates: int = 200
     max_clips: int = 30
@@ -222,6 +242,7 @@ class Config(BaseModel):
     candidates: CandidatesConfig = Field(default_factory=CandidatesConfig)
     subtitles: SubtitlesConfig = Field(default_factory=SubtitlesConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
+    timeline: TimelineConfig = Field(default_factory=TimelineConfig)
     funnel: FunnelConfig = Field(default_factory=FunnelConfig)
     score: ScoreConfig = Field(default_factory=ScoreConfig)
     compilation: CompilationConfig = Field(default_factory=CompilationConfig)

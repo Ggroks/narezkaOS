@@ -114,6 +114,13 @@ candidates:
   min_gap_seconds: 20       # чтобы один всплеск не дал десяток кандидатов
   max_coverage: 0.3         # потолок доли материала в кандидатах
 
+timeline:
+  remove_silence: false     # удалять паузы; меняет звучание — включайте осознанно
+  min_pause_seconds: 0.7    # короче — не трогаем, на таких держится ритм речи
+  keep_pause_seconds: 0.25  # столько паузы остаётся: речь встык звучит неестественно
+  keep_before_speech_seconds: 2.0  # молчание перед репликой — часть реплики
+  silence_drop_db: 30       # насколько тише уровня речи считается тишиной
+
 funnel:
   max_candidates: 200
   max_clips: 30

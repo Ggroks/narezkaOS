@@ -20,8 +20,28 @@ from narezka.core.env import free_gb
 from narezka.core.media import MEDIA_SUFFIXES
 from narezka.core.stage import Device, Stage, StageContext
 
-#: Запас на скачивание. Один длинный VOD занимает 15–30 ГБ (§65).
+#: Нижний порог: без него нет смысла начинать даже короткое видео.
 MIN_FREE_GB = 5.0
+
+#: Сколько занимает час записи. Замер на пятичасовом Twitch VOD 720p60:
+#: 6.59 ГБ, то есть 1.3 ГБ/час. Взято с запасом — 1080p60 тяжелее.
+GB_PER_HOUR = 2.5
+
+#: Множитель на всё остальное: WAV, кадры, готовые ролики. На той же записи
+#: ролики заняли 0.35 ГБ при исходнике 6.59 ГБ, но компиляции добавят ещё.
+OVERHEAD = 1.3
+
+
+def required_gb(duration_seconds: float | None) -> float:
+    """Сколько места нужно под запись такой длины.
+
+    Константа в 5 ГБ пропускала пятичасовой VOD, которому нужно 6.6 ГБ:
+    проверка проходила, а место кончалось посреди скачивания — то есть
+    после получаса работы.
+    """
+    if not duration_seconds:
+        return MIN_FREE_GB
+    return max(MIN_FREE_GB, duration_seconds / 3600 * GB_PER_HOUR * OVERHEAD)
 
 TMP_DIR_NAME = ".download.tmp"
 
@@ -64,8 +84,12 @@ class DownloadStage(Stage):
         if origin.get("type") != "url":
             return "источник не URL — скачивать нечего"
         free = free_gb(ctx.paths.base)
-        if free < MIN_FREE_GB:
-            return f"на диске свободно {free:.1f} ГБ, нужно хотя бы {MIN_FREE_GB}"
+        needed = required_gb(metadata.read_json().get("duration_seconds"))
+        if free < needed:
+            return (
+                f"на диске свободно {free:.1f} ГБ, "
+                f"под запись такой длины нужно около {needed:.1f}"
+            )
         return None
 
     def _format_selector(self, ctx: StageContext) -> str:

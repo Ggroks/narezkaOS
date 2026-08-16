@@ -285,3 +285,48 @@
   --font: var(--font-ui);
   --radius-inner: var(--radius);
 }
+
+/* ── Полоса VOD ───────────────────────────────────────────────────────────
+   Сразу под рельсом этапов, во всю ширину рабочей области. Место постоянное:
+   на четырёх экранах она должна оказываться под курсором там же. */
+
+.vod-wrap { position: relative; margin-bottom: 16px; }
+
+.vod-strip {
+  display: block;
+  width: 100%;
+  height: var(--vod-strip);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  cursor: crosshair;
+}
+.vod-strip:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+
+.vod-strip.empty {
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  color: var(--text-faint);
+  cursor: default;
+}
+
+/* Подсказка держится над полосой и следует за курсором. Смещение на половину
+   ширины даёт наведение по центру, а не углом к курсору. */
+.vod-tip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  transform: translateX(-50%);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: 0 10px 26px -12px rgb(0 0 0 / 0.6);
+  pointer-events: none;
+}
+.vod-tip img { display: block; width: 132px; border-radius: var(--radius-small); }
+.vod-tip span { font-family: var(--font-mono); font-size: 11px; text-align: center; color: var(--text-dim); }

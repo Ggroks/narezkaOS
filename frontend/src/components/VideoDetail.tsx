@@ -4,7 +4,8 @@ import {
   formatDuration,
   subscribeToJob,
   type JobEvent,
-  type DetectorsInfo, type EncodersInfo,
+  type DetectorsInfo,
+  type Timeline, type EncodersInfo,
   type Framing,
   type ModelsInfo,
   type ReviewClip,
@@ -14,6 +15,7 @@ import {
 } from "../api";
 import { FramingPanel } from "./FramingPanel";
 import { PerformanceView } from "./PerformanceView";
+import { VodStrip } from "./VodStrip";
 import { SettingsPanel } from "./SettingsPanel";
 import { PublishView } from "./PublishView";
 import { ReviewView } from "./ReviewView";
@@ -47,6 +49,7 @@ export function VideoDetail({ videoId, onBack }: Props) {
   const [splitAvailable, setSplitAvailable] = useState(false);
   const [models, setModels] = useState<ModelsInfo | null>(null);
   const [detectors, setDetectors] = useState<DetectorsInfo | null>(null);
+  const [timeline, setTimeline] = useState<Timeline | null>(null);
   const [encoders, setEncoders] = useState<EncodersInfo | null>(null);
   const [events, setEvents] = useState<JobEvent[]>([]);
   const [running, setRunning] = useState(false);
@@ -89,6 +92,7 @@ export function VideoDetail({ videoId, onBack }: Props) {
       api.models().then(setModels).catch(() => setModels(null));
       api.detectors().then(setDetectors).catch(() => setDetectors(null));
       api.encoders().then(setEncoders).catch(() => setEncoders(null));
+      api.timeline(videoId).then(setTimeline).catch(() => setTimeline(null));
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : String(exc));
     }
@@ -176,6 +180,8 @@ export function VideoDetail({ videoId, onBack }: Props) {
           {error}
         </div>
       )}
+
+      <VodStrip data={timeline} frameUrl={(at) => api.frameUrl(videoId, at, 90)} />
 
       <div className="row" style={{ marginBottom: 16 }}>
         <div className="grow">

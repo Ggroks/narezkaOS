@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 from narezka.api import jobs
 from narezka.api.media import serve_file
 from narezka.core import env
+from narezka.core.clips import load_clips
 from narezka.core.artifacts import Artifact
 from narezka.core.config import FramingConfig, load_config
 from narezka.core.device import detect_device
@@ -261,6 +262,50 @@ def run(video_id: str, payload: RunRequest) -> dict[str, Any]:
 
     job, created = jobs.manager.start(video_id, payload.project, work)
     return {"started": created, "status": job.status}
+
+
+@app.get("/api/videos/{video_id}/timeline")
+def timeline(video_id: str, buckets: int = Query(600, ge=60, le=2000)) -> dict[str, Any]:
+    """Данные для полосы VOD: чат по корзинам и найденные моменты.
+
+    Корзины считаются на сервере: слать браузеру 37 тысяч сообщений, чтобы он
+    сам их сгруппировал, — это мегабайты ради шестисот чисел.
+    """
+    ctx = _context(video_id, "default", None)
+    meta = Artifact(ctx.paths.metadata)
+    duration = (meta.read_json().get("duration_seconds") if meta.exists() else None) or 0.0
+
+    chat_art = Artifact(ctx.paths.analysis / "chat.json")
+    chat: list[float] = []
+    if chat_art.exists() and duration > 0:
+        counts = [0] * buckets
+        for message in chat_art.read_json().get("messages", []):
+            index = int(message["at"] / duration * buckets)
+            if 0 <= index < buckets:
+                counts[index] += 1
+        peak = max(counts) or 1
+        # Нормируется к пику: полоса показывает форму всплесков, а не
+        # абсолютные числа — их всё равно не прочесть на 44 пикселях.
+        chat = [round(c / peak, 3) for c in counts]
+
+    moments: list[dict[str, Any]] = []
+    try:
+        clips, _ = load_clips(ctx.paths)
+    except (FileNotFoundError, ValueError):
+        # Отбора может ещё не быть — полоса тогда рисует только чат.
+        # Перехват узкий намеренно: широкий скрыл отсутствующий импорт,
+        # и стадия молча возвращала ноль моментов вместо ошибки.
+        clips = []
+    for clip in clips:
+        moments.append({
+            "index": clip.get("index"),
+            "start": clip.get("start"),
+            "end": clip.get("end"),
+            "score": clip.get("interest_score") or clip.get("provisional_score") or 0.0,
+            "selected": bool(clip.get("selected", True)),
+        })
+
+    return {"duration": duration, "buckets": buckets, "chat": chat, "moments": moments}
 
 
 @app.get("/api/settings/encoders")

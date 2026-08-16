@@ -301,6 +301,22 @@ export type EncodersInfo = { selected: string; encoders: EncoderOption[] };
 
 export type DetectorsInfo = { selected: string; backends: DetectorOption[] };
 
+export type TimelineMoment = {
+  index: number;
+  start: number;
+  end: number;
+  score: number;
+  selected: boolean;
+};
+
+/** Данные полосы VOD. Чат сгруппирован на сервере — см. /timeline. */
+export type Timeline = {
+  duration: number;
+  buckets: number;
+  chat: number[];
+  moments: TimelineMoment[];
+};
+
 export type HealthCheck = { name: string; ok: boolean; detail: string; critical: boolean };
 export type Health = {
   ok: boolean;
@@ -347,6 +363,8 @@ export const api = {
   models: () => request<ModelsInfo>("/api/settings/models"),
   detectors: () => request<DetectorsInfo>("/api/settings/detectors"),
   encoders: () => request<EncodersInfo>("/api/settings/encoders"),
+  timeline: (id: string, buckets = 600) =>
+    request<Timeline>(`/api/videos/${id}/timeline?buckets=${buckets}`),
   performance: (id: string) => request<Performance>(`/api/videos/${id}/performance`),
   markPublished: (id: string, payload: { index: number; platform: string; url?: string }) =>
     request<Performance>(`/api/videos/${id}/performance/publish`, {

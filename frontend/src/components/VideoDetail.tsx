@@ -178,7 +178,6 @@ export function VideoDetail({ videoId, onBack }: Props) {
       )}
 
       <div className="row" style={{ marginBottom: 16 }}>
-        <button onClick={onBack}>← К списку</button>
         <div className="grow">
           <div style={{ fontWeight: 600 }}>{meta.source_title || meta.source_file || videoId}</div>
           <div className="small dim mono">{videoId}</div>

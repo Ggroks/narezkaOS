@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type Health, type VideoSummary } from "./api";
+import { Sidebar } from "./components/Sidebar";
 import { VideoList } from "./components/VideoList";
 import { VideoDetail } from "./components/VideoDetail";
 
@@ -31,6 +32,18 @@ export function App() {
   const [videos, setVideos] = useState<VideoSummary[]>([]);
   const [health, setHealth] = useState<Health | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Состояние панели переживает перезагрузку: ширина рабочей области —
+  // личная привычка, и переустанавливать её каждый раз раздражает.
+  const [collapsed, setCollapsed] = useState(
+    () => localStorage.getItem("rail-collapsed") === "1",
+  );
+
+  const toggleRail = useCallback(() => {
+    setCollapsed((was) => {
+      localStorage.setItem("rail-collapsed", was ? "0" : "1");
+      return !was;
+    });
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -51,26 +64,26 @@ export function App() {
   }, [refresh]);
 
   return (
-    <div className="app">
+    <div className={`app${collapsed ? " rail-collapsed" : ""}`}>
       <a href="#content" className="sr-only">
         Перейти к содержимому
       </a>
-      <header className="top">
-        <h1>Narezka OS</h1>
-        {health && (
-          <span className="env small dim">
-            профиль {health.profile} · {health.device.kind} · {health.device.name}
-          </span>
-        )}
-      </header>
-
-      {error && (
-        <div className="error" role="alert">
-          {error}
-        </div>
-      )}
+      <Sidebar
+        view={videoId ? "video" : "library"}
+        videoTitle={videos.find((v) => v.video_id === videoId)?.title}
+        health={health}
+        collapsed={collapsed}
+        onToggle={toggleRail}
+        onHome={() => navigate(null)}
+        count={videos.length}
+      />
 
       <main id="content">
+        {error && (
+          <div className="error" role="alert">
+            {error}
+          </div>
+        )}
         {videoId ? (
           <VideoDetail videoId={videoId} onBack={() => navigate(null)} />
         ) : (

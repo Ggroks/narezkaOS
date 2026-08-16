@@ -325,6 +325,17 @@ export function ReviewView({ videoId, durationSeconds }: Props) {
                 <span className="grow">
                   <span className="small dim">оценка модели · ранг {clip.rank}</span>
                   {clip.explanation && <p className="review-explanation">{clip.explanation}</p>}
+                  {/* Просевшая оценка должна быть объяснена: иначе человек
+                      видит низкий балл у хорошего момента и не понимает,
+                      почему. Порог половины ролика — с него музыка перестаёт
+                      быть случайным фоном. */}
+                  {(clip.penalties?.music_present ?? 0) > 0.5 && (
+                    <p className="review-warning">
+                      В ролике играет музыка. Площадка может узнать её и закрыть
+                      доступ к ролику или забрать доход с него — если права на
+                      музыку не ваши, лучше выбрать другой момент.
+                    </p>
+                  )}
                 </span>
               </div>
             )}

@@ -1073,3 +1073,16 @@ details.section .section-body > .card > h2 { display: none; }
   font-weight: 600;
   line-height: 1.35;
 }
+
+/* Предупреждение у клипа: почему оценка просела. Не бейдж, а фраза —
+   человек должен понять причину, а не расшифровывать значок. */
+.review-warning {
+  margin: 6px 0 0;
+  padding: 7px 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--warn);
+  background: color-mix(in oklab, var(--warn) 10%, transparent);
+  border-left: 2px solid var(--warn);
+  border-radius: 0 var(--radius-small) var(--radius-small) 0;
+}

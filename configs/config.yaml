@@ -117,7 +117,7 @@ candidates:
 audiotags:
   enabled: true         # разметка звука моделью YAMNet
   laughter: true        # смех — повышает оценку
-  music: true           # музыка — снижает: риск Content ID
+  music: true           # музыка — снижает оценку: чужая музыка ставит ролик под удар
   shout: true           # крик: и восторг, и испуг
   applause: false       # только для записей с залом
   crowd: false          # шум толпы: публичное событие против студии

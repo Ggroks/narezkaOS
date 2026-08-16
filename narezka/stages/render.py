@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from narezka.core.encoders import video_args
 from narezka.core.artifacts import Artifact
 from narezka.core.config import FramingConfig
 from narezka.core.fonts import escape_for_filter, fonts_dir
@@ -192,6 +193,7 @@ class RenderStage(Stage):
                         height=short.height,
                         crf=out.crf,
                         fps=out.fps,
+                        encoder=out.encoder,
                         pix_fmt=out.pix_fmt,
                         faststart=out.faststart,
                         lufs=out.loudness_target_lufs,
@@ -304,6 +306,7 @@ class RenderStage(Stage):
         height: int,
         crf: int,
         fps: int | None = None,
+        encoder: str = "cpu",
         pix_fmt: str,
         faststart: bool,
         lufs: float,
@@ -313,7 +316,11 @@ class RenderStage(Stage):
         `-ss` стоит до `-i` — это быстрая перемотка по контейнеру; точность
         обеспечивается перекодированием.
         """
-        args = ["ffmpeg", "-nostdin", "-v", "error", "-y"]
+        # Аппаратный путь требует объявить устройство до входного файла,
+        # загрузить кадры в память видеокарты последним фильтром и только
+        # потом кодировать — отсюда три части вместо одной.
+        device_args, codec_args, hw_tail = video_args(encoder, crf=crf, pix_fmt=pix_fmt)
+        args = ["ffmpeg", "-nostdin", "-v", "error", "-y", *device_args]
 
         # Пути абсолютные: ffmpeg запускается из каталога субтитров, потому что
         # экранирование пути внутри строки фильтра libass слишком хрупкое.
@@ -332,6 +339,10 @@ class RenderStage(Stage):
                     plan, framing, width, height, subtitle_name,
                     fonts_dir=escape_for_filter(fonts_dir()), fps=fps,
                 )
+            if hw_tail:
+                # Хвост вставляется перед меткой выхода: [v] должна остаться
+                # последней, иначе ffmpeg не найдёт, что кодировать.
+                video_filter = video_filter.replace("[v]", f"{hw_tail}[v]")
             args += ["-filter_complex", video_filter, "-map", "[v]", "-map", "0:a:0"]
         else:
             args += [
@@ -345,11 +356,7 @@ class RenderStage(Stage):
 
         if loudnorm:
             args += ["-af", f"loudnorm=I={lufs}:TP=-1.5:LRA=11"]
-        args += [
-            "-c:v", "libx264",
-            "-preset", "medium",
-            "-crf", str(crf),
-            "-pix_fmt", pix_fmt,          # без этого часть плееров файл не примет
+        args += codec_args + [
             "-c:a", "aac",
             "-b:a", "160k",
             "-shortest",

@@ -1,4 +1,4 @@
-import type { DetectorsInfo, Framing, ModelsInfo } from "../api";
+import type { DetectorsInfo, EncodersInfo, Framing, ModelsInfo } from "../api";
 
 type Props = {
   value: Framing;
@@ -9,6 +9,7 @@ type Props = {
   splitAvailable: boolean;
   models?: ModelsInfo | null;
   detectors?: DetectorsInfo | null;
+  encoders?: EncodersInfo | null;
   disabled?: boolean;
 };
 
@@ -21,10 +22,44 @@ type Props = {
  * громкости, потому что звук уже сведён.
  */
 export function SettingsPanel({
-  value, onChange, onReanalyse, splitAvailable, disabled, models, detectors,
+  value, onChange, onReanalyse, splitAvailable, disabled, models, detectors, encoders,
 }: Props) {
   return (
     <div className="options">
+      {encoders && (
+        <label className="choice">
+          <span className="choice-label">Чем сжимать видео</span>
+          <select
+            value={value.encoder ?? encoders.selected}
+            disabled={disabled}
+            onChange={(e) => onChange({ encoder: e.target.value })}
+          >
+            {encoders.encoders.map((e) => (
+              <option key={e.name} value={e.name} disabled={!e.available}>
+                {e.label}
+                {e.available ? "" : " — недоступно"}
+              </option>
+            ))}
+          </select>
+          {/* Названы обе стороны: выбор между качеством и скоростью не имеет
+              однозначно верного ответа, и решать его должен человек. */}
+          {(() => {
+            const chosen = encoders.encoders.find(
+              (e) => e.name === (value.encoder ?? encoders.selected),
+            );
+            if (!chosen) return null;
+            return (
+              <span className="choice-hint">
+                <b>плюс:</b> {chosen.pros}
+                <br />
+                <b>минус:</b> {chosen.cons}
+                {chosen.available ? "" : ` · ${chosen.note}`}
+              </span>
+            );
+          })()}
+        </label>
+      )}
+
       <Toggle
         label="Субтитры"
         hint="Вшиваются в кадр, с подсветкой слова"

@@ -82,6 +82,7 @@ output:
 
   loudness_target_lufs: -14
   fps: 30              # кадров/с на выходе; пусто — как в исходнике
+  encoder: cpu          # cpu — качество лучше | gpu — быстрее на 40%
   crf: 20
   pix_fmt: yuv420p
   faststart: true

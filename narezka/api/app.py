@@ -263,6 +263,14 @@ def run(video_id: str, payload: RunRequest) -> dict[str, Any]:
     return {"started": created, "status": job.status}
 
 
+@app.get("/api/settings/encoders")
+def encoders_info() -> dict[str, Any]:
+    """Чем сжимать видео — с плюсами и минусами каждого варианта."""
+    from narezka.core import encoders as enc  # noqa: PLC0415
+
+    return {"selected": load_config().output.encoder, "encoders": enc.describe_encoders()}
+
+
 @app.post("/api/videos/{video_id}/stop")
 def stop(video_id: str) -> dict[str, Any]:
     """Останавливает обработку после текущей стадии, не трогая сервер."""
@@ -371,6 +379,7 @@ class FramingPayload(FramingConfig):
     #: на одном материале, а не менять глобально и терять сравнимость.
     llm_model: str | None = None
     detector_backend: str | None = None
+    encoder: str | None = None
 
 
 def _framing_state(video_id: str, project: str) -> tuple[Any, Any, Framing, int, int]:
@@ -411,6 +420,7 @@ def framing(video_id: str, project: str = "default") -> dict[str, Any]:
             stored = {}
     options["llm_model"] = stored.get("llm_model") or ctx.config.llm.model
     options["detector_backend"] = stored.get("detector_backend") or ctx.config.detector.backend
+    options["encoder"] = stored.get("encoder") or ctx.config.output.encoder
     options["chat_ignore_start"] = (
         stored.get("chat_ignore_start")
         if isinstance(stored.get("chat_ignore_start"), bool)

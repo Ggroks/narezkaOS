@@ -111,6 +111,8 @@ export type Framing = {
   /** Модель и бэкенд зрения — на видео, чтобы сравнивать их на одном материале. */
   llm_model: string | null;
   detector_backend: string | null;
+  /** Чем сжимать: cpu — качество, gpu — скорость. */
+  encoder: string | null;
   preset: FramingPreset;
   side_crop: number;
   anchor: "center" | "left" | "right";
@@ -285,6 +287,18 @@ export type DetectorOption = {
   note: string;
 };
 
+export type EncoderOption = {
+  name: string;
+  label: string;
+  /** Плюсы и минусы показываются оба — выбор не должен быть вслепую. */
+  pros: string;
+  cons: string;
+  available: boolean;
+  note: string;
+};
+
+export type EncodersInfo = { selected: string; encoders: EncoderOption[] };
+
 export type DetectorsInfo = { selected: string; backends: DetectorOption[] };
 
 export type HealthCheck = { name: string; ok: boolean; detail: string; critical: boolean };
@@ -332,6 +346,7 @@ export const api = {
   publish: (id: string) => request<PublishTexts>(`/api/videos/${id}/publish`),
   models: () => request<ModelsInfo>("/api/settings/models"),
   detectors: () => request<DetectorsInfo>("/api/settings/detectors"),
+  encoders: () => request<EncodersInfo>("/api/settings/encoders"),
   performance: (id: string) => request<Performance>(`/api/videos/${id}/performance`),
   markPublished: (id: string, payload: { index: number; platform: string; url?: string }) =>
     request<Performance>(`/api/videos/${id}/performance/publish`, {

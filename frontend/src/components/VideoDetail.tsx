@@ -4,7 +4,7 @@ import {
   formatDuration,
   subscribeToJob,
   type JobEvent,
-  type DetectorsInfo,
+  type DetectorsInfo, type EncodersInfo,
   type Framing,
   type ModelsInfo,
   type ReviewClip,
@@ -47,6 +47,7 @@ export function VideoDetail({ videoId, onBack }: Props) {
   const [splitAvailable, setSplitAvailable] = useState(false);
   const [models, setModels] = useState<ModelsInfo | null>(null);
   const [detectors, setDetectors] = useState<DetectorsInfo | null>(null);
+  const [encoders, setEncoders] = useState<EncodersInfo | null>(null);
   const [events, setEvents] = useState<JobEvent[]>([]);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -87,6 +88,7 @@ export function VideoDetail({ videoId, onBack }: Props) {
       // не должен мешать остальной работе.
       api.models().then(setModels).catch(() => setModels(null));
       api.detectors().then(setDetectors).catch(() => setDetectors(null));
+      api.encoders().then(setEncoders).catch(() => setEncoders(null));
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : String(exc));
     }
@@ -298,6 +300,7 @@ export function VideoDetail({ videoId, onBack }: Props) {
                 // с него: перерендерить старые кандидаты бессмысленно.
                 models={models}
                 detectors={detectors}
+                encoders={encoders}
                 onReanalyse={() => start("candidates", true)}
               />
               <button

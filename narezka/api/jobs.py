@@ -45,9 +45,21 @@ class Job:
     #: История событий держится целиком: клиент, подключившийся позже,
     #: должен увидеть, что уже произошло (§69, состояние переживает перезагрузку).
     events: deque[JobEvent] = field(default_factory=lambda: deque(maxlen=1000))
+    #: Просьба остановиться. Проверяется между стадиями: обрывать стадию
+    #: посреди работы значит оставить артефакт недописанным, а незавершённая
+    #: стадия всё равно будет пересчитана заново.
+    _stop: threading.Event = field(default_factory=threading.Event)
     _seq: int = 0
     _lock: threading.Lock = field(default_factory=threading.Lock)
     _updated: threading.Condition | None = None
+
+    def request_stop(self) -> None:
+        """Попросить остановиться после текущей стадии."""
+        self._stop.set()
+
+    @property
+    def stop_requested(self) -> bool:
+        return self._stop.is_set()
 
     def __post_init__(self) -> None:
         self._updated = threading.Condition(self._lock)
@@ -95,6 +107,15 @@ class JobManager:
         self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
 
+    def stop(self, video_id: str) -> bool:
+        """Просит задачу остановиться. False — останавливать нечего."""
+        job = self.get(video_id)
+        if job is None or not job.is_active:
+            return False
+        job.request_stop()
+        job.add_event("*", "stop_requested", {})
+        return True
+
     def get(self, video_id: str) -> Job | None:
         with self._lock:
             return self._jobs.get(video_id)
@@ -119,7 +140,7 @@ class JobManager:
             job.status = "running"
             try:
                 work(job.add_event)
-                job.status = "finished"
+                job.status = "stopped" if job.stop_requested else "finished"
             except Exception as exc:  # noqa: BLE001 — сбой задачи не должен ронять сервер
                 job.status = "failed"
                 job.error = str(exc)

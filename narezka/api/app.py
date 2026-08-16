@@ -254,10 +254,21 @@ def run(video_id: str, payload: RunRequest) -> dict[str, Any]:
         if stage is not None:
             run_stage(stage, ctx, force=payload.force, observer=observer)
         else:
-            run_pipeline(list(PIPELINE), ctx, force=payload.force, observer=observer)
+            run_pipeline(
+                list(PIPELINE), ctx, force=payload.force, observer=observer,
+                should_stop=lambda: jobs.manager.get(video_id).stop_requested,
+            )
 
     job, created = jobs.manager.start(video_id, payload.project, work)
     return {"started": created, "status": job.status}
+
+
+@app.post("/api/videos/{video_id}/stop")
+def stop(video_id: str) -> dict[str, Any]:
+    """Останавливает обработку после текущей стадии, не трогая сервер."""
+    if not jobs.manager.stop(video_id):
+        raise HTTPException(status_code=409, detail="обработка не идёт — останавливать нечего")
+    return {"stopping": True}
 
 
 @app.get("/api/videos/{video_id}/events")

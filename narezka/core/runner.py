@@ -135,11 +135,21 @@ def run_pipeline(
     *,
     force: bool = False,
     observer: Observer | None = None,
+    should_stop: Any = None,
 ) -> list[StageResult]:
-    """Последовательный прогон. Останавливается на первой упавшей обязательной стадии."""
+    """Последовательный прогон. Останавливается на первой упавшей обязательной стадии.
+
+    `should_stop` спрашивается между стадиями: прервать стадию посреди работы
+    значит оставить артефакт недописанным, а результат всё равно потерять —
+    незавершённая стадия не попадает в кэш и считается заново. Остановка на
+    границе сохраняет всё, что уже сделано, и прогон продолжается с этого места.
+    """
     results: list[StageResult] = []
     _notify(observer, "*", "pipeline_started", stages=[s.name for s in stages])
     for stage in stages:
+        if should_stop is not None and should_stop():
+            _notify(observer, "*", "pipeline_stopped", done=[r.stage for r in results])
+            return results
         result = run_stage(stage, ctx, force=force, observer=observer)
         results.append(result)
         if result.outcome is Outcome.FAILED:

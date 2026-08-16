@@ -184,6 +184,34 @@ def add(
 
 
 @app.command()
+def stop(
+    video_id: Annotated[str, typer.Option("--video-id", help="Какое видео остановить")],
+    host: Annotated[str, typer.Option("--host")] = "127.0.0.1",
+    port: Annotated[int, typer.Option("--port")] = 8000,
+) -> None:
+    """Остановить обработку, не трогая сервер.
+
+    Остановка происходит после текущей стадии: обрывать её посреди работы
+    значит потерять уже посчитанное — незавершённая стадия не кэшируется.
+    Всё, что завершено, сохраняется, и повторный запуск продолжит с этого места.
+    """
+    import httpx  # noqa: PLC0415
+
+    url = f"http://{host}:{port}/api/videos/{video_id}/stop"
+    try:
+        response = httpx.post(url, timeout=10.0)
+    except httpx.HTTPError as exc:
+        console.print(f"[red]сервер не отвечает на {host}:{port}: {exc}[/]")
+        raise typer.Exit(1) from exc
+
+    if response.status_code == 409:
+        console.print("[yellow]обработка не идёт — останавливать нечего[/]")
+        raise typer.Exit(1)
+    response.raise_for_status()
+    console.print("[green]остановка запрошена — прогон завершится после текущей стадии[/]")
+
+
+@app.command()
 def stages() -> None:
     """Показать доступные стадии."""
     table = Table(title="Стадии пайплайна")

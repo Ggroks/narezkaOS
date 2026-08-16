@@ -32,6 +32,7 @@ const STATE_TEXT: Record<StageState, string> = {
 };
 
 export const THEMES = [
+  { id: "studio", label: "прежняя" },
   { id: "hardware", label: "аппаратная" },
   { id: "glass", label: "стекло" },
   { id: "workshop", label: "светлый цех" },
@@ -111,7 +112,7 @@ export function Chrome({
   projectName, stages, activeStage, onStage, primary, filters, queue, source, menus, children,
 }: Props) {
   const [theme, setTheme] = useState(
-    () => localStorage.getItem("theme") || "hardware",
+    () => localStorage.getItem("theme") || "studio",
   );
 
   useEffect(() => {

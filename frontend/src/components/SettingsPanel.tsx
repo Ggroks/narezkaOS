@@ -170,6 +170,18 @@ export function SettingsPanel({
         onChange={(on) => onChange({ layout: on ? "track" : "single" })}
       />
 
+      <Toggle
+        label="Лицо врезкой"
+        hint={
+          splitAvailable
+            ? "Содержимое во весь экран, лицо окошком в углу"
+            : "Вебка не найдена в этом видео"
+        }
+        checked={value.layout === "pip"}
+        disabled={disabled || !splitAvailable}
+        onChange={(on) => onChange({ layout: on ? "pip" : "single" })}
+      />
+
       {value.layout === "track" && (
         <div className="choice">
           <span className="choice-label">Насколько цепко держать лицо</span>

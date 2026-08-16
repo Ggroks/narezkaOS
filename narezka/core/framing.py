@@ -18,7 +18,9 @@ from typing import Any, Literal
 Anchor = Literal["center", "left", "right"]
 #: single — исходник на подложке; split — вебка сверху и контент снизу;
 #: track — узкий кроп, ведомый за лицом (§17).
-Layout = Literal["single", "split", "track"]
+#: single — исходник на подложке; split — вебка сверху и контент снизу;
+#: track — узкий кроп, ведомый за лицом; pip — лицо врезкой поверх контента.
+Layout = Literal["single", "split", "track", "pip"]
 Background = Literal["blur", "color"]
 
 #: Готовые варианты обрезки по бокам. Значения — доля ширины, которая
@@ -405,6 +407,57 @@ def _fit_ratio(width: int, height: int, ratio: float) -> tuple[int, int]:
     if width / height > ratio:
         return int(height * ratio), height
     return width, int(width / ratio)
+
+
+#: Доля ширины кадра, которую занимает врезка с лицом. Треть: меньше —
+#: лицо нечитаемо на телефоне, больше — врезка спорит с содержимым за
+#: внимание, а она вспомогательная.
+PIP_WIDTH_SHARE = 0.33
+
+#: Отступ врезки от края, в долях её ширины. Впритык к краю она выглядит
+#: приклеенной, а слишком далеко — теряет связь с углом.
+PIP_MARGIN_SHARE = 0.12
+
+
+def build_pip_filter(
+    cam: tuple[int, int, int, int],
+    plan: FramePlan,
+    framing: Framing,
+    out_w: int,
+    out_h: int,
+    subtitle_name: str | None = None,
+    fonts_dir: str | None = None,
+    fps: int | None = None,
+) -> str:
+    """Цепочка для врезки: лицо небольшим окном поверх содержимого.
+
+    Отличие от сплита: там кадр делится надвое и обе части равноправны,
+    здесь содержимое занимает весь экран, а лицо накладывается сверху.
+    Врезка уместнее, когда важно именно содержимое — карта, таблица,
+    текст, — и терять его половину ради лица не хочется.
+
+    Врезка ставится в **левый верхний** угол: правый нижний на всех
+    площадках перекрывают кнопками, а верхний левый остаётся свободным.
+    """
+    decimate = f"fps={fps}," if fps else ""
+    cx, cy, cw, ch = cam
+
+    pip_w = int(out_w * PIP_WIDTH_SHARE) & ~1
+    pip_h = max(2, int(pip_w * ch / cw)) & ~1
+    margin = int(pip_w * PIP_MARGIN_SHARE)
+
+    background = (
+        f"[0:v]{decimate}crop={plan.crop_w}:{plan.crop_h}:{plan.crop_x}:{plan.crop_y},"
+        f"scale={plan.scaled_w}:{plan.scaled_h},"
+        f"pad={out_w}:{out_h}:0:{plan.offset_y}:{framing.color}[bg]"
+    )
+    face = f"[0:v]{decimate}crop={cw}:{ch}:{cx}:{cy},scale={pip_w}:{pip_h}[pip]"
+    chain = f"{background};{face};[bg][pip]overlay={margin}:{margin}"
+
+    if subtitle_name:
+        fonts = f":fontsdir={fonts_dir}" if fonts_dir else ""
+        chain += f",subtitles={subtitle_name}{fonts}"
+    return chain + "[v]"
 
 
 def build_split_filter(

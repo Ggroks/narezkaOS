@@ -102,7 +102,7 @@ export type FramingPreset = "full" | "balanced" | "focus" | "fill" | "custom";
 
 export type Framing = {
   /** single — исходник на подложке; split — вебка сверху, контент снизу. */
-  layout: "single" | "split" | "track";
+  layout: "single" | "split" | "track" | "pip";
   /** Что вшивать в готовый ролик. Каждый пункт отключается отдельно. */
   subtitles_enabled: boolean;
   loudnorm_enabled: boolean;

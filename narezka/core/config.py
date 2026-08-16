@@ -70,7 +70,7 @@ class FramingConfig(BaseModel):
     #: single — исходник целиком на подложке; split — лицо стримера сверху,
     #: приближённый контент снизу (§61). Сплит применяется только там, где
     #: стадия facecam нашла вебку наложением; иначе кадрируется как обычно.
-    layout: Literal["single", "split", "track"] = "single"
+    layout: Literal["single", "split", "track", "pip"] = "single"
 
     """Как исходный кадр вписывается в вертикальный (§17, §61).
 

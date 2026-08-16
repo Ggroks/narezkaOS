@@ -23,6 +23,7 @@ from narezka.core.artifacts import Artifact
 from narezka.core.config import FramingConfig
 from narezka.core.fonts import escape_for_filter, fonts_dir
 from narezka.core.framing import (
+    build_pip_filter,
     build_track_filter,
     Framing,
     build_filter,
@@ -199,12 +200,14 @@ class RenderStage(Stage):
 
             split = self._split_for(clip, cams, framing, src_w, src_h, short)
             track = self._track_for(clip, cams, framing, src_w, src_h, short)
+            pip = self._pip_for(clip, cams, framing)
 
             with target.reserve() as tmp:
                 run_tool(
                     self._command(
                         split=split,
                         track=track,
+                        pip=pip,
                         source=source,
                         start=source_start,
                         duration=duration,
@@ -280,6 +283,20 @@ class RenderStage(Stage):
             return artifact.read_json().get("clips", {})
         except ValueError:
             return {}
+
+    @staticmethod
+    def _pip_for(clip, cams, framing):
+        """Прямоугольник вебки для врезки — если раскладка выбрана и он есть."""
+        if framing.layout != "pip":
+            return None
+        entry = (cams or {}).get(str(clip["index"])) or (cams or {}).get(clip["index"])
+        if not isinstance(entry, dict) or entry.get("full_frame"):
+            # Камера во весь экран: врезать её саму в себя бессмысленно.
+            return None
+        try:
+            return (entry["x"], entry["y"], entry["width"], entry["height"])
+        except KeyError:
+            return None
 
     @staticmethod
     def _track_for(clip, cams, framing, src_w: int, src_h: int, short):
@@ -369,6 +386,7 @@ class RenderStage(Stage):
         cut_video: str = "",
         cut_audio: str = "",
         track=None,
+        pip=None,
         encoder: str = "cpu",
         pix_fmt: str,
         faststart: bool,
@@ -392,7 +410,12 @@ class RenderStage(Stage):
 
         if has_video:
             args += ["-ss", f"{start:.3f}", "-i", str(source), "-t", f"{duration:.3f}"]
-            if track is not None:
+            if pip is not None:
+                video_filter = build_pip_filter(
+                    pip, plan, framing, width, height, subtitle_name,
+                    fonts_dir=escape_for_filter(fonts_dir()), fps=fps,
+                )
+            elif track is not None:
                 video_filter = build_track_filter(
                     track["x"], track["w"], track["h"], width, height,
                     subtitle_name, fonts_dir=escape_for_filter(fonts_dir()), fps=fps,

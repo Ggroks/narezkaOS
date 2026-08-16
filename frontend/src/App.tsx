@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type Health, type VideoSummary } from "./api";
-import { Chrome, type StageInfo } from "./components/Chrome";
 import { VideoList } from "./components/VideoList";
 import { VideoDetail } from "./components/VideoDetail";
 
@@ -27,21 +26,12 @@ function useHashRoute(): [string | null, (id: string | null) => void] {
   return [videoId, navigate];
 }
 
-/** Шесть этапов пути. Состояния пока заглушены — подключаются со стадиями. */
-const PROJECT_STAGES: StageInfo[] = [
-  { id: "source", title: "источник", state: "done" },
-  { id: "analysis", title: "анализ", state: "done" },
-  { id: "moments", title: "моменты", state: "running" },
-  { id: "frame", title: "кадр", state: "waiting" },
-  { id: "style", title: "стиль", state: "waiting" },
-  { id: "export", title: "экспорт", state: "locked", blockedBy: "сначала выберите моменты" },
-];
-
 export function App() {
   const [videoId, navigate] = useHashRoute();
   const [videos, setVideos] = useState<VideoSummary[]>([]);
   const [health, setHealth] = useState<Health | null>(null);
   const [error, setError] = useState<string | null>(null);
+
   const refresh = useCallback(async () => {
     try {
       setVideos(await api.videos());
@@ -61,27 +51,32 @@ export function App() {
   }, [refresh]);
 
   return (
-    <Chrome
-      projectName={videos.find((v) => v.video_id === videoId)?.title}
-      source={health ? { duration: health.device.kind === "cuda" ? "видеокарта" : "процессор", size: health.device.name } : null}
-      queue={{ waiting: 0, running: 0 }}
-      filters={videoId ? undefined : <span className="rail-hint">библиотека проектов</span>}
-      stages={videoId ? PROJECT_STAGES : undefined}
-      activeStage={videoId ? "source" : undefined}
-    >
+    <div className="app">
       <a href="#content" className="sr-only">
         Перейти к содержимому
       </a>
-      {error && (
-          <div className="error" role="alert">
-            {error}
-          </div>
+      <header className="top">
+        <h1>Narezka OS</h1>
+        {health && (
+          <span className="env small dim">
+            профиль {health.profile} · {health.device.kind} · {health.device.name}
+          </span>
         )}
-      {videoId ? (
-        <VideoDetail videoId={videoId} onBack={() => navigate(null)} />
-      ) : (
-        <VideoList videos={videos} onOpen={(id) => navigate(id)} onChanged={refresh} />
+      </header>
+
+      {error && (
+        <div className="error" role="alert">
+          {error}
+        </div>
       )}
-    </Chrome>
+
+      <main id="content">
+        {videoId ? (
+          <VideoDetail videoId={videoId} onBack={() => navigate(null)} />
+        ) : (
+          <VideoList videos={videos} onOpen={(id) => navigate(id)} onChanged={refresh} />
+        )}
+      </main>
+    </div>
   );
 }

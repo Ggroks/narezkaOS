@@ -7,14 +7,47 @@
    ступени поверхностей действительно выглядят равными шагами, а не «две почти
    одинаковые и одна выпадающая», как выходит при подборе в hex. */
 
-/* Цвета живут в themes.css — здесь только размеры. Один источник цвета:
-   иначе тема применяется наполовину, как и вышло при первой попытке. */
 :root {
+  /* Поверхности: почти нейтральный тёмный с еле заметной синевой. Работа идёт
+     с видео, и любой выраженный оттенок фона искажает восприятие кадра. */
+  --bg:          oklch(0.17 0.008 265);
+  --surface:     oklch(0.21 0.009 265);
+  --surface-2:   oklch(0.25 0.010 265);
+  --surface-3:   oklch(0.30 0.011 265);
+  --border:      oklch(0.33 0.012 265);
+  --border-soft: oklch(0.27 0.010 265);
+
+  --text:      oklch(0.96 0.004 265);
+  --text-dim:  oklch(0.74 0.014 265);
+  --text-faint: oklch(0.58 0.012 265);
+
+  /* Один акцент на весь интерфейс: когда акцентов несколько, ни один
+     не притягивает взгляд. */
+  --accent:      oklch(0.72 0.155 250);
+  --accent-hover: oklch(0.78 0.150 250);
+  --accent-soft: oklch(0.72 0.155 250 / 0.16);
+  --on-accent:   oklch(0.17 0.03 265);
+
+  --ok:   oklch(0.76 0.150 155);
+  --warn: oklch(0.82 0.140 80);
+  --bad:  oklch(0.68 0.180 25);
+
+  /* Радиусы концентричны: внутренний = внешний − отступ контейнера. */
   --radius:       14px;
   --radius-inner: 10px;
   --radius-small: 7px;
   --pad: 16px;
+
+  --focus: oklch(0.85 0.10 250);
+
+  /* Шрифт задан стопкой системных: они уже установлены, грузить нечего,
+     а начертания у них выверенные. Цифры табличные там, где значения
+     меняются, — иначе вёрстка дёргается при каждом обновлении. */
+  --font: "Inter var", Inter, ui-sans-serif, -apple-system, "Segoe UI",
+          Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -107,35 +140,7 @@ input[type="radio"], input[type="checkbox"] {
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
-/* Панель слева, работа справа. Ширина панели — переменная, потому что от неё
-   зависит и отступ рабочей области: две величины должны меняться вместе. */
-:root { --rail: 236px; --rail-collapsed: 68px; }
-
-.app-unused {
-  display: grid;
-  grid-template-columns: var(--rail) minmax(0, 1fr);
-  gap: 0;
-  min-height: 100vh;
-  transition: grid-template-columns 260ms cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-
-.app.rail-collapsed { grid-template-columns: var(--rail-collapsed) minmax(0, 1fr); }
-
-.app > main {
-  max-width: 1240px;
-  width: 100%;
-  margin: 0 auto;
-  padding: 24px 24px 56px;
-  min-width: 0;
-}
-
-/* Уважение к тем, кому движение мешает (§60): убирается везде разом. */
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
-    animation-duration: 0.01ms !important;
-    transition-duration: 0.01ms !important;
-  }
-}
+.app { max-width: 1240px; margin: 0 auto; padding: 20px 20px 56px; }
 
 header.top {
   display: flex;
@@ -1067,265 +1072,4 @@ details.section .section-body > .card > h2 { display: none; }
   color: var(--text);
   font-weight: 600;
   line-height: 1.35;
-}
-
-/* ── Рабочая панель ───────────────────────────────────────────────────────
-   Держится у края экрана и не уезжает при прокрутке: навигация должна быть
-   на месте всегда, иначе за ней придётся возвращаться наверх. */
-
-.rail {
-  position: sticky;
-  top: 0;
-  align-self: start;
-  height: 100vh;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 18px 12px 16px;
-  background: linear-gradient(180deg, var(--surface) 0%, var(--bg) 100%);
-  border-right: 1px solid var(--border-soft);
-  overflow: hidden;
-}
-
-.rail-brand {
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  align-items: center;
-  gap: 10px;
-  padding: 4px 6px 18px;
-}
-
-/* Знак — единственное место с заливкой акцентом: он держит верхний левый
-   угол, от которого взгляд начинает читать экран. */
-.rail .mark {
-  display: grid;
-  place-items: center;
-  width: 38px;
-  height: 38px;
-  border-radius: 11px;
-  color: var(--on-accent);
-  background: linear-gradient(145deg, var(--accent-hover), var(--accent));
-  box-shadow: 0 6px 18px -8px var(--accent), inset 0 1px 0 rgb(255 255 255 / 0.25);
-  flex: none;
-}
-
-.wordmark {
-  font-size: 17px;
-  font-weight: 550;
-  letter-spacing: -0.02em;
-  color: var(--text);
-  white-space: nowrap;
-}
-.wordmark b { font-weight: 750; color: var(--accent); }
-
-.rail-toggle {
-  display: grid;
-  place-items: center;
-  width: 28px; height: 28px;
-  padding: 0;
-  color: var(--text-faint);
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--radius-small);
-  cursor: pointer;
-  transition: color 140ms ease, background 140ms ease, border-color 140ms ease;
-}
-.rail-toggle {
-  color: var(--text-dim);
-  background: var(--surface-2);
-  border-color: var(--border-soft);
-}
-.rail-toggle:hover {
-  color: var(--text);
-  background: var(--surface-3);
-  border-color: var(--border);
-}
-
-.rail-nav { display: flex; flex-direction: column; gap: 3px; }
-
-.rail-item {
-  position: relative;
-  display: grid;
-  grid-template-columns: 20px 1fr;
-  align-items: center;
-  gap: 12px;
-  width: 100%;
-  padding: 10px 12px;
-  font: inherit;
-  font-size: 14px;
-  text-align: left;
-  color: var(--text-dim);
-  background: transparent;
-  border: 0;
-  border-radius: var(--radius-inner);
-  cursor: pointer;
-  transition: color 160ms ease, background 160ms ease;
-}
-
-.rail-item:hover { color: var(--text); background: var(--surface-2); }
-.rail-item.current { color: var(--text); background: var(--accent-soft); }
-.rail-item.as-status { cursor: default; }
-
-/* Метка текущего раздела вырастает из середины — движение подсказывает,
-   что переключение произошло, не отвлекая само по себе. */
-.rail-item.current::before {
-  content: "";
-  position: absolute;
-  left: 0; top: 50%;
-  width: 3px; height: 20px;
-  margin-top: -10px;
-  border-radius: 0 3px 3px 0;
-  background: var(--accent);
-  animation: rail-mark 240ms cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-
-@keyframes rail-mark {
-  from { transform: scaleY(0); opacity: 0; }
-  to   { transform: scaleY(1); opacity: 1; }
-}
-
-.rail-item .icon { flex: none; opacity: 0.9; }
-
-.rail-text {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.rail-foot {
-  margin-top: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  padding: 12px;
-  font-size: 12px;
-  color: var(--text-faint);
-  background: var(--surface);
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-inner);
-}
-
-.rail-machine { display: grid; grid-template-columns: 16px 1fr; gap: 9px; align-items: center; }
-.rail-machine .rail-text {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  /* Название процессора длинное и обрезалось на полуслове. Перенос по словам
-     честнее многоточия: модель железа читают целиком или не читают вовсе. */
-  white-space: normal;
-  overflow-wrap: anywhere;
-  line-height: 1.35;
-}
-.rail-machine b { color: var(--text-dim); font-weight: 600; }
-.rail-health { color: var(--ok); }
-.rail-health.warn { color: var(--warn); }
-
-/* Свёрнутое состояние: остаются только значки, подписи схлопываются.
-   Ширина не анимируется по тексту — он просто исчезает, иначе буквы
-   расползаются в кашу на промежуточных кадрах. */
-.rail.collapsed { padding-left: 10px; padding-right: 10px; }
-.rail.collapsed .wordmark,
-.rail.collapsed .rail-text,
-.rail.collapsed .rail-health { display: none; }
-.rail.collapsed .rail-brand { grid-template-columns: 1fr; justify-items: center; gap: 12px; }
-.rail.collapsed .rail-item { grid-template-columns: 20px; justify-content: center; }
-.rail.collapsed .rail-machine { grid-template-columns: 16px; justify-items: center; }
-.rail.collapsed .rail-foot { align-items: center; }
-
-@media (max-width: 860px) {
-  .app, .app.rail-collapsed { grid-template-columns: var(--rail-collapsed) minmax(0, 1fr); }
-  .rail .wordmark, .rail .rail-text, .rail .rail-health { display: none; }
-  .rail-item { grid-template-columns: 20px; justify-content: center; }
-}
-
-/* ── Выпадающие списки ────────────────────────────────────────────────────
-   Родная стрелка браузера рисуется по-своему в каждой системе, поэтому
-   заменена на свою: иначе рядом стоящие списки выглядят разнородно. */
-
-select {
-  appearance: none;
-  padding-right: 34px;
-  background-image:
-    linear-gradient(45deg, transparent 50%, currentColor 50%),
-    linear-gradient(135deg, currentColor 50%, transparent 50%);
-  background-position: right 16px center, right 11px center;
-  background-size: 5px 5px, 5px 5px;
-  background-repeat: no-repeat;
-  cursor: pointer;
-  transition: border-color 140ms ease, background-color 140ms ease;
-}
-
-select:hover:not(:disabled) { border-color: var(--border); }
-select:disabled { cursor: not-allowed; opacity: 0.55; }
-
-/* ── Появление содержимого ────────────────────────────────────────────────
-   Карточки въезжают лесенкой при первой отрисовке: взгляд успевает пройти
-   сверху вниз, а не сталкивается со всем экраном разом. */
-
-@keyframes rise {
-  from { opacity: 0; transform: translateY(8px); }
-  to   { opacity: 1; transform: none; }
-}
-
-main > .card,
-main > * > .card {
-  animation: rise 320ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
-}
-
-main > .card:nth-child(2),  main > * > .card:nth-child(2)  { animation-delay: 40ms; }
-main > .card:nth-child(3),  main > * > .card:nth-child(3)  { animation-delay: 80ms; }
-main > .card:nth-child(4),  main > * > .card:nth-child(4)  { animation-delay: 120ms; }
-main > .card:nth-child(n+5), main > * > .card:nth-child(n+5) { animation-delay: 160ms; }
-
-.short { animation: rise 300ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards; }
-.short:nth-child(2) { animation-delay: 30ms; }
-.short:nth-child(3) { animation-delay: 60ms; }
-.short:nth-child(n+4) { animation-delay: 90ms; }
-
-/* Значок в потоке текста выравнивается по строке, а не по базовой линии —
-   иначе он висит выше подписи. */
-.icon { display: block; }
-
-/* Единственное действие на панели — заметное, но не спорящее со знаком. */
-.rail-action {
-  display: grid;
-  grid-template-columns: 18px 1fr;
-  align-items: center;
-  gap: 12px;
-  width: 100%;
-  margin-bottom: 14px;
-  padding: 11px 12px;
-  font: inherit;
-  font-size: 14px;
-  font-weight: 550;
-  text-align: left;
-  color: var(--text);
-  background: var(--surface-2);
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-inner);
-  cursor: pointer;
-  transition: background 160ms ease, border-color 160ms ease, transform 120ms ease;
-}
-.rail-action:hover { background: var(--surface-3); border-color: var(--accent); }
-.rail-action:active { transform: translateY(1px); }
-
-.rail-item { grid-template-columns: 20px 1fr auto; }
-
-.rail-count {
-  padding: 1px 7px;
-  font-size: 11px;
-  color: var(--text-dim);
-  background: var(--surface-3);
-  border-radius: 999px;
-}
-.rail-item.current .rail-count { color: var(--text); }
-
-.rail.collapsed .rail-action { grid-template-columns: 18px; justify-content: center; }
-.rail.collapsed .rail-count { display: none; }
-.rail.collapsed .rail-item { grid-template-columns: 20px; }
-
-@media (max-width: 860px) {
-  .rail-action { grid-template-columns: 18px; justify-content: center; }
-  .rail-count { display: none; }
 }

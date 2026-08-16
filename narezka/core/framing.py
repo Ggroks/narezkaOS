@@ -16,7 +16,9 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 Anchor = Literal["center", "left", "right"]
-Layout = Literal["single", "split"]
+#: single — исходник на подложке; split — вебка сверху и контент снизу;
+#: track — узкий кроп, ведомый за лицом (§17).
+Layout = Literal["single", "split", "track"]
 Background = Literal["blur", "color"]
 
 #: Готовые варианты обрезки по бокам. Значения — доля ширины, которая
@@ -83,6 +85,12 @@ class Framing:
     #: Используется при preset="custom". Доля ширины, отрезаемая суммарно.
     side_crop: float = 0.25
     anchor: Anchor = "center"
+    #: Настройки слежения. Живут здесь же, потому что рамка строится из
+    #: одного набора: раскладка и её параметры не должны разъезжаться
+    #: по разным местам.
+    track_samples_per_second: float = 5.0
+    track_smoothing: float = 0.15
+    track_dead_zone: float = 0.25
     background: Background = "blur"
     blur_sigma: float = 28.0
     color: str = "0x14171c"
@@ -184,6 +192,33 @@ def plan_frame(
         lost_share=side_crop,
         full_bleed=scaled_h >= out_h,
     )
+
+
+def build_track_filter(
+    crop_x: str,
+    crop_w: int,
+    crop_h: int,
+    out_w: int,
+    out_h: int,
+    subtitle_name: str | None = None,
+    fonts_dir: str | None = None,
+    fps: int | None = None,
+) -> str:
+    """Цепочка для слежения: кроп с подвижной левой границей.
+
+    `crop_x` — выражение от времени, ffmpeg вычисляет его на каждом кадре.
+    Кроп по высоте не двигается: вертикальное движение головы мелкое, а
+    рамка, гуляющая вверх-вниз, читается как тряска камеры.
+    """
+    decimate = f"fps={fps}," if fps else ""
+    chain = (
+        f"[0:v]{decimate}crop={crop_w}:{crop_h}:'{crop_x}':0,"
+        f"scale={out_w}:{out_h}"
+    )
+    if subtitle_name:
+        fonts = f":fontsdir={fonts_dir}" if fonts_dir else ""
+        chain += f",subtitles={subtitle_name}{fonts}"
+    return chain + "[v]"
 
 
 def build_filter(

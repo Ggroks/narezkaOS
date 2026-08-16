@@ -70,7 +70,7 @@ class FramingConfig(BaseModel):
     #: single — исходник целиком на подложке; split — лицо стримера сверху,
     #: приближённый контент снизу (§61). Сплит применяется только там, где
     #: стадия facecam нашла вебку наложением; иначе кадрируется как обычно.
-    layout: Literal["single", "split"] = "single"
+    layout: Literal["single", "split", "track"] = "single"
 
     """Как исходный кадр вписывается в вертикальный (§17, §61).
 
@@ -81,6 +81,14 @@ class FramingConfig(BaseModel):
     #: full — ничего не терять; balanced — 25% по бокам; focus — 50%;
     #: fill — заполнить кадр целиком; custom — значение из side_crop.
     preset: Literal["full", "balanced", "focus", "fill", "custom"] = "balanced"
+    #: Сколько раз в секунду искать лицо для слежения. Пяти достаточно (§17):
+    #: между находками положение получается интерполяцией, а голова не
+    #: движется быстрее. Больше — только время детекции.
+    track_samples_per_second: float = Field(default=5.0, gt=0, le=30)
+    #: Доля новой позиции в сглаженной. Меньше — плавнее, с отставанием.
+    track_smoothing: float = Field(default=0.15, gt=0, le=1)
+    #: Мёртвая зона в долях видимого кадра: пока лицо внутри, рамка стоит.
+    track_dead_zone: float = Field(default=0.25, ge=0, le=0.5)
     side_crop: float = Field(default=0.25, ge=0.0, le=0.95)
     #: Какую часть кадра оставлять при обрезке. auto появится вместе
     #: с детекцией содержимого на этапе 4.

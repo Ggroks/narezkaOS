@@ -16,12 +16,14 @@ from __future__ import annotations
 from typing import Any
 
 from narezka.core.cuts import clip_cuts
+from narezka.core.tracking import crop_expression
 from narezka.core.edl import Edl
 from narezka.core.encoders import video_args
 from narezka.core.artifacts import Artifact
 from narezka.core.config import FramingConfig
 from narezka.core.fonts import escape_for_filter, fonts_dir
 from narezka.core.framing import (
+    build_track_filter,
     Framing,
     build_filter,
     build_split_filter,
@@ -190,11 +192,13 @@ class RenderStage(Stage):
             ctx.progress(len(rendered) + 1, len(clips), "рендер")
 
             split = self._split_for(clip, cams, framing, src_w, src_h, short)
+            track = self._track_for(clip, cams, framing, src_w, src_h, short)
 
             with target.reserve() as tmp:
                 run_tool(
                     self._command(
                         split=split,
+                        track=track,
                         source=source,
                         start=source_start,
                         duration=duration,
@@ -271,6 +275,24 @@ class RenderStage(Stage):
         except ValueError:
             return {}
 
+    @staticmethod
+    def _track_for(clip, cams, framing, src_w: int, src_h: int, short):
+        """Кроп со слежением — если раскладка выбрана и траектория посчитана."""
+        if framing.layout != "track":
+            return None
+        entry = (cams or {}).get(str(clip["index"])) or (cams or {}).get(clip["index"])
+        points = (entry or {}).get("track", {}) if isinstance(entry, dict) else {}
+        points = (points or {}).get("points") if isinstance(points, dict) else None
+        if not points:
+            return None
+
+        # Кроп той же пропорции, что и выход: тогда после масштабирования
+        # ничего не искажается и не остаётся полей.
+        crop_h = src_h
+        crop_w = max(2, int(crop_h * short.width / short.height)) & ~1
+        expression = crop_expression([(float(t), float(x)) for t, x in points], crop_w, src_w)
+        return {"x": expression, "w": crop_w, "h": crop_h}
+
     def _edl(self, ctx: StageContext) -> Edl:
         """Ось времени. Нет артефакта — правок нет, а не ошибка.
 
@@ -340,6 +362,7 @@ class RenderStage(Stage):
         fps: int | None = None,
         cut_video: str = "",
         cut_audio: str = "",
+        track=None,
         encoder: str = "cpu",
         pix_fmt: str,
         faststart: bool,
@@ -363,7 +386,12 @@ class RenderStage(Stage):
 
         if has_video:
             args += ["-ss", f"{start:.3f}", "-i", str(source), "-t", f"{duration:.3f}"]
-            if split is not None:
+            if track is not None:
+                video_filter = build_track_filter(
+                    track["x"], track["w"], track["h"], width, height,
+                    subtitle_name, fonts_dir=escape_for_filter(fonts_dir()), fps=fps,
+                )
+            elif split is not None:
                 video_filter = build_split_filter(
                     split, width, subtitle_name,
                     fonts_dir=escape_for_filter(fonts_dir()), fps=fps,

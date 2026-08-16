@@ -131,3 +131,65 @@ def crop_centre(track: Track, moment: float, crop_width: float, frame_width: flo
     """
     left = track.at(moment) - crop_width / 2
     return float(np.clip(left, 0.0, max(0.0, frame_width - crop_width)))
+
+
+#: Насколько положение должно измениться, чтобы стать опорной точкой кривой.
+#: Кривая передаётся ffmpeg выражением, и каждая точка — это лишние символы:
+#: минутный ролик при пяти находках в секунду дал бы триста звеньев. Порог
+#: в несколько пикселей отбрасывает те, что зритель всё равно не различит.
+KEYFRAME_THRESHOLD = 4.0
+
+
+def keyframes(track: Track, threshold: float = KEYFRAME_THRESHOLD) -> list[tuple[float, float]]:
+    """Опорные точки траектории: только там, где положение заметно менялось.
+
+    Первая и последняя оставляются всегда — без них выражение не покрывает
+    края ролика, и ffmpeg на этих участках получил бы неопределённость.
+    """
+    if track.x.size == 0:
+        return []
+    if track.x.size == 1:
+        return [(float(track.times[0]), float(track.x[0]))]
+
+    points = [(float(track.times[0]), float(track.x[0]))]
+    for moment, value in zip(track.times[1:-1], track.x[1:-1], strict=True):
+        if abs(value - points[-1][1]) >= threshold:
+            points.append((float(moment), float(value)))
+    points.append((float(track.times[-1]), float(track.x[-1])))
+    return points
+
+
+def crop_expression(
+    points: list[tuple[float, float]], crop_width: float, frame_width: float
+) -> str:
+    """Выражение для параметра `x` фильтра crop — кусочно-линейная кривая.
+
+    ffmpeg вычисляет его на каждом кадре, подставляя время в `t`. Кусками,
+    а не одной формулой, потому что траектория произвольная: между опорными
+    точками положение меняется линейно, а на границах ролика удерживается.
+
+    Прижатие к краям делается **здесь**, а не в самом выражении: `min` и `max`
+    внутри каждого звена утроили бы его длину, а результат тот же — точки
+    уже прижаты, и линия между двумя прижатыми точками не выходит за края.
+    """
+    if not points:
+        return "0"
+
+    limit = max(0.0, frame_width - crop_width)
+
+    def left(value: float) -> float:
+        return min(max(value - crop_width / 2, 0.0), limit)
+
+    if len(points) == 1:
+        return f"{left(points[0][1]):.1f}"
+
+    # Собирается справа налево: последнее звено становится значением по
+    # умолчанию, и каждое предыдущее оборачивает его условием.
+    expression = f"{left(points[-1][1]):.1f}"
+    for (t0, x0), (t1, x1) in reversed(list(zip(points, points[1:], strict=False))):
+        a, b = left(x0), left(x1)
+        span = max(t1 - t0, 1e-6)
+        slope = (b - a) / span
+        piece = f"{a:.1f}+{slope:.3f}*(t-{t0:.3f})"
+        expression = f"if(lt(t,{t1:.3f}),{piece},{expression})"
+    return expression

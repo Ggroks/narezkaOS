@@ -15,7 +15,7 @@ from __future__ import annotations
 import subprocess
 from typing import Any
 
-from narezka.core import detectors, facecam
+from narezka.core import detectors, tracking, facecam
 from narezka.core.artifacts import Artifact
 from narezka.core.clips import SELECTION_NAME, load_clips
 from narezka.core.media import find_source
@@ -70,6 +70,12 @@ def sample_frames(source, times: list[float], log=None):
     return frames
 
 
+#: Какая доля кадров должна дать лицо, чтобы вести по нему рамку. Меньше
+#: половины — траектория состоит в основном из догадок, и слежение выключается:
+#: неподвижный кадр честнее рамки, гуляющей по интерполяции.
+MIN_TRACK_HITS = 0.5
+
+
 class FacecamStage(Stage):
     name = "facecam"
     #: v3 — область контента ищется по близким кадрам: на разнесённых
@@ -81,6 +87,41 @@ class FacecamStage(Stage):
     device = Device.ANY
     optional = True
     description = "Поиск окна вебкамеры для раскладки «сплит»"
+
+    def _track(self, ctx, detector, source, clip) -> dict[str, Any] | None:
+        """Сглаженная траектория головы внутри клипа."""
+        cfg = ctx.config.output.framing
+        positions, moments = _track_points(
+            detector, source, clip["start"], clip["end"],
+            cfg.track_samples_per_second, ctx.log,
+        )
+        found = sum(1 for p in positions if p is not None)
+        if found < len(positions) * MIN_TRACK_HITS:
+            ctx.log.info(
+                "клип %d: лицо найдено в %d кадрах из %d — слежение отключено",
+                clip["index"], found, len(positions),
+            )
+            return None
+
+        short = ctx.config.output.short
+        # Ширина кропа в пикселях **исходника**, а не готового ролика.
+        # Траектория считается в координатах исходника, и мерить мёртвую зону
+        # выходной шириной — грубая ошибка: при кропе 404 из кадра 720 высотой
+        # зона выходила в 270 px, две трети видимого кадра, и рамка почти
+        # не двигалась. Ровно это и было видно на первом собранном ролике.
+        source_height = _source_height(source)
+        crop_width = max(2.0, source_height * short.width / short.height)
+        track = tracking.smooth(
+            positions, moments, crop_width,
+            smoothing=cfg.track_smoothing,
+            dead_zone=cfg.track_dead_zone,
+        )
+        points = tracking.keyframes(track)
+        ctx.log.info(
+            "клип %d: слежение — находок %d из %d, опорных точек %d, путь %.0f px",
+            clip["index"], found, len(positions), len(points), track.travel,
+        )
+        return {"points": [[round(t, 3), round(x, 1)] for t, x in points], "travel": round(track.travel, 1)}
 
     def inputs(self, ctx: StageContext) -> list[Artifact]:
         selection = Artifact(ctx.paths.analysis / SELECTION_NAME)
@@ -125,6 +166,11 @@ class FacecamStage(Stage):
                 continue
 
             entry = result.as_dict()
+            # Траектория головы для раскладки «слежение». Считается здесь же:
+            # кадры уже прочитаны, а читать их второй раз — самая дорогая
+            # часть стадии.
+            if ctx.config.output.framing.layout == "track":
+                entry["track"] = self._track(ctx, detector, source, clip)
             if not result.full_frame:
                 # Область контента нужна нижней полосе сплита: без неё она
                 # режется по центру и захватывает интерфейс плеера.
@@ -164,3 +210,34 @@ class FacecamStage(Stage):
             "вебка найдена в %d клипах из %d, наложением в %d — для них доступен сплит",
             len(found), len(clips), overlays,
         )
+
+
+def _track_points(
+    detector, source, start: float, end: float, per_second: float, log
+) -> tuple[list[float | None], list[float]]:
+    """Положения лица по клипу: центр по горизонтали и моменты времени.
+
+    Пять-десять раз в секунду достаточно (§17): между находками положение
+    получается интерполяцией, а лицо не движется быстрее.
+    """
+    step = 1.0 / per_second
+    moments = [start + i * step for i in range(int((end - start) * per_second))]
+    frames = sample_frames(source, moments, log=log)
+
+    positions: list[float | None] = []
+    for frame in frames:
+        faces = detector.detect(frame)
+        best = max(faces, key=lambda f: f[4]) if faces else None
+        positions.append(best[0] + best[2] / 2 if best else None)
+    return positions, [m - start for m in moments[: len(frames)]]
+
+
+def _source_height(source) -> float:
+    """Высота кадра исходника. Нужна, чтобы считать кроп в его координатах."""
+    import cv2  # noqa: PLC0415
+
+    capture = cv2.VideoCapture(str(source))
+    try:
+        return float(capture.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 720.0
+    finally:
+        capture.release()

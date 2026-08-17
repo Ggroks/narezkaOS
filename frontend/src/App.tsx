@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type Health, type VideoSummary } from "./api";
+import { ThemePicker } from "./components/ThemePicker";
 import { VideoList } from "./components/VideoList";
 import { VideoDetail } from "./components/VideoDetail";
 
@@ -57,6 +58,7 @@ export function App() {
       </a>
       <header className="top">
         <h1>Narezka OS</h1>
+        <ThemePicker />
         {health && (
           <span className="env small dim">
             профиль {health.profile} · {health.device.kind} · {health.device.name}

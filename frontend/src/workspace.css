@@ -237,3 +237,55 @@ button.ghost:hover:not(:disabled) { color: var(--text); background: var(--surfac
 .stage-time { grid-column: 1; justify-self: start; }
 .workspace-stages .stage .badge { justify-self: end; }
 .workspace-stages .stage button.icon { grid-column: 2; justify-self: end; }
+
+/* ── Выбор темы ────────────────────────────────────────────────────────── */
+
+.themes { display: flex; gap: 6px; align-items: center; }
+
+.theme-dot {
+  position: relative;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  cursor: pointer;
+  transition: transform var(--fast) var(--ease), border-color var(--fast) var(--ease);
+}
+.theme-dot:hover { transform: scale(1.1); }
+/* Выбранная обведена кольцом с отступом, а не толстой рамкой: рамка
+   съедает образец, ради которого кружок и нужен. */
+.theme-dot.current {
+  border-color: var(--text-dim);
+  box-shadow: 0 0 0 2px var(--bg), 0 0 0 3px var(--text-faint);
+}
+
+.theme-accent {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+/* Текст публикации под роликом: свёрнут, потому что занимает больше места,
+   чем сам ролик, а разворачивают его только перед публикацией. */
+.short-text { flex-basis: 100%; margin-top: 6px; }
+.short-text summary { cursor: pointer; color: var(--text-dim); }
+.short-text textarea {
+  width: 100%;
+  margin: var(--gap-sm) 0;
+  padding: 10px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-inner);
+  resize: vertical;
+}
+
+/* Подробности ролика: два главных числа видно, остальное под значком. */
+.short-facts { display: flex; align-items: center; gap: var(--gap-sm); }

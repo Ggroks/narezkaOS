@@ -34,6 +34,7 @@ type Props = {
 const STATE_LABEL: Record<ProjectState, string> = {
   draft: "черновик",
   started: "в работе",
+  queued: "в очереди",
   processing: "идёт обработка",
   ready: "готов",
   failed: "ошибка",
@@ -42,6 +43,7 @@ const STATE_LABEL: Record<ProjectState, string> = {
 const STATE_BADGE: Record<ProjectState, string> = {
   draft: "",
   started: "",
+  queued: "warn",
   processing: "run",
   ready: "ok",
   failed: "bad",
@@ -203,6 +205,7 @@ function ProjectCard({
   const [posterFailed, setPosterFailed] = useState(false);
 
   const running = project.state === "processing";
+  const waiting = project.state === "queued";
   const share = stageShare(project);
 
   function save() {
@@ -280,7 +283,7 @@ function ProjectCard({
           )}
         </p>
 
-        {(running || project.state === "started") && (
+        {(running || waiting || project.state === "started") && (
           <div className="project-progress">
             <div
               className="progress"
@@ -295,7 +298,9 @@ function ProjectCard({
             <p className="small dim">
               {running
                 ? currentStep(project)
-                : `сделано ${project.stages_done} из ${project.stages_total} шагов`}
+                : waiting
+                  ? `в очереди, ${project.queue_position}-й — начнём, когда освободится машина`
+                  : `сделано ${project.stages_done} из ${project.stages_total} шагов`}
             </p>
           </div>
         )}

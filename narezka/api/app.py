@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -20,7 +21,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from narezka.api import auth, jobs
+from narezka.api import auth, jobs, worker
 from narezka.api.media import serve_file
 from narezka.core import env
 from narezka.core.clips import load_clips
@@ -36,15 +37,36 @@ from narezka.core.framing import (
     preview_presets,
 )
 from narezka.core.media import MediaError, find_source, run_tool
-from narezka.core import accounts, db, detectors, feedback, llm, publish, registry, review, settings
+from narezka.core import (
+    accounts, db, detectors, feedback, llm, publish, queue, registry, review, settings,
+)
 from narezka.core.paths import list_videos, video_paths
 from narezka.core.runner import run_pipeline, run_stage
 from narezka.core.stage import StageContext
 from narezka.stages import GROUPS, PIPELINE, get_stage, stages_for
 from narezka.stages.render import load_framing, load_options, source_size
 
-app = FastAPI(title="Narezka OS", version="0.1.0")
 log = get_logger("api")
+
+#: Рабочие потоки. Поднимаются вместе с сервером, а не при импорте: тесты
+#: работают с очередью напрямую, и фоновая обработка им только мешала бы.
+WORKERS: list[Any] = []
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    config, _device = _config()
+    WORKERS.extend(worker.start(_config, config.queue.parallel))
+    log.info("рабочих потоков: %d", len(WORKERS))
+    try:
+        yield
+    finally:
+        for item in WORKERS:
+            item.shutdown()
+        WORKERS.clear()
+
+
+app = FastAPI(title="Narezka OS", version="0.1.0", lifespan=lifespan)
 
 # Дев-режим: фронтенд поднимается отдельным сервером Vite.
 app.add_middleware(
@@ -293,7 +315,31 @@ class RenameVideo(BaseModel):
     title: str = Field(default="", max_length=registry.TITLE_LIMIT)
 
 
-def _summary(config, project: str, video_id: str) -> dict[str, Any]:
+def _pending(config, workspace: str) -> dict[str, dict[str, Any]]:
+    """Что стоит в очереди у этого владельца — одним запросом на весь каталог.
+
+    Запрашивать по записи значило бы восемь обращений к базе на каждый опрос
+    каталога, а опрашивается он раз в три секунды.
+    """
+    with db.connect(config.storage_root) as connection:
+        queue.ensure_schema(connection)
+        rows = connection.execute(
+            "SELECT task_id, video_id, status FROM tasks"
+            " WHERE workspace = ? AND status IN ('queued','running')",
+            (workspace,),
+        ).fetchall()
+        return {
+            row["video_id"]: {
+                "status": row["status"],
+                "position": queue.position(connection, row["task_id"]),
+            }
+            for row in rows
+        }
+
+
+def _summary(
+    config, project: str, video_id: str, pending: dict[str, dict[str, Any]] | None = None
+) -> dict[str, Any]:
     """Карточка каталога: что за запись, откуда и на чём остановилась работа."""
     paths = video_paths(config.storage_root, project, video_id)
     meta = Artifact(paths.metadata)
@@ -310,8 +356,13 @@ def _summary(config, project: str, video_id: str) -> dict[str, Any]:
         except ValueError:
             shorts_count = 0
 
+    waiting = (pending or {}).get(video_id)
     job = jobs.manager.get(video_id, project)
-    if job is not None and job.is_active:
+    if waiting and waiting["status"] == "queued":
+        # Ожидание — отдельное состояние: «идёт обработка» на записи, до
+        # которой очередь ещё не дошла, было бы неправдой.
+        state = "queued"
+    elif job is not None and job.is_active:
         state = "processing"
     elif job is not None and job.status == "failed":
         # Упавший прогон важнее готовых роликов: о нём надо узнать из каталога,
@@ -346,6 +397,8 @@ def _summary(config, project: str, video_id: str) -> dict[str, Any]:
         "poster_at": _poster_at(paths, data),
         "job_status": job.status if job else None,
         "job": job.progress() if job else None,
+        # Место в очереди: 0 — уже выполняется, 1 — следующая на очереди.
+        "queue_position": (waiting or {}).get("position", 0),
     }
 
 
@@ -386,7 +439,11 @@ def _poster_at(paths, metadata: dict[str, Any]) -> float | None:
 def videos(project: str = "default") -> list[dict[str, Any]]:
     config, _ = _config()
     space = _workspace(project)
-    return [_summary(config, space, vid) for vid in list_videos(config.storage_root, space)]
+    pending = _pending(config, space)
+    return [
+        _summary(config, space, vid, pending)
+        for vid in list_videos(config.storage_root, space)
+    ]
 
 
 @app.post("/api/videos")
@@ -430,10 +487,15 @@ def video_detail(video_id: str, project: str = "default") -> dict[str, Any]:
     paths, _ = _paths(video_id, project)
     meta = Artifact(paths.metadata)
     cost = Artifact(paths.cost)
-    job = jobs.manager.get(video_id, _workspace(project))
+    space = _workspace(project)
+    job = jobs.manager.get(video_id, space)
+    with db.connect(_config()[0].storage_root) as connection:
+        task = queue.active_for(connection, workspace=space, video_id=video_id)
+        place = queue.position(connection, task.task_id) if task else 0
     return {
         "video_id": video_id,
         "project": project,
+        "queue_position": place,
         "metadata": meta.read_json() if meta.exists() else {},
         "stages": _stage_states(paths),
         "cost": cost.read_json() if cost.exists() else None,
@@ -469,29 +531,41 @@ class RunRequest(BaseModel):
 
 @app.post("/api/videos/{video_id}/run")
 def run(video_id: str, payload: RunRequest) -> dict[str, Any]:
+    """Ставит работу в очередь.
+
+    Не запускает сразу: одна расшифровка занимает машину на час с лишним,
+    и две рядом не ускоряют обработку, а множат расход памяти. Очередь
+    лежит в базе, поэтому переживает перезапуск сервера, а прерванная
+    работа возобновляется почти бесплатно — стадии кэшируются.
+    """
     ctx = _context(video_id, payload.project, payload.profile)
-    stage = get_stage(payload.stage) if payload.stage else None
 
     if payload.group is not None:
         try:
-            planned = stages_for(payload.group)
+            stages_for(payload.group)
         except KeyError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-    else:
-        planned = list(PIPELINE)
+    if payload.stage is not None:
+        try:
+            get_stage(payload.stage)
+        except KeyError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    def work(emit) -> None:
-        observer = lambda name, event, data: emit(name, event, data)  # noqa: E731
-        if stage is not None:
-            run_stage(stage, ctx, force=payload.force, observer=observer)
-        else:
-            run_pipeline(
-                planned, ctx, force=payload.force, observer=observer,
-                should_stop=lambda: jobs.manager.get(video_id, ctx.project_id).stop_requested,
-            )
+    config, _ = _config()
+    with db.connect(config.storage_root) as connection:
+        task, created = queue.enqueue(
+            connection,
+            workspace=ctx.project_id,
+            video_id=video_id,
+            work_group=payload.group,
+            stage=payload.stage,
+            force=payload.force,
+        )
+        place = queue.position(connection, task.task_id)
 
-    job, created = jobs.manager.start(video_id, ctx.project_id, work)
-    return {"started": created, "status": job.status}
+    job, _ = jobs.manager.reserve(video_id, ctx.project_id)
+    log.info("в очередь: %s/%s, место %d", ctx.project_id, video_id, place)
+    return {"started": created, "status": job.status, "queued": place > 0, "position": place}
 
 
 @app.get("/api/videos/{video_id}/timeline")
@@ -716,10 +790,25 @@ def encoders_info() -> dict[str, Any]:
 
 @app.post("/api/videos/{video_id}/stop")
 def stop(video_id: str, project: str = "default") -> dict[str, Any]:
-    """Останавливает обработку после текущей стадии, не трогая сервер."""
-    if not jobs.manager.stop(video_id, _workspace(project)):
+    """Снимает задачу: из очереди — сразу, начатую — после текущей стадии."""
+    config, _ = _config()
+    space = _workspace(project)
+
+    with db.connect(config.storage_root) as connection:
+        task = queue.active_for(connection, workspace=space, video_id=video_id)
+        cancelled = bool(task) and queue.cancel(connection, task.task_id)
+
+    if cancelled:
+        # Снятая из очереди задача закрывается и в памяти, иначе она вечно
+        # числится живой, а поток событий ждёт того, чего не будет.
+        waiting_job = jobs.manager.get(video_id, space)
+        if waiting_job is not None:
+            waiting_job.cancel()
+
+    stopped = jobs.manager.stop(video_id, space)
+    if not cancelled and not stopped:
         raise HTTPException(status_code=409, detail="обработка не идёт — останавливать нечего")
-    return {"stopping": True}
+    return {"stopping": True, "from_queue": cancelled}
 
 
 @app.get("/api/videos/{video_id}/events")

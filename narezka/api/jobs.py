@@ -127,6 +127,42 @@ class Job:
     def is_active(self) -> bool:
         return self.status in ("queued", "running")
 
+    def cancel(self) -> None:
+        """Закрывает задачу, которая так и не начала выполняться.
+
+        Снятая из очереди задача обязана закрыться и в памяти: иначе она
+        вечно числится живой — «остановить» срабатывает снова и снова,
+        а поток событий ждёт того, чего не будет.
+        """
+        if self.status != "queued":
+            return
+        self.status = "stopped"
+        self.finished_at = _now()
+        self.add_event("*", "job_finished", {"status": self.status})
+
+    def execute(self, work: Any) -> tuple[str, str | None]:
+        """Выполняет работу, ведя состояние и события. Возвращает итог.
+
+        Вызывается рабочим потоком, а не запросом: задача сначала стоит
+        в очереди и только потом начинает выполняться. Разделение нужно,
+        чтобы человек видел «третий в очереди», а не «идёт обработка»,
+        когда на деле не идёт ничего.
+        """
+        self.status = "running"
+        self.started_at = _now()
+        try:
+            work(self.add_event)
+            self.status = "stopped" if self.stop_requested else "finished"
+            error = None
+        except Exception as exc:  # noqa: BLE001 — сбой задачи не должен ронять сервер
+            self.status = "failed"
+            self.error = error = str(exc)
+            self.add_event("*", "error", {"message": str(exc)})
+        finally:
+            self.finished_at = _now()
+            self.add_event("*", "job_finished", {"status": self.status})
+        return self.status, error
+
 
 class JobManager:
     """Одна активная задача на запись. Повторный запуск возвращает текущую.
@@ -158,9 +194,24 @@ class JobManager:
         with self._lock:
             return self._jobs.get(self._key(video_id, project_id))
 
-    def all(self) -> dict[str, Job]:
+    def all(self) -> dict[tuple[str, str], Job]:
         with self._lock:
             return dict(self._jobs)
+
+    def reserve(self, video_id: str, project_id: str) -> tuple[Job, bool]:
+        """Заводит задачу в состоянии «в очереди», не запуская работу.
+
+        Живая задача возвращается как есть: повторное нажатие не должно
+        ни плодить вторую, ни стирать журнал первой.
+        """
+        with self._lock:
+            key = self._key(video_id, project_id)
+            existing = self._jobs.get(key)
+            if existing is not None and existing.is_active:
+                return existing, False
+            job = Job(video_id=video_id, project_id=project_id)
+            self._jobs[key] = job
+            return job, True
 
     def start(self, video_id: str, project_id: str, work: Any) -> tuple[Job, bool]:
         """Запускает работу в фоне. Второй элемент — была ли задача создана.

@@ -21,7 +21,13 @@ export type StageState = {
  * `started` — работа начата, но роликов ещё нет: это не черновик и не
  * готовое, и сваливать его в одно из двух значит врать в карточке.
  */
-export type ProjectState = "draft" | "started" | "processing" | "ready" | "failed";
+export type ProjectState =
+  | "draft"
+  | "started"
+  | "queued"
+  | "processing"
+  | "ready"
+  | "failed";
 
 /** Что идёт прямо сейчас: стадия и, если она умеет считать, сколько сделано. */
 export type JobProgress = {
@@ -61,6 +67,8 @@ export type VideoSummary = {
   poster_at: number | null;
   job_status: string | null;
   job: JobProgress | null;
+  /** Место в очереди: 0 — уже выполняется или ничего не ждёт. */
+  queue_position: number;
 };
 
 export type Word = { word: string; start: number; end: number; probability: number };
@@ -90,6 +98,8 @@ export type Transcript = {
 export type VideoDetail = {
   video_id: string;
   project: string;
+  /** Место в очереди: 0 — не ждёт. */
+  queue_position: number;
   metadata: Record<string, any>;
   stages: StageState[];
   cost: { stages: Record<string, { runs: number; seconds_total: number }> } | null;
@@ -460,10 +470,13 @@ export const api = {
     request<VideoSummary>(`/api/videos/${id}`, { method: "PATCH", body: JSON.stringify({ title }) }),
   deleteVideo: (id: string) => request<{ status: string }>(`/api/videos/${id}`, { method: "DELETE" }),
   run: (id: string, payload: { stage?: string; group?: StageGroup; force?: boolean }) =>
-    request<{ started: boolean; status: string }>(`/api/videos/${id}/run`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }),
+    request<{ started: boolean; status: string; queued: boolean; position: number }>(
+      `/api/videos/${id}/run`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    ),
   mediaUrl: (id: string) => `/api/videos/${id}/media`,
   review: (id: string) => request<Review>(`/api/videos/${id}/review`),
   publish: (id: string) => request<PublishTexts>(`/api/videos/${id}/publish`),

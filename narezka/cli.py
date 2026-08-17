@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 from rich.console import Console
 from rich.table import Table
 
-from narezka.core import accounts, db, env, registry, settings
+from narezka.core import accounts, db, env, queue, registry, settings
 from narezka.core.artifacts import Artifact, cleanup_partials
 from narezka.core.config import load_config
 from narezka.core.logging import get_logger, setup_logging
@@ -201,6 +201,52 @@ def user_list(
             "хозяин" if user.is_admin else "",
         )
     console.print(table)
+
+
+@app.command()
+def usage(
+    days: Annotated[int, typer.Option("--days", help="За сколько последних дней")] = 30,
+    config_path: Annotated[Path | None, typer.Option("--config")] = None,
+) -> None:
+    """Сколько наработано: часы записи и машинное время.
+
+    Часы записи — то, по чему считается стоимость: замеры показали, что
+    себестоимость линейна по ним и ни по чему другому. Машинное время рядом,
+    чтобы видеть, во что это обходится на самом деле.
+    """
+    from datetime import UTC, datetime, timedelta  # noqa: PLC0415
+
+    config = load_config(config_path)
+    since = (datetime.now(UTC) - timedelta(days=days)).isoformat(timespec="seconds")
+    with db.connect(config.storage_root) as connection:
+        rows = queue.usage(connection, since=since)
+        pending = queue.waiting(connection)
+
+    if not rows:
+        console.print(f"За последние {days} дн. обработки не было.")
+    else:
+        table = Table(title=f"Наработано за {days} дн.")
+        table.add_column("Пространство", style="bold")
+        table.add_column("Задач", justify="right")
+        table.add_column("Часов записи", justify="right")
+        table.add_column("Машинного времени", justify="right")
+        for row in rows:
+            table.add_row(
+                row["workspace"], str(row["tasks"]), f"{row['video_hours']:.2f}",
+                f"{row['machine_seconds'] / 3600:.2f} ч",
+            )
+        console.print(table)
+
+        total = sum(row["video_hours"] for row in rows)
+        machine = sum(row["machine_seconds"] for row in rows) / 3600
+        console.print(
+            f"Итого [bold]{total:.2f}[/bold] ч записи, "
+            f"машина занята [bold]{machine:.2f}[/bold] ч "
+            f"({machine / total:.2f} ч на час записи)" if total else ""
+        )
+
+    if pending:
+        console.print(f"\nВ очереди сейчас: [bold]{pending}[/bold]")
 
 
 @app.command()

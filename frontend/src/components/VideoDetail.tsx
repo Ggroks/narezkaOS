@@ -78,7 +78,9 @@ export function VideoDetail({ videoId, onBack }: Props) {
     try {
       const data = await api.video(videoId);
       setDetail(data);
-      setRunning(data.job?.status === "running" || data.job?.status === "queued");
+      // Только «выполняется»: ожидание в очереди — не работа, и показывать
+      // его как идущую обработку значит врать про то, что происходит.
+      setRunning(data.job?.status === "running");
       if (data.job?.events?.length) setEvents(data.job.events);
       try {
         setTranscript(await api.transcript(videoId));
@@ -117,6 +119,14 @@ export function VideoDetail({ videoId, onBack }: Props) {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Пока задача ждёт очереди, событий нет и подписываться не на что:
+  // место в очереди меняется от чужой работы. Раз в три секунды хватает.
+  useEffect(() => {
+    if (!detail?.queue_position) return;
+    const timer = setInterval(() => void load(), 3000);
+    return () => clearInterval(timer);
+  }, [detail?.queue_position, load]);
 
   // Живой поток событий, пока задача активна (§69).
   useEffect(() => {
@@ -249,7 +259,15 @@ export function VideoDetail({ videoId, onBack }: Props) {
     { id: "results", label: "Результаты" },
   ];
 
-  const runShared = { running, activeStage, progress, onStop: stop, failure, note: skipNote };
+  const runShared = {
+    running,
+    queued: detail.queue_position,
+    activeStage,
+    progress,
+    onStop: stop,
+    failure,
+    note: skipNote,
+  };
 
   return (
     <Workspace

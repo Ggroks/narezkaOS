@@ -180,21 +180,40 @@ def test_added_date_is_reported_even_for_old_videos(client, video) -> None:
 # --- запуск по частям ------------------------------------------------------
 
 
-def test_run_accepts_a_known_group(client, video, monkeypatch) -> None:
-    """Кнопка на вкладке запускает свой кусок работы, а не весь пайплайн."""
-    planned: list[list[str]] = []
-    monkeypatch.setattr(
-        api_app, "run_pipeline",
-        lambda stages, ctx, **kw: planned.append([s.name for s in stages]) or [],
-    )
-    assert client.post(f"/api/videos/{VIDEO}/run", json={"group": "shorts"}).status_code == 200
+def test_run_puts_the_group_in_the_queue(client, video) -> None:
+    """Кнопка на вкладке ставит в очередь свой кусок работы, а не весь
+    пайплайн, и не запускает его прямо из запроса."""
+    from narezka.core import queue
 
-    for _ in range(100):
-        if planned:
-            break
-        time.sleep(0.02)
-    assert planned, "фоновая задача не запустилась"
-    assert "render" in planned[0] and "episodes" not in planned[0]
+    body = client.post(f"/api/videos/{VIDEO}/run", json={"group": "shorts"}).json()
+    assert body["queued"] is True and body["position"] == 1
+
+    config, _ = api_app._config()
+    with api_app.db.connect(config.storage_root) as connection:
+        task = queue.active_for(connection, workspace="default", video_id=VIDEO)
+    assert task is not None and task.work_group == "shorts"
+
+
+def test_second_press_does_not_add_a_second_task(client, video) -> None:
+    """Двойной клик по «Собрать» не должен ставить две сборки подряд."""
+    first = client.post(f"/api/videos/{VIDEO}/run", json={"group": "shorts"}).json()
+    second = client.post(f"/api/videos/{VIDEO}/run", json={"group": "shorts"}).json()
+    assert first["started"] is True and second["started"] is False
+
+
+def test_queued_record_says_it_is_waiting(client, video) -> None:
+    """«Идёт обработка» на записи, до которой очередь не дошла, — неправда."""
+    client.post(f"/api/videos/{VIDEO}/run", json={"group": "analysis"})
+    card = client.get("/api/videos").json()[0]
+    assert card["state"] == "queued" and card["queue_position"] == 1
+
+
+def test_stop_removes_a_task_from_the_queue(client, video) -> None:
+    client.post(f"/api/videos/{VIDEO}/run", json={"group": "analysis"})
+    assert client.post(f"/api/videos/{VIDEO}/stop").json()["from_queue"] is True
+    assert client.get("/api/videos").json()[0]["state"] != "queued"
+    # Снимать нечего — честный отказ, а не молчаливое согласие.
+    assert client.post(f"/api/videos/{VIDEO}/stop").status_code == 409
 
 
 def test_unknown_group_is_a_clear_400(client, video) -> None:

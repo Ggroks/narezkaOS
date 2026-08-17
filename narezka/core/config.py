@@ -303,6 +303,19 @@ class CompilationConfig(BaseModel):
 
 
 
+class QueueConfig(BaseModel):
+    """Очередь обработки (§9A, §64).
+
+    `parallel: 1` — по замеру, а не из осторожности: расшифровка занимает
+    все шесть ядер, и вторая рядом не ускоряет работу, а замедляет обе
+    и складывает расход памяти, который на этом проекте кончался трижды.
+    Поднимать имеет смысл там, где ядер заметно больше или расшифровка
+    ушла на видеокарту.
+    """
+
+    parallel: int = Field(default=1, ge=1, le=16)
+
+
 class AuthConfig(BaseModel):
     """Вход в программу (§9A).
 
@@ -329,6 +342,7 @@ class Config(BaseModel):
     storage_root: Path = Path("storage")
     default_project: str = "default"
     auth: AuthConfig = AuthConfig()
+    queue: QueueConfig = QueueConfig()
 
     download: DownloadConfig = Field(default_factory=DownloadConfig)
     audio: AudioConfig = Field(default_factory=AudioConfig)

@@ -28,6 +28,8 @@ type Props = {
   againLabel: string;
   done: boolean;
   running: boolean;
+  /** Место в очереди: 0 — не ждёт. */
+  queued?: number;
   /** Ход текущего прогона, если он идёт. */
   activeStage?: string;
   progress?: JobEvent;
@@ -46,15 +48,20 @@ type Props = {
 };
 
 export function RunPanel({
-  title, hint, label, againLabel, done, running, activeStage, progress, onRun, onStop,
-  blocked, failure, note,
+  title, hint, label, againLabel, done, running, queued = 0, activeStage, progress,
+  onRun, onStop, blocked, failure, note,
 }: Props) {
+  const waiting = !running && queued > 0;
   return (
-    <section className={`runbar${running ? " running" : ""}`}>
+    <section className={`runbar${running || waiting ? " running" : ""}`}>
       <div className="runbar-text">
         <b>{title}</b>
         <span className="small dim">
-          {running ? currentStep(activeStage, progress) : blocked || hint}
+          {running
+            ? currentStep(activeStage, progress)
+            : waiting
+              ? `В очереди, ${queued}-й. Начнём, когда освободится машина — она берёт по одной записи`
+              : blocked || hint}
         </span>
         {!running && failure && <span className="small runbar-fail">{failure}</span>}
         {!running && !failure && !done && note && (
@@ -62,9 +69,9 @@ export function RunPanel({
         )}
       </div>
 
-      {running ? (
+      {running || waiting ? (
         <button className="ghost" onClick={onStop}>
-          Остановить
+          {waiting ? "Убрать из очереди" : "Остановить"}
         </button>
       ) : (
         <button className="primary" disabled={Boolean(blocked)} onClick={onRun}>

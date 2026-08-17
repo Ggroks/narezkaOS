@@ -15,6 +15,8 @@
 
 from __future__ import annotations
 
+import threading
+import time
 from typing import Any
 
 from fastapi import Request
@@ -85,3 +87,53 @@ def describe(user: User | None, config) -> dict[str, Any]:
             "local": user.is_local,
         },
     }
+
+
+# --- защита от перебора -----------------------------------------------------
+
+#: Сколько неудачных попыток подряд терпим и как долго потом отдыхаем.
+#: Пять попыток — человек, забывший раскладку, укладывается; перебор словаря
+#: при паузе в четверть часа становится делом на годы.
+MAX_ATTEMPTS = 5
+LOCKOUT_SECONDS = 900
+
+_attempts: dict[str, list[float]] = {}
+_attempts_lock = threading.Lock()
+
+
+def _key(request: Request, login: str) -> str:
+    """Считаем по паре «кто стучится» и «в какую дверь».
+
+    Только по логину — и чужую учётку можно запереть, стуча в неё наугад.
+    Только по адресу — и перебор идёт из любой сети с одного адреса
+    по всем логинам сразу.
+    """
+    client = request.client.host if request.client else "?"
+    return f"{client}|{login.strip().lower()}"
+
+
+def too_many(request: Request, login: str) -> int:
+    """Сколько секунд ждать. Ноль — можно пробовать.
+
+    Счётчик живёт в памяти процесса: перезапуск сервера его обнуляет, и это
+    осознанное упрощение — от перебора защищает пауза, а не вечная память
+    о попытках. Когда рабочих процессов станет несколько (9B), счётчик
+    переедет в базу вместе с очередью.
+    """
+    now = time.monotonic()
+    with _attempts_lock:
+        recent = [at for at in _attempts.get(_key(request, login), []) if now - at < LOCKOUT_SECONDS]
+        _attempts[_key(request, login)] = recent
+        if len(recent) < MAX_ATTEMPTS:
+            return 0
+        return int(LOCKOUT_SECONDS - (now - recent[0])) + 1
+
+
+def note_failure(request: Request, login: str) -> None:
+    with _attempts_lock:
+        _attempts.setdefault(_key(request, login), []).append(time.monotonic())
+
+
+def note_success(request: Request, login: str) -> None:
+    with _attempts_lock:
+        _attempts.pop(_key(request, login), None)

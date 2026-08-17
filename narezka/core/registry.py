@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from narezka.core import sources
 from narezka.core.artifacts import Artifact
 from narezka.core.media import MEDIA_SUFFIXES
 from narezka.core.paths import VideoPaths, video_paths
@@ -141,6 +142,8 @@ def register(
     url: str | None = None,
     file: Path | None = None,
     title: str | None = None,
+    allowed_hosts: tuple[str, ...] | list[str] = (),
+    allow_local_paths: bool = True,
 ) -> Registration:
     """Заводит видео по ссылке или по локальному файлу.
 
@@ -154,6 +157,10 @@ def register(
     name = clean_title(title)
 
     if file is not None:
+        if not allow_local_paths:
+            # На сервере это чтение его собственного диска: путь приходит
+            # от постороннего, а читает его процесс с правами сервиса.
+            raise RegistrationError("файл нужно загрузить, а не указать путём на сервере")
         source = Path(file).expanduser()
         if not source.is_file():
             raise RegistrationError(f"файл не найден: {source}")
@@ -164,6 +171,10 @@ def register(
         address = url.strip()
         if not address:
             raise RegistrationError("пустая ссылка")
+        try:
+            address = sources.check(address, allowed_hosts=allowed_hosts)
+        except sources.SourceError as exc:
+            raise RegistrationError(str(exc)) from exc
         video_id = video_id_for_url(address)
         origin = {"type": "url", "url": address}
 

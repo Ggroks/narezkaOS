@@ -303,6 +303,25 @@ class CompilationConfig(BaseModel):
 
 
 
+class SourcesConfig(BaseModel):
+    """Откуда можно брать записи (§66, §68).
+
+    Проверка на внутренние адреса идёт всегда и настройки не требует:
+    ссылка внутрь сети сервера не нужна никому и никогда. А вот список
+    площадок пуст по умолчанию — на своей машине ограничивать человека
+    в источниках незачем, для сервиса он включается.
+    """
+
+    allowed_hosts: list[str] = []
+    #: Принимать ли путь к файлу на самой машине. Для местной работы это
+    #: удобство, для сервера — чтение чужого диска, поэтому при включённом
+    #: входе запрещается независимо от этой настройки.
+    allow_local_paths: bool = True
+    #: Потолок загружаемого файла. Пятичасовая запись занимает 6.6 ГБ,
+    #: поэтому десять — не щедрость, а необходимый минимум.
+    max_upload_gb: float = Field(default=10.0, gt=0, le=200)
+
+
 class QueueConfig(BaseModel):
     """Очередь обработки (§9A, §64).
 
@@ -343,6 +362,7 @@ class Config(BaseModel):
     default_project: str = "default"
     auth: AuthConfig = AuthConfig()
     queue: QueueConfig = QueueConfig()
+    sources: SourcesConfig = SourcesConfig()
 
     download: DownloadConfig = Field(default_factory=DownloadConfig)
     audio: AudioConfig = Field(default_factory=AudioConfig)

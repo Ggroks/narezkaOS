@@ -166,7 +166,12 @@ export function App() {
         {videoId ? (
           <VideoDetail videoId={videoId} onBack={() => navigate(null)} />
         ) : (
-          <ProjectCatalog projects={videos} onOpen={(id) => navigate(id)} onChanged={refresh} />
+          <ProjectCatalog
+            projects={videos}
+            onOpen={(id) => navigate(id)}
+            onChanged={refresh}
+            local={who.user?.local ?? true}
+          />
         )}
       </main>
     </div>

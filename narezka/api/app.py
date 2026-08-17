@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import uuid
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from pathlib import Path
@@ -222,19 +223,28 @@ def whoami(request: Request) -> dict[str, Any]:
 
 
 @app.post("/api/auth/login")
-def login(payload: Credentials) -> JSONResponse:
+def login(payload: Credentials, request: Request) -> JSONResponse:
     config, _ = _config()
     if not config.auth.enabled:
         return JSONResponse(auth.describe(accounts.LOCAL_USER, config))
 
+    wait = auth.too_many(request, payload.login)
+    if wait:
+        raise HTTPException(
+            status_code=429,
+            detail=f"слишком много попыток, попробуйте через {wait // 60 + 1} мин",
+        )
+
     with db.connect(config.storage_root) as connection:
         user = accounts.verify(connection, login=payload.login, password=payload.password)
         if user is None:
+            auth.note_failure(request, payload.login)
             # Один ответ на «нет такого логина» и «неверный пароль»: разница
             # между ними — готовый список зарегистрированных.
             raise HTTPException(status_code=401, detail="неверный логин или пароль")
         token = accounts.open_session(connection, user)
 
+    auth.note_success(request, payload.login)
     log.info("вход: %s", user.login)
     response = JSONResponse(auth.describe(user, config))
     _set_session(response, token, config)
@@ -456,6 +466,11 @@ def add_video(payload: AddVideo) -> dict[str, Any]:
             url=payload.url,
             file=Path(payload.file) if payload.file else None,
             title=payload.title,
+            allowed_hosts=config.sources.allowed_hosts,
+            # На сервере путь к файлу — это чтение его же диска чужими
+            # руками. Разрешено только там, где входа нет вовсе, то есть
+            # на своей машине.
+            allow_local_paths=config.sources.allow_local_paths and not config.auth.enabled,
         )
     except registry.RegistrationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -480,6 +495,85 @@ def rename_video(video_id: str, payload: RenameVideo, project: str = "default") 
     except registry.RegistrationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return _summary(config, _workspace(project), video_id)
+
+
+@app.post("/api/videos/upload")
+async def upload(
+    request: Request,
+    name: str = Query(description="Имя файла с расширением"),
+    title: str | None = Query(default=None, max_length=registry.TITLE_LIMIT),
+    project: str = "default",
+) -> dict[str, Any]:
+    """Приём записи файлом.
+
+    Тело запроса — сам файл, без multipart. Причины две: multipart требует
+    отдельной зависимости, а главное — он разбирает поток на части ради
+    полей формы, которых здесь нет. Запись на 6.6 ГБ пишется на диск
+    кусками по мере прихода и никогда не держится в памяти целиком.
+
+    Имя файла берётся только ради расширения: по нему стадии понимают,
+    видео это или звук. Всё остальное в имени отбрасывается — путь,
+    пришедший от постороннего, не должен участвовать в построении пути
+    на диске.
+    """
+    config, _ = _config()
+    safe = Path(name).name
+    suffix = Path(safe).suffix.lower()
+    if not suffix:
+        raise HTTPException(status_code=400, detail="у файла нет расширения")
+
+    limit = int(config.sources.max_upload_gb * 1024**3)
+    space = _workspace(project)
+    incoming = config.storage_root / "uploads" / space
+    incoming.mkdir(parents=True, exist_ok=True)
+
+    target = incoming / f"{uuid.uuid4().hex}{suffix}"
+    written = 0
+    try:
+        with target.open("wb") as handle:
+            async for chunk in request.stream():
+                written += len(chunk)
+                if written > limit:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"файл больше {config.sources.max_upload_gb:g} ГБ",
+                    )
+                handle.write(chunk)
+    except HTTPException:
+        target.unlink(missing_ok=True)
+        raise
+    except Exception as exc:  # noqa: BLE001
+        target.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=f"не удалось принять файл: {exc}") from exc
+
+    if written == 0:
+        target.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail="пустой файл")
+
+    try:
+        result = registry.register(
+            storage_root=config.storage_root,
+            project=space,
+            file=target,
+            title=title,
+            allow_local_paths=True,  # файл уже у нас, путь свой
+        )
+    except registry.RegistrationError as exc:
+        target.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # Принятый файл лежит в хранилище записи ссылкой или копией; временный
+    # оригинал больше не нужен, а место он занимает настоящее.
+    if result.placement in ("жёсткая ссылка", "копия"):
+        target.unlink(missing_ok=True)
+
+    log.info("принят файл %s (%.2f ГБ) → %s", safe, written / 1024**3, result.video_id)
+    return {
+        "video_id": result.video_id,
+        "created": result.created,
+        "title": result.title,
+        "size_bytes": written,
+    }
 
 
 @app.get("/api/videos/{video_id}")

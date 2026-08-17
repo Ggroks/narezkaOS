@@ -316,3 +316,29 @@
 .login-form button { margin-block-start: var(--gap-xs); }
 
 .account { display: flex; align-items: center; gap: var(--gap-sm); }
+
+/* Ход отправки файла: без него запись на шесть гигабайт выглядит зависшей. */
+.upload-progress { display: flex; flex-direction: column; gap: 5px; margin-block-start: 6px; }
+
+/* Родная кнопка выбора файла приходит белой и в тёмной теме выглядит
+   заплаткой. Красим её как обычную кнопку — это единственный элемент,
+   который браузер рисует сам. */
+input[type="file"] {
+  font: inherit;
+  font-size: 14px;
+  color: var(--text-dim);
+}
+input[type="file"]::file-selector-button {
+  margin-inline-end: 10px;
+  padding: 7px 12px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-inner);
+  cursor: pointer;
+  transition: background var(--fast) var(--ease);
+}
+input[type="file"]::file-selector-button:hover { background: var(--surface-3); }

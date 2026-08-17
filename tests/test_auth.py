@@ -203,3 +203,101 @@ def test_workspace_is_safe_for_the_filesystem(tmp_path: Path) -> None:
     for user in (first, second):
         assert user.workspace.replace("-", "").isalnum(), user.workspace
     assert first.workspace != second.workspace
+
+
+# --- перебор паролей -------------------------------------------------------
+
+
+def test_brute_force_gets_locked_out(guarded) -> None:
+    """Пять попыток человек, забывший раскладку, укладывается; перебор
+    словаря при паузе в четверть часа становится делом на годы."""
+    from narezka.api import auth as api_auth
+
+    api_auth._attempts.clear()
+    for _ in range(api_auth.MAX_ATTEMPTS):
+        assert guarded.post(
+            "/api/auth/login", json={"login": "ivan", "password": "мимо"}
+        ).status_code == 401
+
+    blocked = guarded.post("/api/auth/login", json={"login": "ivan", "password": "мимо"})
+    assert blocked.status_code == 429
+    # Даже верный пароль теперь ждёт: иначе счётчик обходится одной удачей.
+    assert guarded.post(
+        "/api/auth/login", json={"login": "ivan", "password": "parol-ivana"}
+    ).status_code == 429
+    api_auth._attempts.clear()
+
+
+def test_lockout_does_not_touch_the_neighbour(guarded) -> None:
+    """Стуча в чужую учётку, нельзя запереть её хозяина: счёт ведётся
+    по паре «откуда стучатся» и «в какую дверь»."""
+    from narezka.api import auth as api_auth
+
+    api_auth._attempts.clear()
+    for _ in range(api_auth.MAX_ATTEMPTS):
+        guarded.post("/api/auth/login", json={"login": "ivan", "password": "мимо"})
+
+    assert guarded.post(
+        "/api/auth/login", json={"login": "petr", "password": "parol-petra"}
+    ).status_code == 200
+    api_auth._attempts.clear()
+
+
+def test_successful_login_clears_the_counter(guarded) -> None:
+    from narezka.api import auth as api_auth
+
+    api_auth._attempts.clear()
+    for _ in range(api_auth.MAX_ATTEMPTS - 1):
+        guarded.post("/api/auth/login", json={"login": "ivan", "password": "мимо"})
+    assert guarded.post(
+        "/api/auth/login", json={"login": "ivan", "password": "parol-ivana"}
+    ).status_code == 200
+
+    for _ in range(api_auth.MAX_ATTEMPTS - 1):
+        assert guarded.post(
+            "/api/auth/login", json={"login": "ivan", "password": "мимо"}
+        ).status_code == 401
+    api_auth._attempts.clear()
+
+
+# --- загрузка файла --------------------------------------------------------
+
+
+def test_upload_accepts_a_file_and_registers_it(guarded, tmp_path: Path) -> None:
+    enter(guarded, "ivan", "parol-ivana")
+    payload = b"\x00" * 4096
+    body = guarded.post("/api/videos/upload?name=stream.mp4&title=Загруженный", content=payload)
+    assert body.status_code == 200, body.text
+    assert body.json()["size_bytes"] == len(payload)
+    assert [v["title"] for v in guarded.get("/api/videos").json()] == ["Загруженный"]
+
+
+def test_upload_keeps_only_the_extension_from_the_name(guarded, tmp_path: Path) -> None:
+    """Имя приходит от постороннего и в путь на диске попадать не должно."""
+    enter(guarded, "ivan", "parol-ivana")
+    body = guarded.post("/api/videos/upload?name=../../побег.mp4", content=b"\x00" * 2048)
+    assert body.status_code == 200
+    stored = tmp_path / "projects" / "ivan" / "videos" / body.json()["video_id"] / "source"
+    assert [p.suffix for p in stored.iterdir()] == [".mp4"]
+    assert not any("побег" in p.name for p in stored.iterdir())
+
+
+def test_upload_without_extension_is_refused(guarded) -> None:
+    enter(guarded, "ivan", "parol-ivana")
+    assert guarded.post("/api/videos/upload?name=stream", content=b"\x00" * 16).status_code == 400
+
+
+def test_empty_upload_is_refused(guarded) -> None:
+    enter(guarded, "ivan", "parol-ivana")
+    assert guarded.post("/api/videos/upload?name=stream.mp4", content=b"").status_code == 400
+
+
+def test_upload_needs_login(guarded) -> None:
+    assert guarded.post("/api/videos/upload?name=x.mp4", content=b"\x00").status_code == 401
+
+
+def test_server_refuses_a_path_when_login_is_on(guarded) -> None:
+    """Главное отличие сервера от своей машины: путь читать нельзя."""
+    enter(guarded, "ivan", "parol-ivana")
+    response = guarded.post("/api/videos", json={"file": "/etc/passwd"})
+    assert response.status_code == 400 and "загрузить" in response.json()["detail"]

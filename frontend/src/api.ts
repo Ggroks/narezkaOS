@@ -573,6 +573,46 @@ export function subscribeToJob(
  * «Сегодня» и «вчера» вместо числа: в каталоге, где работа идёт каждый день,
  * дата нужна, чтобы отличить свежее от старого, а не чтобы её прочесть.
  */
+/**
+ * Загрузка записи файлом.
+ *
+ * Через XMLHttpRequest, а не fetch: у fetch нет хода отправки, а запись
+ * на шесть гигабайт без полосы выглядит зависшей. Тело — сам файл, без
+ * multipart: браузер отдаёт его потоком, сервер потоком пишет на диск,
+ * и ни у кого он не лежит в памяти целиком.
+ */
+export function uploadVideo(
+  file: File,
+  title: string | undefined,
+  onProgress: (share: number) => void,
+): Promise<{ video_id: string; title: string }> {
+  return new Promise((resolve, reject) => {
+    const query = new URLSearchParams({ name: file.name });
+    if (title) query.set("title", title);
+
+    const request = new XMLHttpRequest();
+    request.open("POST", `/api/videos/upload?${query}`);
+    request.upload.onprogress = (event) => {
+      if (event.lengthComputable) onProgress(event.loaded / event.total);
+    };
+    request.onload = () => {
+      if (request.status >= 200 && request.status < 300) {
+        resolve(JSON.parse(request.responseText));
+        return;
+      }
+      let detail = `${request.status}`;
+      try {
+        detail = JSON.parse(request.responseText).detail ?? detail;
+      } catch {
+        /* тело может быть не JSON — оставляем код */
+      }
+      reject(new Error(detail));
+    };
+    request.onerror = () => reject(new Error("не удалось отправить файл"));
+    request.send(file);
+  });
+}
+
 export function formatDate(iso: string | null | undefined): string {
   if (!iso) return "";
   const date = new Date(iso);

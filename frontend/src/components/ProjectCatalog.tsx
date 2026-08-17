@@ -3,6 +3,7 @@ import {
   api,
   formatDate,
   formatDuration,
+  uploadVideo,
   type ProjectState,
   type VideoSummary,
 } from "../api";
@@ -29,6 +30,13 @@ type Props = {
   projects: VideoSummary[];
   onOpen: (videoId: string) => void;
   onChanged: () => void;
+  /**
+   * Своя машина или сервер. От этого зависит, как берётся файл: у себя
+   * достаточно указать путь — программа сошлётся на файл там, где он лежит,
+   * и не займёт второй раз гигабайты. На сервере пути нет, и файл надо
+   * отправить по-настоящему.
+   */
+  local: boolean;
 };
 
 const STATE_LABEL: Record<ProjectState, string> = {
@@ -49,7 +57,7 @@ const STATE_BADGE: Record<ProjectState, string> = {
   failed: "bad",
 };
 
-export function ProjectCatalog({ projects, onOpen, onChanged }: Props) {
+export function ProjectCatalog({ projects, onOpen, onChanged, local }: Props) {
   const [dialog, setDialog] = useState<null | "url" | "file">(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -121,8 +129,11 @@ export function ProjectCatalog({ projects, onOpen, onChanged }: Props) {
       {dialog && (
         <NewProject
           initial={dialog}
+          local={local}
           onCancel={() => setDialog(null)}
           onCreate={create}
+          onOpen={onOpen}
+          onChanged={onChanged}
         />
       )}
     </div>
@@ -340,12 +351,18 @@ function ProjectCard({
 /** Диалог создания: название и один источник — ссылка либо файл. */
 function NewProject({
   initial,
+  local,
   onCancel,
   onCreate,
+  onOpen,
+  onChanged,
 }: {
   initial: "url" | "file";
+  local: boolean;
   onCancel: () => void;
   onCreate: (payload: { url?: string; file?: string; title?: string }) => Promise<void>;
+  onOpen: (videoId: string) => void;
+  onChanged: () => void;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const nameRef = useRef<HTMLInputElement>(null);
@@ -353,6 +370,8 @@ function NewProject({
   const [title, setTitle] = useState("");
   const [url, setUrl] = useState("");
   const [file, setFile] = useState("");
+  const [picked, setPicked] = useState<File | null>(null);
+  const [sent, setSent] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -367,16 +386,25 @@ function NewProject({
     nameRef.current?.focus();
   }, []);
 
-  const value = source === "url" ? url.trim() : file.trim();
+  const value =
+    source === "url" ? url.trim() : local ? file.trim() : picked ? picked.name : "";
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     if (!value) return;
     setBusy(true);
     setError(null);
+    const name = title.trim() || undefined;
     try {
-      const name = title.trim() || undefined;
-      await onCreate(source === "url" ? { url: value, title: name } : { file: value, title: name });
+      if (source === "file" && !local && picked) {
+        const added = await uploadVideo(picked, name, setSent);
+        onChanged();
+        onOpen(added.video_id);
+        return;
+      }
+      await onCreate(
+        source === "url" ? { url: value, title: name } : { file: value, title: name },
+      );
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : String(exc));
       setBusy(false);
@@ -444,16 +472,15 @@ function NewProject({
               onChange={(event) => setUrl(event.target.value)}
             />
           </label>
-        ) : (
+        ) : local ? (
           <label className="sheet-field">
             <span className="sheet-label">
               Путь к файлу
               <Hint align="start">
                 Путь целиком, например /home/имя/видео/стрим.mp4. Именно путь,
-                а не кнопка выбора: браузер её настоящий путь не выдаёт, а
-                перекладывать через него запись на десятки гигабайт — часы
-                ожидания там, где хватает одной строки. Файл остаётся на
-                месте, программа только ссылается на него.
+                а не кнопка выбора: программа сошлётся на файл там, где он
+                лежит, и не займёт вторые гигабайты. Браузер настоящий путь
+                не выдаёт, поэтому строкой.
               </Hint>
             </span>
             <input
@@ -461,6 +488,35 @@ function NewProject({
               value={file}
               onChange={(event) => setFile(event.target.value)}
             />
+          </label>
+        ) : (
+          <label className="sheet-field">
+            <span className="sheet-label">
+              Файл записи
+              <Hint align="start">
+                Файл отправится на сервер целиком, поэтому многочасовая
+                запись займёт время. Если она есть на площадке, ссылкой
+                выйдет быстрее: сервер скачает её сам, минуя ваш канал.
+              </Hint>
+            </span>
+            <input
+              type="file"
+              accept="video/*,audio/*"
+              onChange={(event) => setPicked(event.target.files?.[0] ?? null)}
+            />
+            {picked && (
+              <span className="choice-hint tnum">
+                {(picked.size / 1024 ** 3).toFixed(2)} ГБ
+              </span>
+            )}
+            {busy && (
+              <span className="upload-progress">
+                <span className="progress">
+                  <span style={{ inlineSize: `${Math.max(sent * 100, 2)}%` }} />
+                </span>
+                <span className="small dim tnum">отправлено {Math.round(sent * 100)}%</span>
+              </span>
+            )}
           </label>
         )}
 

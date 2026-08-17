@@ -100,3 +100,59 @@ def test_unscored_clips_do_not_crash():
     """Без оценки модели момент всё равно можно поставить в компиляцию."""
     raw = [{"index": 0, "start": 0, "end": 60, "duration": 60}]
     assert len(arrange(raw, 600).parts) == 1
+
+
+def test_condense_keeps_the_required_pieces():
+    """Обязательные куски остаются целиком: ради них эпизод и берут."""
+    from narezka.core.compilation import condense
+
+    pieces = condense(0, 2400, [(100, 200), (900, 1000)], 1200)
+    covered = [(a, b) for a, b in pieces]
+
+    assert any(a <= 100 and b >= 200 for a, b in covered)
+    assert any(a <= 900 and b >= 1000 for a, b in covered)
+
+
+def test_condense_leaves_connective_tissue():
+    """Связки сокращаются, а не исчезают.
+
+    Выкинув всё между яркими местами, получим ту же подборку моментов, от
+    которой сюжетная нарезка и отличается.
+    """
+    from narezka.core.compilation import condense
+
+    pieces = condense(0, 2400, [(100, 200), (1800, 1900)], 1200)
+    covered = sum(b - a for a, b in pieces)
+
+    assert covered > 300, "остались только обязательные куски — это уже подборка"
+
+
+def test_condense_never_cuts_more_than_half():
+    """Больше половины — это уже не уплотнение, а пересказ."""
+    from narezka.core.compilation import condense
+
+    pieces = condense(0, 2400, [(100, 200)], 60)
+    assert sum(b - a for a, b in pieces) >= 1200
+
+
+def test_condense_merges_touching_pieces():
+    """Рез там, где ничего не вырезано, — лишний шов в звуке."""
+    from narezka.core.compilation import condense
+
+    pieces = condense(0, 2400, [(100, 200), (900, 1000), (1800, 1900)], 1200)
+    for (_, end), (start, _) in zip(pieces, pieces[1:], strict=False):
+        assert start > end + 0.04, f"куски стыкуются: {end} и {start}"
+
+
+def test_condense_without_required_pieces_takes_the_beginning():
+    """Без обязательных кусков берём начало: там завязка."""
+    from narezka.core.compilation import condense
+
+    pieces = condense(100, 2500, [], 600)
+    assert pieces[0][0] == 100
+
+
+def test_condense_shorter_than_target_stays_whole():
+    from narezka.core.compilation import condense
+
+    assert condense(0, 600, [(10, 20)], 1200) == [(0, 600)]

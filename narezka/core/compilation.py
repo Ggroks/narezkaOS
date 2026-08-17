@@ -157,3 +157,117 @@ def arrange(clips: list[dict[str, Any]], target_seconds: float) -> Compilation:
         parts.append(Part(clip, role, at))
         at += _duration(clip)
     return Compilation(parts)
+
+
+#: Доля эпизода, которую можно выбросить при уплотнении. Больше половины —
+#: это уже не уплотнение, а пересказ: связки теряются, и зритель перестаёт
+#: понимать, как одно вытекает из другого.
+MAX_TRIM_SHARE = 0.5
+
+#: Наименьший кусок, который имеет смысл оставлять. Отрезки по паре секунд
+#: превращают ролик в мельтешение, даже если каждый из них сам по себе хорош.
+MIN_PIECE = 8.0
+
+
+def condense(
+    episode_start: float,
+    episode_end: float,
+    keep: list[tuple[float, float]],
+    target_seconds: float,
+) -> list[tuple[float, float]]:
+    """Уплотняет эпизод до нужной длительности, сохраняя порядок.
+
+    `keep` — отрезки, которые стоит оставить обязательно: найденные моменты,
+    оживление чата, места со смехом. Всё остальное внутри эпизода считается
+    связкой и режется первым.
+
+    **Почему не выбрасываем связки целиком.** Сюжет держится на переходах:
+    выкинув всё между яркими местами, получим ту же подборку моментов, от
+    которой сюжетная нарезка и отличается. Поэтому связки сокращаются, а не
+    исчезают: между сохранёнными кусками остаётся то, что их соединяет,
+    пока хватает бюджета.
+    """
+    total = episode_end - episode_start
+    if total <= 0:
+        return []
+    if target_seconds >= total:
+        return [(episode_start, episode_end)]
+
+    floor = total * (1.0 - MAX_TRIM_SHARE)
+    budget = max(target_seconds, floor)
+
+    # Обязательные куски внутри эпизода, слитые и упорядоченные.
+    inside = sorted(
+        (max(a, episode_start), min(b, episode_end))
+        for a, b in keep
+        if min(b, episode_end) - max(a, episode_start) >= MIN_PIECE
+    )
+    merged: list[list[float]] = []
+    for a, b in inside:
+        if merged and a <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], b)
+        else:
+            merged.append([a, b])
+
+    kept = sum(b - a for a, b in merged)
+    if not merged:
+        # Обязательных кусков нет — берём начало эпизода: у него есть завязка,
+        # а обрывать с середины значит лишить зрителя входа в историю.
+        return [(episode_start, episode_start + budget)]
+
+    # Оставшийся бюджет распределяется на связки между кусками поровну:
+    # предпочесть одну длинную связку нескольким коротким значило бы
+    # оборвать переходы в остальных местах.
+    gaps = []
+    previous = episode_start
+    for a, b in merged:
+        if a - previous > 0:
+            gaps.append((previous, a))
+        previous = b
+    if episode_end - previous > 0:
+        gaps.append((previous, episode_end))
+
+    spare = max(0.0, budget - kept)
+    pieces: list[tuple[float, float]] = [(a, b) for a, b in merged]
+
+    # Бюджет раздаётся связкам поровну, но короткая связка не может выбрать
+    # свою долю целиком — остаток от неё уходит остальным. Без перераспределения
+    # общая длительность недобирала до заданной: одна короткая связка забирала
+    # долю и возвращала её в никуда.
+    taken = {index: 0.0 for index in range(len(gaps))}
+    left = spare
+    pending = set(taken)
+    while left > 1e-6 and pending:
+        share = left / len(pending)
+        progressed = False
+        for index in sorted(pending):
+            a, b = gaps[index]
+            room = (b - a) - taken[index]
+            add = min(room, share)
+            if add > 1e-6:
+                taken[index] += add
+                left -= add
+                progressed = True
+            if (b - a) - taken[index] <= 1e-6:
+                pending.discard(index)
+        if not progressed:
+            break
+
+    trimmed_gaps = []
+    for index, (a, b) in enumerate(gaps):
+        length = taken[index]
+        if length >= MIN_PIECE:
+            # Связка берётся с конца: ближе к следующему куску, то есть
+            # к тому, ради чего она нужна.
+            trimmed_gaps.append((b - length, b))
+
+    # Соприкасающиеся куски склеиваются: рез там, где ничего не вырезано, —
+    # лишняя работа рендеру и лишний шов в звуке.
+    ordered_pieces = sorted(pieces + trimmed_gaps)
+    result: list[list[float]] = []
+    for a, b in ordered_pieces:
+        if result and a - result[-1][1] < 0.05:
+            result[-1][1] = max(result[-1][1], b)
+        else:
+            result.append([a, b])
+    return [(a, b) for a, b in result]

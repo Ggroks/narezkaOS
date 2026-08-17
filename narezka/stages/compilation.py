@@ -61,7 +61,11 @@ class CompilationStage(Stage):
 
     def config_slice(self, ctx: StageContext) -> dict[str, Any]:
         cfg = ctx.config.compilation
+        # Правка входит в ключ кэша: без этого стадия отдала бы прежний
+        # ролик после того, как человек подвинул границы.
+        edits = Artifact(ctx.paths.analysis / "compilation-edits.json")
         return {
+            "edits": edits.read_json() if edits.exists() else None,
             "story": cfg.story,
             "best": cfg.best,
             "target_minutes": cfg.target_minutes,
@@ -98,6 +102,17 @@ class CompilationStage(Stage):
 
         if not jobs:
             raise StageSkipped("собирать нечего")
+
+        # Правка границ человеком поверх расчёта. Расчёт не выбрасывается —
+        # он остаётся в плане, и «вернуть расчётные» это удаление правки,
+        # а не пересчёт. Тот же приём, что у настроек кадрирования.
+        edits = self._edits(ctx)
+        if edits:
+            jobs = [
+                (name, edits.get(name, pieces), {**plan, "edited": name in edits})
+                for name, pieces, plan in jobs
+            ]
+            ctx.log.info("правленых вручную: %d", sum(1 for n, _, _ in jobs if n in edits))
 
         ctx.log.info("заданий: %d", len(jobs))
         source = find_source(ctx.paths.source).resolve()
@@ -217,6 +232,23 @@ class CompilationStage(Stage):
         marks = chap.parse_marks(content, total)
         ctx.log.info("глав размечено: %d", len(marks))
         return marks
+
+    @staticmethod
+    def _edits(ctx: StageContext) -> dict[str, list]:
+        """Правленые вручную границы кусков, если они есть."""
+        artifact = Artifact(ctx.paths.analysis / "compilation-edits.json")
+        if not artifact.exists():
+            return {}
+        try:
+            stored = artifact.read_json()
+        except ValueError:
+            ctx.log.warning("правка границ не читается — берутся расчётные")
+            return {}
+        return {
+            name: [(float(p["start"]), float(p["end"])) for p in pieces]
+            for name, pieces in stored.items()
+            if isinstance(pieces, list) and pieces
+        }
 
     @staticmethod
     def _titles(ctx: StageContext) -> dict[int, str]:

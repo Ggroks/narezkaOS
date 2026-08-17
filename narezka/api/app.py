@@ -308,6 +308,50 @@ def timeline(video_id: str, buckets: int = Query(600, ge=60, le=2000)) -> dict[s
     return {"duration": duration, "buckets": buckets, "chat": chat, "moments": moments}
 
 
+class PiecesPayload(BaseModel):
+    """Правленые границы кусков одной нарезки."""
+
+    file: str
+    pieces: list[dict[str, float]]
+
+
+@app.put("/api/videos/{video_id}/compilation/pieces")
+def set_pieces(video_id: str, payload: PiecesPayload, project: str = "default") -> dict[str, Any]:
+    """Сохраняет правку границ поверх расчёта, не затирая его.
+
+    Расчётный план остаётся на месте: правка должна быть обратимой, а
+    пересчёт — возможным. Тот же приём, что у настроек кадрирования.
+    """
+    ctx = _context(video_id, project, None)
+    cleaned = []
+    for item in payload.pieces:
+        start, end = float(item.get("start", 0)), float(item.get("end", 0))
+        if end - start > 0.5:
+            cleaned.append({"start": round(start, 3), "end": round(end, 3)})
+    if not cleaned:
+        raise HTTPException(status_code=400, detail="ни одного куска длиннее полусекунды")
+
+    cleaned.sort(key=lambda p: p["start"])
+    artifact = Artifact(ctx.paths.analysis / "compilation-edits.json")
+    stored = artifact.read_json() if artifact.exists() else {}
+    stored[payload.file] = cleaned
+    artifact.write_json(stored)
+    total = sum(p["end"] - p["start"] for p in cleaned)
+    return {"file": payload.file, "pieces": len(cleaned), "duration": round(total, 2)}
+
+
+@app.delete("/api/videos/{video_id}/compilation/pieces")
+def reset_pieces(video_id: str, file: str, project: str = "default") -> dict[str, Any]:
+    """Возвращает расчётные границы: правка стирается, план не трогался."""
+    ctx = _context(video_id, project, None)
+    artifact = Artifact(ctx.paths.analysis / "compilation-edits.json")
+    if artifact.exists():
+        stored = artifact.read_json()
+        stored.pop(file, None)
+        artifact.write_json(stored)
+    return {"file": file, "restored": True}
+
+
 @app.get("/api/videos/{video_id}/compilations")
 def compilations(video_id: str, project: str = "default") -> dict[str, Any]:
     """Собранные длинные нарезки с описанием, из чего они сделаны."""

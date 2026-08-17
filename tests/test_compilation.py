@@ -193,3 +193,62 @@ def test_nothing_selected_is_reported_not_guessed():
 
     reason = CompilationStage().check_available(Ctx())
     assert reason and "не выбран" in reason
+
+
+def _edits_ctx(tmp_path, stored=None):
+    import json
+
+    from narezka.core.config import load_config
+    from narezka.core.device import DeviceInfo
+    from narezka.core.logging import get_logger
+    from narezka.core.paths import video_paths
+    from narezka.core.stage import StageContext
+
+    paths = video_paths(tmp_path, "default", "v")
+    paths.ensure()
+    if stored is not None:
+        (paths.analysis / "compilation-edits.json").write_text(
+            json.dumps(stored), encoding="utf-8"
+        )
+    return StageContext(
+        project_id="default", video_id="v", paths=paths,
+        config=load_config().model_copy(update={"storage_root": tmp_path}),
+        device=DeviceInfo(kind="cpu", name="t"), log=get_logger("t"),
+    )
+
+
+def test_manual_edits_replace_computed_pieces(tmp_path):
+    """Правка человека берётся вместо расчёта."""
+    from narezka.stages.compilation import CompilationStage
+
+    ctx = _edits_ctx(tmp_path, {"a.mp4": [{"start": 10, "end": 70}]})
+    edits = CompilationStage._edits(ctx)
+
+    assert edits["a.mp4"] == [(10.0, 70.0)]
+
+
+def test_no_edits_means_computed_pieces(tmp_path):
+    from narezka.stages.compilation import CompilationStage
+
+    assert CompilationStage._edits(_edits_ctx(tmp_path)) == {}
+
+
+def test_broken_edits_fall_back_to_computed(tmp_path):
+    """Испорченный файл правок не должен ронять сборку целиком."""
+    from narezka.stages.compilation import CompilationStage
+
+    ctx = _edits_ctx(tmp_path)
+    (ctx.paths.analysis / "compilation-edits.json").write_text("не json", encoding="utf-8")
+
+    assert CompilationStage._edits(ctx) == {}
+
+
+def test_edits_change_the_cache_key(tmp_path):
+    """Иначе стадия отдала бы прежний ролик после правки границ — молча."""
+    from narezka.stages.compilation import CompilationStage
+
+    plain = CompilationStage().config_slice(_edits_ctx(tmp_path))
+    edited = CompilationStage().config_slice(
+        _edits_ctx(tmp_path / "other", {"a.mp4": [{"start": 1, "end": 9}]})
+    )
+    assert plain != edited

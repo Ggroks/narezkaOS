@@ -1,0 +1,239 @@
+/* Среда монтажа: вкладки, работа, панель стадий.
+
+   Скругления концентричны, отступы кратны четырём, тени только у того, что
+   действительно висит над содержимым. Разделение идёт контрастом поверхностей
+   и линией в один пиксель — это то, что отличает выверенный интерфейс от
+   собранного наспех. */
+
+.workspace {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-lg);
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: var(--gap-lg) var(--gap-lg) var(--gap-xl);
+}
+
+/* ── Шапка ─────────────────────────────────────────────────────────────── */
+
+.workspace-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--gap);
+  flex-wrap: wrap;
+}
+
+.workspace-title { flex: 1; min-width: 0; }
+.workspace-title h1 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  /* Плотнее обычного: крупный текст с обычным трекингом выглядит рыхлым. */
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+}
+.workspace-title p { margin: 3px 0 0; }
+
+.workspace-actions { display: flex; align-items: center; gap: var(--gap-sm); }
+
+/* ── Вкладки ───────────────────────────────────────────────────────────── */
+
+.tabs {
+  display: flex;
+  gap: var(--gap-xs);
+  padding: var(--gap-xs);
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  /* Скругление контейнера больше внутреннего ровно на его отступ. */
+  border-radius: calc(var(--radius-inner) + var(--gap-xs));
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.tabs::-webkit-scrollbar { display: none; }
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  padding: 8px 14px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-dim);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-inner);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color var(--fast) var(--ease), background var(--fast) var(--ease);
+}
+.tab:hover:not(:disabled) { color: var(--text); background: var(--surface-2); }
+
+/* Текущая вкладка — заливкой поверхности, а не акцентом: акцент на экране
+   один, и он принадлежит главному действию, а не навигации. */
+.tab.current {
+  color: var(--text);
+  background: var(--surface-3);
+}
+.tab.blocked { opacity: 0.4; cursor: not-allowed; }
+
+.tab-count {
+  padding: 1px 6px;
+  font-size: 11px;
+  color: var(--text-faint);
+  background: var(--bg);
+  border-radius: var(--radius-pill);
+}
+.tab.current .tab-count { color: var(--text-dim); }
+
+/* ── Раскладка работы и стадий ─────────────────────────────────────────── */
+
+.workspace-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--gap-lg);
+  align-items: start;
+}
+.workspace.with-stages .workspace-body {
+  grid-template-columns: minmax(0, 1fr) 300px;
+}
+
+.workspace-main { display: flex; flex-direction: column; gap: var(--gap-lg); min-width: 0; }
+
+.workspace-stages {
+  position: sticky;
+  top: var(--gap-lg);
+  padding: var(--pad);
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+}
+
+@media (max-width: 1100px) {
+  .workspace.with-stages .workspace-body { grid-template-columns: minmax(0, 1fr); }
+  .workspace-stages { position: static; }
+}
+
+/* ── Значок пояснения ──────────────────────────────────────────────────── */
+
+.hint { position: relative; display: inline-flex; margin-left: 6px; }
+
+.hint-mark {
+  display: grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  font-family: Georgia, serif;
+  font-size: 11px;
+  font-style: italic;
+  line-height: 1;
+  color: var(--text-faint);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  cursor: help;
+  transition: color var(--fast) var(--ease), border-color var(--fast) var(--ease);
+}
+.hint-mark:hover, .hint-mark:focus-visible { color: var(--text); border-color: var(--text-faint); }
+
+.hint-body {
+  position: absolute;
+  z-index: 30;
+  left: 50%;
+  width: max-content;
+  max-width: 260px;
+  padding: 9px 11px;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+  color: var(--text);
+  text-align: left;
+  white-space: normal;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-inner);
+  box-shadow: var(--shadow-float);
+  transform: translateX(-50%);
+  pointer-events: none;
+  animation: hint-in 120ms var(--ease);
+}
+.hint-body.bottom { top: calc(100% + 7px); }
+.hint-body.top { bottom: calc(100% + 7px); }
+
+@keyframes hint-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(-3px); }
+  to   { opacity: 1; transform: translateX(-50%); }
+}
+
+/* ── Строка настройки ──────────────────────────────────────────────────── */
+
+.field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap);
+  padding: 9px 0;
+  /* Разделитель между настройками, но не после последней. */
+  border-bottom: 1px solid var(--border-soft);
+}
+.field:last-child { border-bottom: 0; }
+
+.field-label {
+  display: flex;
+  align-items: center;
+  font-size: 14px;
+  color: var(--text);
+}
+.field-control { display: flex; align-items: center; gap: var(--gap-sm); flex: none; }
+
+/* Группа настроек: заголовок мелкий и приглушённый — он ориентир,
+   а не содержание. */
+.group { display: flex; flex-direction: column; }
+.group-title {
+  margin: var(--gap-lg) 0 var(--gap-xs);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.group:first-child .group-title { margin-top: 0; }
+
+button.ghost {
+  color: var(--text-dim);
+  background: transparent;
+  border-color: transparent;
+}
+button.ghost:hover:not(:disabled) { color: var(--text); background: var(--surface-2); }
+
+/* ── Панель хода работы ────────────────────────────────────────────────── */
+
+.stages-panel h3 { margin: 0 0 var(--gap) 0; font-size: 15px; font-weight: 600; }
+
+/* Строка стадии в узкой колонке: название, состояние, время. Сетка, а не
+   поток, — иначе бейдж наезжает на текст, как только название длиннее. */
+.workspace-stages .stage {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: var(--gap-xs) var(--gap-sm);
+  padding: 9px 10px;
+  margin: 0 0 var(--gap-xs);
+  background: var(--surface-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-inner);
+}
+.workspace-stages .stage.active { border-color: var(--accent); background: var(--accent-soft); }
+
+.stage-name {
+  display: flex;
+  align-items: center;
+  font-size: 13px;
+  color: var(--text);
+  min-width: 0;
+}
+.stage-time { grid-column: 1; justify-self: start; }
+.workspace-stages .stage .badge { justify-self: end; }
+.workspace-stages .stage button.icon { grid-column: 2; justify-self: end; }

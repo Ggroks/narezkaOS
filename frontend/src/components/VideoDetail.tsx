@@ -15,6 +15,8 @@ import {
 import { FramingPanel } from "./FramingPanel";
 import { PerformanceView } from "./PerformanceView";
 import { EpisodesPanel } from "./EpisodesPanel";
+import { Hint } from "./Hint";
+import { Workspace, type Tab, type TabId } from "./Workspace";
 import { SettingsPanel } from "./SettingsPanel";
 import { PublishView } from "./PublishView";
 import { ReviewView } from "./ReviewView";
@@ -37,6 +39,25 @@ const OUTCOME_LABEL: Record<string, string> = {
   failed: "ошибка",
 };
 
+/** Человеческие названия стадий: внутренние имена пользователю знать неоткуда. */
+const STAGE_TITLES: Record<string, string> = {
+  download: "Загрузка записи",
+  probe: "Проверка файла",
+  extract_audio: "Извлечение звука",
+  chat: "Чтение чата",
+  transcribe: "Распознавание речи",
+  audiotags: "Разбор звука",
+  timeline: "Удаление пауз",
+  candidates: "Поиск моментов",
+  llm_select: "Оценка моментов",
+  episodes: "Поиск эпизодов",
+  facecam: "Поиск лица",
+  subtitles: "Субтитры",
+  metadata: "Тексты для публикации",
+  render: "Сборка роликов",
+  compilation: "Длинная нарезка",
+};
+
 export function VideoDetail({ videoId, onBack }: Props) {
   const [detail, setDetail] = useState<Detail | null>(null);
   const [transcript, setTranscript] = useState<Transcript | null>(null);
@@ -51,6 +72,16 @@ export function VideoDetail({ videoId, onBack }: Props) {
   const [encoders, setEncoders] = useState<EncodersInfo | null>(null);
   const [events, setEvents] = useState<JobEvent[]>([]);
   const [running, setRunning] = useState(false);
+  // Вкладка помнится между заходами: возвращаясь к проекту, человек
+  // продолжает с того места, где остановился, а не с начала.
+  const [tab, setTab] = useState<TabId>(
+    () => (localStorage.getItem("tab") as TabId) || "source",
+  );
+
+  useEffect(() => {
+    localStorage.setItem("tab", tab);
+  }, [tab]);
+
   const [error, setError] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -169,52 +200,40 @@ export function VideoDetail({ videoId, onBack }: Props) {
   const progress = running
     ? [...events].reverse().find((e) => e.event === "progress" && e.stage === activeStage)
     : undefined;
+  const tabs: Tab[] = [
+    { id: "source", label: "Исходник" },
+    { id: "moments", label: "Обзор моментов", count: reviewClips.length },
+    { id: "framing", label: "Кадрирование" },
+    {
+      id: "shorts",
+      label: "Короткие видео",
+      count: shorts?.files.length ?? 0,
+      blockedBy: shorts?.files.length ? undefined : "Появится после сборки роликов",
+    },
+    { id: "long", label: "Длинная нарезка" },
+    { id: "results", label: "Результаты" },
+  ];
 
   return (
-    <>
-      {error && (
-        <div className="error" role="alert">
-          {error}
-        </div>
-      )}
-
-      <div className="row" style={{ marginBottom: 16 }}>
-        <button onClick={onBack}>← К списку</button>
-        <div className="grow">
-          <div style={{ fontWeight: 600 }}>{meta.source_title || meta.source_file || videoId}</div>
-          <div className="small dim mono">{videoId}</div>
-        </div>
-        <button className="primary" disabled={running} onClick={() => start()}>
-          {running ? "Обработка идёт…" : "Запустить обработку"}
-        </button>
-        <button disabled={running} onClick={() => start(undefined, true)} title="Игнорировать кэш">
-          Пересчитать
-        </button>
-      </div>
-
-      <section className="card source-preview" aria-labelledby="source-heading">
-        <h2 id="source-heading">Исходник</h2>
-        <video
-          ref={videoRef}
-          controls
-          preload="metadata"
-          src={api.mediaUrl(videoId)}
-          onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
-        />
-        <div className="row wrap small dim" style={{ marginTop: 10, gap: 14 }}>
-          <span className="tnum">{formatDuration(meta.duration_seconds)}</span>
-          {meta.video?.width && (
-            <span className="tnum">
-              {meta.video.width}×{meta.video.height} @ {meta.video.fps} fps
-            </span>
-          )}
-          {meta.audio?.codec && <span>звук: {meta.audio.codec}</span>}
-          {meta.size_bytes && <span className="tnum">{(meta.size_bytes / 1024 ** 3).toFixed(2)} ГБ</span>}
-        </div>
-      </section>
-
-      <details className="section" aria-labelledby="stages-heading">
-        <summary id="stages-heading">Стадии обработки</summary>
+    <Workspace
+      tabs={tabs}
+      active={tab}
+      onSelect={setTab}
+      title={meta.source_title || meta.source_file || videoId}
+      subtitle={formatDuration(meta.duration_seconds)}
+      actions={
+        <>
+          <button className="ghost" onClick={onBack}>
+            К проектам
+          </button>
+          <button className="primary" disabled={running} onClick={() => start()}>
+            {running ? "Обработка идёт…" : "Запустить обработку"}
+          </button>
+        </>
+      }
+      stages={
+      <div className="stages-panel">
+        <h3>Ход работы</h3>
         <div className="section-body">
         <div className="stages">
           {detail.stages.map((stage) => {
@@ -223,8 +242,12 @@ export function VideoDetail({ videoId, onBack }: Props) {
             const isActive = activeStage === stage.name;
             return (
               <div key={stage.name} className={`stage${isActive ? " active" : ""}`}>
-                <div className="name mono">{stage.name}</div>
-                <div className="grow small dim">{stage.description}</div>
+                {/* Название человеческое, пояснение — под значком: описание
+                    стадии длинное, и в узкой колонке оно ломало строку. */}
+                <span className="stage-name">
+                  {STAGE_TITLES[stage.name] ?? stage.name}
+                  <Hint>{stage.description}</Hint>
+                </span>
                 {isActive && progress?.total ? (
                   <span className="badge run tnum" title={progress.note ?? undefined}>
                     {progress.done} из {progress.total}
@@ -245,12 +268,16 @@ export function VideoDetail({ videoId, onBack }: Props) {
                   <span className="badge ok">выполнено</span>
                 )}
                 {stage.duration != null && (
-                  <span className="small dim tnum">{stage.duration.toFixed(1)} с</span>
+                  <span className="small dim tnum stage-time">
+                    {stage.duration >= 60
+                      ? `${Math.round(stage.duration / 60)} мин`
+                      : `${stage.duration.toFixed(0)} с`}
+                  </span>
                 )}
                 <button
                   className="icon"
                   disabled={running}
-                  aria-label={`Запустить только стадию ${stage.name}`}
+                  aria-label={`Выполнить заново: ${STAGE_TITLES[stage.name] ?? stage.name}`}
                   onClick={() => start(stage.name, true)}
                 >
                   <span aria-hidden="true">▶</span>
@@ -279,16 +306,60 @@ export function VideoDetail({ videoId, onBack }: Props) {
           </div>
         )}
         </div>
-      </details>
-
-      {/* Обзор идёт до кадрирования: сначала решают, годится ли момент,
-          и только потом — как его показать. */}
-      <div className="editor">
-        <div className="editor-main">
-          <ReviewView videoId={videoId} durationSeconds={meta.duration_seconds ?? null} />
+      </div>
+      }
+    >
+      {error && (
+        <div className="error" role="alert">
+          {error}
         </div>
+      )}
 
-        <aside className="editor-side" aria-label="Настройки ролика">
+      {tab === "source" && (
+        <>
+
+      <section className="card source-preview" aria-labelledby="source-heading">
+        <h2 id="source-heading">Исходник</h2>
+        <video
+          ref={videoRef}
+          controls
+          preload="metadata"
+          src={api.mediaUrl(videoId)}
+          onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
+        />
+        <div className="row wrap small dim" style={{ marginTop: 10, gap: 14 }}>
+          <span className="tnum">{formatDuration(meta.duration_seconds)}</span>
+          {meta.video?.width && (
+            <span className="tnum">
+              {meta.video.width}×{meta.video.height} @ {meta.video.fps} fps
+            </span>
+          )}
+          {meta.audio?.codec && <span>звук: {meta.audio.codec}</span>}
+          {meta.size_bytes && <span className="tnum">{(meta.size_bytes / 1024 ** 3).toFixed(2)} ГБ</span>}
+        </div>
+      </section>
+
+        </>
+      )}
+
+      {tab === "source" && transcript && (
+        <TranscriptView
+          transcript={transcript}
+          currentTime={currentTime}
+          onSeek={seek}
+        />
+      )}
+
+      {tab === "moments" && (
+        <ReviewView videoId={videoId} durationSeconds={meta.duration_seconds ?? null} />
+      )}
+
+      {tab === "framing" && (
+        <div className="settings-column">
+          {/* Предпросмотр рядом с настройками: их правят, глядя на результат,
+              а не вслепую с переходом туда-обратно. */}
+          <FramingPanel videoId={videoId} busy={running} onSaved={() => void load()} />
+<div className="settings-column">
           {framing && (
             <div className="panel">
               <h3>Что вошло в ролик</h3>
@@ -314,43 +385,22 @@ export function VideoDetail({ videoId, onBack }: Props) {
               </button>
             </div>
           )}
-        </aside>
-      </div>
-
-      {/* Кадрирование убрано под сворачивание: настраивают его один раз
-          на видео, а переключатели справа трогают постоянно. Держать рядом
-          две панели настроек — значит заставлять выбирать между ними. */}
-      {meta.has_video !== false && (
-        <details className="section">
-          <summary>Кадрирование и предпросмотр</summary>
-          <div className="section-body">
-            <FramingPanel
-              videoId={videoId}
-              busy={running}
-              // Кадрирование входит в ключ кэша, поэтому пересчёта всего
-              // пайплайна не нужно — достаточно перерендерить ролики.
-              onSaved={() => start("render", true)}
-            />
-          </div>
-        </details>
+        </div>
+        </div>
       )}
 
-      {shorts && shorts.files.length > 0 && <ShortsView videoId={videoId} shorts={shorts} />}
-
-      <EpisodesPanel videoId={videoId} />
-
-      <PublishView videoId={videoId} />
-
-      <PerformanceView videoId={videoId} clips={reviewClips} />
-
-      {transcript && (
-        <details className="section">
-          <summary>Транскрипт</summary>
-          <div className="section-body">
-            <TranscriptView transcript={transcript} onSeek={seek} currentTime={currentTime} />
-          </div>
-        </details>
+      {tab === "shorts" && shorts && shorts.files.length > 0 && (
+        <ShortsView videoId={videoId} shorts={shorts} />
       )}
-    </>
+
+      {tab === "long" && <EpisodesPanel videoId={videoId} />}
+
+      {tab === "results" && (
+        <>
+          <PublishView videoId={videoId} />
+          <PerformanceView videoId={videoId} clips={reviewClips} />
+        </>
+      )}
+    </Workspace>
   );
 }

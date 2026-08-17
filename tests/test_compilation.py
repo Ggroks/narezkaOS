@@ -156,3 +156,40 @@ def test_condense_shorter_than_target_stays_whole():
     from narezka.core.compilation import condense
 
     assert condense(0, 600, [(10, 20)], 1200) == [(0, 600)]
+
+
+def test_story_and_best_are_independent():
+    """Сюжет и подборка — не выбор одного из двух.
+
+    Можно оба, одно или ничего: они отвечают на разные запросы и друг
+    другу не мешают.
+    """
+    from narezka.core.config import CompilationConfig
+
+    both = CompilationConfig(story=True, best=True)
+    neither = CompilationConfig(story=False, best=False)
+
+    assert both.story and both.best
+    assert not neither.story and not neither.best
+
+
+def test_several_episodes_can_be_chosen():
+    """Эпизодов берётся столько, сколько нужно — каждый даёт свой ролик."""
+    from narezka.core.config import CompilationConfig
+
+    assert CompilationConfig(episodes=[0, 3, 7]).episodes == [0, 3, 7]
+    assert CompilationConfig(episodes=[]).episodes == []
+    assert CompilationConfig().episodes is None, "None — выбрать самый цельный"
+
+
+def test_nothing_selected_is_reported_not_guessed():
+    """Ни сюжета, ни подборки — стадия говорит об этом, а не решает сама."""
+    from narezka.core.config import CompilationConfig, load_config
+    from narezka.stages.compilation import CompilationStage
+
+    class Ctx:
+        class config:
+            compilation = CompilationConfig(enabled=True, story=False, best=False)
+
+    reason = CompilationStage().check_available(Ctx())
+    assert reason and "не выбран" in reason

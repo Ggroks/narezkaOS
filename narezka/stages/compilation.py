@@ -2,13 +2,15 @@
 
 BAZA.md §20, §21. Два режима, и это разные продукты:
 
-- **story** — один связный эпизод записи, уплотнённый до нужной длины.
-  Сюжет не придумывается, он уже есть: раунд, просмотр видео, дорога;
-- **best** — подборка лучших моментов со всей записи, расставленных по
-  ролям: зацепка, середина в хронологии, кульминация, концовка.
+- **сюжет** — связный эпизод записи, уплотнённый до нужной длины. Сюжет
+  не придумывается, он уже есть: раунд, просмотр видео, дорога;
+- **подборка** — лучшие моменты со всей записи, расставленные по ролям:
+  зацепка, середина в хронологии, кульминация, концовка.
 
-Режим выбирает человек: лучшего из них не бывает, они отвечают на разные
-запросы. Стадия необязательна — шортсы делаются и без неё.
+Это не выбор одного из двух. Можно собрать оба, только одно или ничего —
+они отвечают на разные запросы и друг другу не мешают. Эпизодов тоже
+берётся столько, сколько нужно: выбирать один за человека незачем, он
+видел список с названиями.
 """
 
 from __future__ import annotations
@@ -24,7 +26,6 @@ from narezka.core.stage import Device, Stage, StageContext, StageSkipped
 
 EPISODES_NAME = "episodes.json"
 PLAN_NAME = "compilation.json"
-OUTPUT_NAME = "compilation.mp4"
 
 
 class CompilationStage(Stage):
@@ -45,24 +46,33 @@ class CompilationStage(Stage):
         return inputs
 
     def outputs(self, ctx: StageContext) -> list[Artifact]:
-        return [
-            Artifact(ctx.paths.analysis / PLAN_NAME),
-            Artifact(ctx.paths.base / OUTPUT_NAME),
-        ]
+        artifacts = [Artifact(ctx.paths.analysis / PLAN_NAME)]
+        plan = Artifact(ctx.paths.analysis / PLAN_NAME)
+        if plan.exists():
+            try:
+                for item in plan.read_json().get("results", []):
+                    artifacts.append(Artifact(ctx.paths.base / item["file"]))
+            except (ValueError, KeyError, TypeError):
+                pass
+        return artifacts
 
     def config_slice(self, ctx: StageContext) -> dict[str, Any]:
         cfg = ctx.config.compilation
         return {
-            "mode": cfg.mode,
+            "story": cfg.story,
+            "best": cfg.best,
             "target_minutes": cfg.target_minutes,
-            "episode": cfg.episode,
+            "episodes": cfg.episodes,
             "width": ctx.config.output.compilation_width,
             "height": ctx.config.output.compilation_height,
         }
 
     def check_available(self, ctx: StageContext) -> str | None:
-        if not ctx.config.compilation.enabled:
+        cfg = ctx.config.compilation
+        if not cfg.enabled:
             return "компиляция выключена"
+        if not cfg.story and not cfg.best:
+            return "не выбран ни сюжет, ни подборка — собирать нечего"
         return None
 
     def run(self, ctx: StageContext) -> None:
@@ -72,40 +82,63 @@ class CompilationStage(Stage):
         if not clips:
             raise StageSkipped("нет отобранных моментов")
 
-        if cfg.mode == "story":
-            pieces, plan = self._story(ctx, clips, target)
-        else:
+        # Заданий может быть несколько: подборка и любое число эпизодов.
+        # Каждое даёт свой файл — сводить их в один было бы склейкой разных
+        # рассказов, а это ровно то, чего сюжетная нарезка избегает.
+        jobs: list[tuple[str, list, dict]] = []
+        if cfg.best:
             pieces, plan = self._best(ctx, clips, target)
+            if pieces:
+                jobs.append(("compilation-best.mp4", pieces, plan))
+        if cfg.story:
+            jobs.extend(self._story_jobs(ctx, clips, target))
 
-        if not pieces:
+        if not jobs:
             raise StageSkipped("собирать нечего")
 
-        ctx.log.info(
-            "режим %s: кусков %d, длительность %.1f мин",
-            cfg.mode, len(pieces), total_duration(pieces) / 60,
-        )
+        ctx.log.info("заданий: %d", len(jobs))
+        source = find_source(ctx.paths.source).resolve()
+        results: list[dict[str, Any]] = []
+        steps = sum(len(pieces) + 1 for _, pieces, _ in jobs)
+        done = 0
+
+        for name, pieces, plan in jobs:
+            ctx.log.info(
+                "%s: кусков %d, длительность %.1f мин",
+                name, len(pieces), total_duration(pieces) / 60,
+            )
+            target_file = Artifact(ctx.paths.base / name)
+            done = self._assemble(ctx, source, pieces, target_file, done, steps)
+            results.append({
+                "file": name,
+                "duration": round(total_duration(pieces), 2),
+                "pieces": [{"start": round(a, 2), "end": round(b, 2)} for a, b in pieces],
+                **plan,
+            })
+            ctx.log.info(
+                "готово: %s, %.0f МБ", name, target_file.path.stat().st_size / 1024**2
+            )
+
         Artifact(ctx.paths.analysis / PLAN_NAME).write_json({
-            "mode": cfg.mode,
             "source": source_name,
-            "duration": round(total_duration(pieces), 2),
-            "pieces": [{"start": round(a, 2), "end": round(b, 2)} for a, b in pieces],
-            **plan,
+            "results": results,
         })
 
-        out = ctx.config.output
-        source = find_source(ctx.paths.source).resolve()
-        target_file = Artifact(ctx.paths.base / OUTPUT_NAME)
+    def _assemble(self, ctx, source, pieces, target_file, done: int, steps: int) -> int:
+        """Режет куски по одному и соединяет копированием потока.
 
-        # Куски режутся по одному: памяти нужно на один, сколько бы их ни было.
-        # Склейка одним проходом на двадцати восьми кусках вразнобой съедала
-        # всю память машины — ffmpeg держал раскодированное, пока склейка до
-        # него не дойдёт.
-        workdir = ctx.paths.base / "compilation.parts"
+        По одному потому, что склейка одним проходом держит раскодированное
+        до тех пор, пока до него не дойдёт очередь: на 28 кусках вразнобой
+        это съедало всю память машины.
+        """
+        out = ctx.config.output
+        workdir = ctx.paths.base / f"{target_file.path.stem}.parts"
         workdir.mkdir(parents=True, exist_ok=True)
         made: list[Any] = []
         try:
             for number, (start, end) in enumerate(pieces):
-                ctx.progress(number + 1, len(pieces) + 1, "нарезка кусков")
+                done += 1
+                ctx.progress(done, steps, "нарезка кусков")
                 part = workdir / f"{number:03d}.mp4"
                 cut_piece(
                     source, start, end, part,
@@ -113,55 +146,65 @@ class CompilationStage(Stage):
                     crf=out.crf, pix_fmt=out.pix_fmt, fps=out.fps,
                 )
                 made.append(part)
-                ctx.log.info(
-                    "кусок %d из %d: %.0f–%.0f с", number + 1, len(pieces), start, end
-                )
 
-            ctx.progress(len(pieces) + 1, len(pieces) + 1, "склейка")
+            done += 1
+            ctx.progress(done, steps, "склейка")
             with target_file.reserve() as tmp:
                 join_pieces(made, workdir / "list.txt", tmp)
         finally:
-            # Временные куски убираются всегда: двадцать файлов по сотне
+            # Временные куски убираются всегда: два десятка файлов по сотне
             # мегабайт не должны переживать неудачную сборку.
             for path in workdir.glob("*"):
                 path.unlink(missing_ok=True)
             workdir.rmdir()
+        return done
 
-        size_mb = target_file.path.stat().st_size / 1024**2
-        ctx.log.info("готово: %s, %.0f МБ", OUTPUT_NAME, size_mb)
-
-    def _story(self, ctx: StageContext, clips, target: float):
-        """Сюжетный режим: выбранный эпизод, уплотнённый до нужной длины."""
+    def _story_jobs(self, ctx: StageContext, clips, target: float):
+        """Задания на сюжетные ролики — по одному на выбранный эпизод."""
         artifact = Artifact(ctx.paths.analysis / EPISODES_NAME)
         if not artifact.exists():
-            raise StageSkipped(
-                "эпизоды не размечены — запустите поиск эпизодов или выберите "
-                "режим подборки лучших моментов"
+            ctx.log.warning(
+                "эпизоды не размечены — сюжетных роликов не будет; "
+                "запустите поиск эпизодов или включите подборку лучших"
             )
+            return []
         episodes = artifact.read_json().get("episodes", [])
         if not episodes:
-            raise StageSkipped("связных эпизодов в записи не нашлось")
+            ctx.log.warning("связных эпизодов в записи не нашлось")
+            return []
 
-        chosen = ctx.config.compilation.episode
-        if chosen is not None and 0 <= chosen < len(episodes):
-            episode = episodes[chosen]
-        else:
+        chosen = ctx.config.compilation.episodes
+        if chosen is None:
             # Без явного выбора берётся самый цельный и достаточно длинный:
-            # короткий цельный эпизод не растянуть до двадцати минут, а
-            # длинный бессвязный не станет рассказом.
-            episode = max(episodes, key=lambda e: e["coherence"] * e["duration"])
+            # короткий цельный не растянуть до двадцати минут, а длинный
+            # бессвязный не станет рассказом.
+            picked = [max(range(len(episodes)), key=lambda i: episodes[i]["coherence"] * episodes[i]["duration"])]
+        else:
+            picked = [i for i in chosen if 0 <= i < len(episodes)]
+            skipped = [i for i in chosen if not 0 <= i < len(episodes)]
+            if skipped:
+                ctx.log.warning("нет эпизодов с номерами %s — пропущены", skipped)
 
-        ctx.log.info(
-            "эпизод «%s», %.0f–%.0f мин, цельность %.2f",
-            episode["title"], episode["start"] / 60, episode["end"] / 60,
-            episode["coherence"],
-        )
-        keep = [
-            (c["start"], c["end"]) for c in clips
-            if c["start"] < episode["end"] and c["end"] > episode["start"]
-        ]
-        pieces = core.condense(episode["start"], episode["end"], keep, target)
-        return pieces, {"episode": episode, "highlights_inside": len(keep)}
+        jobs = []
+        for index in picked:
+            episode = episodes[index]
+            ctx.log.info(
+                "эпизод %d «%s», %.0f–%.0f мин, цельность %.2f",
+                index, episode["title"], episode["start"] / 60,
+                episode["end"] / 60, episode["coherence"],
+            )
+            keep = [
+                (c["start"], c["end"]) for c in clips
+                if c["start"] < episode["end"] and c["end"] > episode["start"]
+            ]
+            pieces = core.condense(episode["start"], episode["end"], keep, target)
+            if pieces:
+                jobs.append((
+                    f"compilation-story-{index:02d}.mp4",
+                    pieces,
+                    {"episode": episode, "episode_index": index, "highlights_inside": len(keep)},
+                ))
+        return jobs
 
     def _best(self, ctx: StageContext, clips, target: float):
         """Подборка лучших: моменты со всей записи, расставленные по ролям."""

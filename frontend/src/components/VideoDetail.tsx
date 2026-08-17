@@ -14,6 +14,7 @@ import {
 } from "../api";
 import { FramingPanel } from "./FramingPanel";
 import { PerformanceView } from "./PerformanceView";
+import { EpisodesPanel } from "./EpisodesPanel";
 import { SettingsPanel } from "./SettingsPanel";
 import { PublishView } from "./PublishView";
 import { ReviewView } from "./ReviewView";
@@ -335,6 +336,8 @@ export function VideoDetail({ videoId, onBack }: Props) {
       )}
 
       {shorts && shorts.files.length > 0 && <ShortsView videoId={videoId} shorts={shorts} />}
+
+      <EpisodesPanel videoId={videoId} />
 
       <PublishView videoId={videoId} />
 

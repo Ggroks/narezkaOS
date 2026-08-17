@@ -1127,3 +1127,25 @@ details.section .section-body > .card > h2 { display: none; }
 
 .slider input[type="range"]:disabled { opacity: 0.45; cursor: not-allowed; }
 .slider input[type="range"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+/* Список эпизодов: каждый — отдельный ролик, поэтому выбор множественный. */
+.episodes { display: flex; flex-direction: column; gap: 6px; }
+
+.episode {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  align-items: start;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-inner);
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease;
+}
+.episode:hover { border-color: var(--border); }
+.episode.picked { border-color: var(--accent); background: var(--accent-soft); }
+.episode input { margin-top: 3px; }
+
+.episode-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.episode-title { font-weight: 600; line-height: 1.35; }

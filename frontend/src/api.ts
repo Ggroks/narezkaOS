@@ -315,6 +315,26 @@ export type EncodersInfo = { selected: string; encoders: EncoderOption[] };
 
 export type DetectorsInfo = { selected: string; backends: DetectorOption[] };
 
+export type EpisodeInfo = {
+  start: number;
+  end: number;
+  duration: number;
+  title: string;
+  summary: string;
+  /** Есть ли у отрезка начало, развитие и завершение. */
+  coherence: number;
+};
+
+export type EpisodesInfo = {
+  episodes: EpisodeInfo[];
+  /** Номера выбранных эпизодов; null — самый цельный из длинных. */
+  selected?: number[] | null;
+  story: boolean;
+  best: boolean;
+  target_minutes?: number;
+  reason?: string;
+};
+
 export type HealthCheck = { name: string; ok: boolean; detail: string; critical: boolean };
 export type Health = {
   ok: boolean;
@@ -360,6 +380,7 @@ export const api = {
   publish: (id: string) => request<PublishTexts>(`/api/videos/${id}/publish`),
   models: () => request<ModelsInfo>("/api/settings/models"),
   detectors: () => request<DetectorsInfo>("/api/settings/detectors"),
+  episodes: (id: string) => request<EpisodesInfo>(`/api/videos/${id}/episodes`),
   encoders: () => request<EncodersInfo>("/api/settings/encoders"),
   performance: (id: string) => request<Performance>(`/api/videos/${id}/performance`),
   markPublished: (id: string, payload: { index: number; platform: string; url?: string }) =>

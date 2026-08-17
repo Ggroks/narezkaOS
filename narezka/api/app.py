@@ -308,6 +308,28 @@ def timeline(video_id: str, buckets: int = Query(600, ge=60, le=2000)) -> dict[s
     return {"duration": duration, "buckets": buckets, "chat": chat, "moments": moments}
 
 
+@app.get("/api/videos/{video_id}/episodes")
+def episodes(video_id: str) -> dict[str, Any]:
+    """Найденные эпизоды — чтобы человек выбрал, из каких делать ролики."""
+    ctx = _context(video_id, "default", None)
+    artifact = Artifact(ctx.paths.analysis / "episodes.json")
+    if not artifact.exists():
+        return {"episodes": [], "reason": "эпизоды ещё не размечены"}
+    try:
+        data = artifact.read_json()
+    except ValueError:
+        return {"episodes": [], "reason": "файл эпизодов не читается"}
+
+    cfg = ctx.config.compilation
+    return {
+        "episodes": data.get("episodes", []),
+        "selected": cfg.episodes,
+        "story": cfg.story,
+        "best": cfg.best,
+        "target_minutes": cfg.target_minutes,
+    }
+
+
 @app.get("/api/settings/encoders")
 def encoders_info() -> dict[str, Any]:
     """Чем сжимать видео — с плюсами и минусами каждого варианта."""

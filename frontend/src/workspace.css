@@ -331,3 +331,74 @@ button.ghost:hover:not(:disabled) { color: var(--text); background: var(--surfac
    («в записи нет речи»), а не поломка. */
 .runbar-note { color: var(--warn); text-wrap: pretty; }
 .runbar-fail { color: var(--bad); text-wrap: pretty; }
+
+/* ── Оформление субтитров ──────────────────────────────────────────────── */
+
+/* Кадр слева, ручки справа: настройку правят, глядя на результат.
+   На узком экране кадр уходит наверх — иначе он сжимается до нечитаемого. */
+.subs-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 260px) minmax(0, 1fr);
+  gap: var(--gap-lg);
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .subs-layout { grid-template-columns: minmax(0, 1fr); }
+}
+
+.subs-preview { margin: 0; position: sticky; top: var(--gap-lg); }
+.subs-preview img {
+  inline-size: 100%;
+  border-radius: var(--radius-inner);
+  background: var(--bg);
+  display: block;
+}
+.subs-preview figcaption { margin-block-start: 6px; text-align: center; }
+
+.subs-controls { display: flex; flex-direction: column; min-width: 0; }
+
+.subs-presets { display: flex; flex-direction: column; gap: var(--gap-xs); }
+
+.subs-preset {
+  display: flex;
+  align-items: center;
+  gap: var(--gap);
+  padding: 9px 11px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-inner);
+  cursor: pointer;
+  transition: border-color var(--fast) var(--ease), background var(--fast) var(--ease);
+}
+.subs-preset:hover { background: var(--surface-2); }
+.subs-preset.current { border-color: var(--accent); background: var(--accent-soft); }
+.subs-preset:has(input:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+/* Образец показывает то, ради чего набор и выбирают, — цвет подсветки.
+   Обводка нарисована тенью: настоящей у текста в вёрстке нет. */
+.subs-swatch {
+  flex: none;
+  inline-size: 42px;
+  font-size: 20px;
+  font-weight: 700;
+  text-align: center;
+  text-shadow: 0 0 3px #000, 0 0 3px #000;
+}
+
+.subs-preset-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+
+.subs-colours {
+  display: flex;
+  gap: var(--gap);
+  margin-block: var(--gap-sm);
+  flex-wrap: wrap;
+}
+.subs-colours label { display: flex; flex-direction: column; gap: 4px; }
+.subs-colours input[type="color"] {
+  inline-size: 56px;
+  block-size: 32px;
+  padding: 2px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+  cursor: pointer;
+}

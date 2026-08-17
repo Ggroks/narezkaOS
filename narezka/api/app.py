@@ -33,10 +33,15 @@ from narezka.core.logging import get_logger
 from narezka.core.framing import (
     Framing,
     build_filter,
+    build_split_filter,
+    plan_split,
     describe,
     plan_frame,
     preview_presets,
 )
+from narezka.core import fonts
+from narezka.core import framing as framing_core
+from narezka.core import subtitles as subs
 from narezka.core.media import MediaError, find_source, run_tool
 from narezka.core import (
     accounts, credits, db, detectors, feedback, llm, publish, queue, registry, review,
@@ -962,6 +967,128 @@ def set_compilation(
     return _episodes_payload(ctx)
 
 
+@app.get("/api/settings/subtitles")
+def subtitle_presets() -> dict[str, Any]:
+    """Готовые наборы субтитров и то, из чего можно собрать свой."""
+    return {
+        "presets": [
+            {
+                **preset,
+                # Цвета наружу в привычном виде: поле выбора цвета в браузере
+                # принимает #RRGGBB, а в ASS порядок байтов обратный.
+                "colours": {
+                    "primary": subs.hex_colour(preset["style"]["primary"]),
+                    "highlight": subs.hex_colour(preset["style"]["highlight"]),
+                    "outline_colour": subs.hex_colour(preset["style"]["outline_colour"]),
+                },
+            }
+            for preset in subs.describe_presets()
+        ],
+        "fonts": sorted(fonts.FONT_FILES),
+        "positions": [
+            {"name": "bottom", "title": "Снизу"},
+            {"name": "middle", "title": "По центру"},
+            {"name": "top", "title": "Сверху"},
+        ],
+        "face_zoom": framing_core.face_zoom_presets(),
+    }
+
+
+class SubtitleSettings(BaseModel):
+    """Оформление субтитров для одной записи."""
+
+    preset: str = subs.DEFAULT_PRESET
+    font: str | None = None
+    font_size: int | None = Field(default=None, ge=24, le=140)
+    #: Цвета приходят как #RRGGBB — так их отдаёт поле выбора в браузере.
+    primary: str | None = None
+    highlight: str | None = None
+    outline_colour: str | None = None
+    outline: float | None = Field(default=None, ge=0, le=10)
+    bold: bool | None = None
+    position: Literal["bottom", "middle", "top"] | None = None
+    max_words_per_line: int | None = Field(default=None, ge=1, le=12)
+    max_chars_per_line: int | None = Field(default=None, ge=8, le=60)
+    max_lines: int | None = Field(default=None, ge=1, le=4)
+
+
+def _subtitle_style_fields(payload: SubtitleSettings) -> dict[str, Any]:
+    """Правки стиля из того, что прислал интерфейс.
+
+    Цвета переводятся в формат ASS здесь, а не в ядре: ядро не должно знать,
+    что где-то есть поле выбора цвета в браузере.
+    """
+    fields: dict[str, Any] = {}
+    for name in ("font", "font_size", "outline", "bold", "position",
+                 "max_words_per_line", "max_chars_per_line", "max_lines"):
+        value = getattr(payload, name)
+        if value is not None:
+            fields[name] = value
+    for name in ("primary", "highlight", "outline_colour"):
+        value = getattr(payload, name)
+        if value:
+            try:
+                fields[name] = subs.ass_colour(value)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return fields
+
+
+def _subtitles_payload(config, paths) -> dict[str, Any]:
+    style = settings.subtitles(config, paths)
+    stored = settings.load(paths).get(settings.SUBTITLES_KEY) or {}
+    return {
+        "preset": stored.get("preset") or config.subtitles.style,
+        "custom": bool(stored.get("style")),
+        "style": {
+            **style.__dict__,
+            "primary_hex": subs.hex_colour(style.primary),
+            "highlight_hex": subs.hex_colour(style.highlight),
+            "outline_hex": subs.hex_colour(style.outline_colour),
+        },
+    }
+
+
+@app.get("/api/videos/{video_id}/subtitles")
+def subtitles_settings(video_id: str, project: str = "default") -> dict[str, Any]:
+    paths, config = _paths(video_id, project)
+    return _subtitles_payload(config, paths)
+
+
+@app.put("/api/videos/{video_id}/subtitles")
+def set_subtitles(
+    video_id: str, payload: SubtitleSettings, project: str = "default"
+) -> dict[str, Any]:
+    """Сохраняет оформление субтитров для записи.
+
+    Пресет и правки хранятся отдельно: смена набора не должна стирать
+    выбранный цвет, а сброс правок — возвращать к набору, а не к пустоте.
+    """
+    paths, config = _paths(video_id, project)
+    try:
+        subs.preset_style(payload.preset)
+    except KeyError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    settings.update(
+        paths,
+        {settings.SUBTITLES_KEY: {
+            "preset": payload.preset,
+            "style": _subtitle_style_fields(payload),
+        }},
+    )
+    log.info("видео %s: субтитры «%s»", video_id, payload.preset)
+    return _subtitles_payload(config, paths)
+
+
+@app.delete("/api/videos/{video_id}/subtitles")
+def reset_subtitles(video_id: str, project: str = "default") -> dict[str, Any]:
+    """Возвращает оформление к набору из конфига."""
+    paths, config = _paths(video_id, project)
+    settings.update(paths, {settings.SUBTITLES_KEY: {}})
+    return _subtitles_payload(config, paths)
+
+
 @app.get("/api/settings/encoders")
 def encoders_info() -> dict[str, Any]:
     """Чем сжимать видео — с плюсами и минусами каждого варианта."""
@@ -1286,6 +1413,222 @@ def framing_preview(
 
     _trim_previews(paths)
     return serve_file(target, None)
+
+
+def _preview_words(paths, at: float, span: float = 6.0) -> list[dict[str, Any]]:
+    """Слова вокруг момента — чтобы в кадре был настоящий текст записи.
+
+    Придуманная строка «Пример субтитров» показала бы шрифт, но не показала
+    бы главного: как длина реальных фраз ложится в заданное число слов.
+    """
+    artifact = Artifact(paths.transcript / "transcript.json")
+    if not artifact.exists():
+        return []
+    try:
+        segments = artifact.read_json().get("segments", [])
+    except ValueError:
+        return []
+    return subs.words_in_range(segments, at - span, at + span)
+
+
+def _speaking_moment(words: list[dict[str, Any]], at: float) -> float | None:
+    """Мгновение, когда слово действительно звучит.
+
+    Кадр из тишины между фразами выглядит как «субтитры не работают»:
+    первая же попытка предпросмотра пришлась ровно в паузу, и картинка
+    вышла пустой. Берётся середина ближайшего слова — там текст на экране
+    есть наверняка.
+    """
+    if not words:
+        return None
+    nearest = min(words, key=lambda w: abs((w["start"] + w["end"]) / 2 - at))
+    return (nearest["start"] + nearest["end"]) / 2
+
+
+@app.get("/api/videos/{video_id}/subtitles/preview")
+def subtitles_preview(
+    video_id: str,
+    project: str = "default",
+    at: float | None = Query(default=None, ge=0),
+):
+    """Кадр с вшитыми субтитрами — как будет в готовом ролике.
+
+    Настраивать шрифт и цвет по описанию словами невозможно, а полный рендер
+    ради проверки занимает минуты. Тот же приём, что у предпросмотра рамки:
+    один кадр за доли секунды.
+
+    Раскладка берётся настоящая, включая сплит с вебкой: в нём субтитры
+    ложатся на нижнюю полосу, и в одиночной раскладке этого не увидеть.
+    """
+    paths, ctx, current, src_w, src_h = _framing_state(video_id, project)
+    short = ctx.config.output.short
+
+    metadata_artifact = Artifact(paths.metadata)
+    metadata = metadata_artifact.read_json() if metadata_artifact.exists() else {}
+    if not metadata.get("has_video", True):
+        raise HTTPException(status_code=409, detail="в источнике нет картинки")
+
+    try:
+        source = find_source(paths.source)
+    except MediaError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    asked = at
+    if asked is None and current.layout == "split":
+        asked = _split_moment(paths)
+    if asked is None:
+        asked = _preview_position(paths, metadata)
+    style = settings.subtitles(ctx.config, paths)
+
+    position = _speaking_moment(_preview_words(paths, asked), asked)
+    if position is None:
+        raise HTTPException(
+            status_code=409,
+            detail="рядом нет распознанных слов — покажите момент с речью",
+        )
+    # Слова берутся вокруг найденного мгновения, а не вокруг запрошенного:
+    # реплика должна попасть в кадр целиком, а не обрезанной по краю окна.
+    words = _preview_words(paths, position, span=4.0)
+
+    # Смещение равно самому моменту: кадр вырезается по нему, и в выходной
+    # дорожке он оказывается в нуле.
+    ass = subs.build_ass(
+        words, style=style, width=short.width, height=short.height, time_offset=position
+    )
+    # В ключ идёт вся рамка целиком, а не одна раскладка: приближение лица
+    # и высота полосы меняют картинку так же, как цвет субтитров. Замер это
+    # и показал — три разных приближения вернули один и тот же кадр из кэша.
+    slug = hashlib.sha256(
+        json.dumps(
+            {**style.__dict__, **current.__dict__, "at": round(position, 2)},
+            sort_keys=True, ensure_ascii=False,
+        ).encode()
+    ).hexdigest()[:12]
+
+    ass_file = paths.base / "meta" / f"preview-{slug}.ass"
+    ass_file.write_text(ass, encoding="utf-8")
+    target = paths.base / "meta" / f"preview-subs-{slug}.jpg"
+
+    if not target.exists():
+        chain = _preview_chain(paths, ctx, current, src_w, src_h, ass_file, at=position)
+        try:
+            run_tool(
+                [
+                    "ffmpeg", "-nostdin", "-v", "error", "-y",
+                    "-ss", f"{position:.3f}",
+                    "-i", str(source.resolve()),
+                    "-frames:v", "1",
+                    "-filter_complex", chain,
+                    "-map", "[v]",
+                    "-q:v", "4",
+                    "-f", "mjpeg",
+                    str(target),
+                ],
+                timeout=60,
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    _trim_previews_of(paths, "preview-subs-*.jpg", PREVIEW_KEEP)
+    _trim_previews_of(paths, "preview-*.ass", PREVIEW_KEEP)
+    return serve_file(target, None)
+
+
+def _preview_chain(paths, ctx, current, src_w, src_h, ass_file, at: float | None = None) -> str:
+    """Цепочка фильтров предпросмотра — та же, что у рендера.
+
+    Собирается из тех же функций, что и настоящая сборка: если предпросмотр
+    строить отдельно, он однажды разойдётся с результатом, и настраивать
+    будут по картинке, которой не будет в ролике.
+    """
+    short = ctx.config.output.short
+    fonts_arg = fonts.escape_for_filter(fonts.fonts_dir())
+    name = fonts.escape_for_filter(ass_file)
+
+    split = _preview_split(paths, current, src_w, src_h, short, at=at)
+    if split is not None:
+        chain = build_split_filter(split, short.width, name, fonts_dir=fonts_arg)
+    else:
+        plan = plan_frame(src_w, src_h, short.width, short.height, current)
+        chain = build_filter(plan, current, short.width, short.height, name, fonts_dir=fonts_arg)
+    return chain.removesuffix("[v]") + f",scale=-2:{PREVIEW_HEIGHT}[v]"
+
+
+def _facecam_clips(paths) -> dict[str, Any]:
+    facecam = Artifact(paths.analysis / "facecam.json")
+    if not facecam.exists():
+        return {}
+    try:
+        return facecam.read_json().get("clips", {}) or {}
+    except ValueError:
+        return {}
+
+
+def _split_moment(paths) -> float | None:
+    """Момент внутри клипа, где вебка найдена наложением.
+
+    Окно вебки ищется **по клипу**, а не раз на запись: замер показал, что
+    стрим переключается между полноэкранной камерой и демонстрацией экрана.
+    Поэтому кадр для предпросмотра надо брать из того же клипа, откуда взята
+    рамка, иначе в верхней полосе оказывается не лицо, а случайный угол.
+    Ровно это и вышло на первой проверке.
+    """
+    overlays = {
+        index for index, item in _facecam_clips(paths).items()
+        if item and not item.get("full_frame")
+    }
+    if not overlays:
+        return None
+    try:
+        clips, _ = load_clips(paths, apply_review=False)
+    except (FileNotFoundError, ValueError):
+        return None
+    for clip in clips:
+        if str(clip.get("index")) in overlays:
+            return float(clip["start"]) + min(2.0, (clip["end"] - clip["start"]) / 2)
+    return None
+
+
+def _preview_split(paths, current, src_w, src_h, short, at: float | None = None):
+    """Раскладка сплита для предпросмотра, если она применима к записи."""
+    if current.layout != "split":
+        return None
+    clips = _facecam_clips(paths)
+    overlays = {
+        index: item for index, item in clips.items()
+        if item and not item.get("full_frame")
+    }
+    if not overlays:
+        return None
+
+    cam = None
+    if at is not None:
+        # Берём рамку того клипа, в который попадает показываемый кадр.
+        try:
+            found, _ = load_clips(paths, apply_review=False)
+        except (FileNotFoundError, ValueError):
+            found = []
+        for clip in found:
+            if clip["start"] <= at <= clip["end"] and str(clip.get("index")) in overlays:
+                cam = overlays[str(clip["index"])]
+                break
+    if cam is None:
+        cam = next(iter(overlays.values()))
+    face = cam.get("face") or {}
+    content = cam.get("content") or {}
+    return plan_split(
+        src_w, src_h, short.width, short.height,
+        (cam["x"], cam["y"], cam["width"], cam["height"]),
+        face=(face["x"], face["y"], face["width"], face["height"]) if face else None,
+        content=(
+            (content["x"], content["y"], content["width"], content["height"])
+            if content else None
+        ),
+        anchor=current.anchor,
+        top_share=current.split_top_share,
+        face_zoom=current.face_zoom,
+        face_vertical=current.face_vertical,
+    )
 
 
 #: Сколько картинок предпросмотра держать на видео. Они служат кэшем — при

@@ -354,6 +354,9 @@ class RenderStage(Stage):
                 if content else None
             ),
             anchor=framing.anchor,
+            top_share=framing.split_top_share,
+            face_zoom=framing.face_zoom,
+            face_vertical=framing.face_vertical,
         )
 
     @staticmethod

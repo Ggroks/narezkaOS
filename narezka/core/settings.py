@@ -27,6 +27,9 @@ from narezka.core.paths import VideoPaths
 #: переключателей сборки.
 COMPILATION_KEY = "compilation"
 
+#: Оформление субтитров: имя пресета и правки поверх него.
+SUBTITLES_KEY = "subtitles"
+
 
 def load(paths: VideoPaths) -> dict[str, Any]:
     """Правки для этой записи. Пустой словарь — ничего не задано вручную."""
@@ -64,3 +67,23 @@ def compilation(config: Config, paths: VideoPaths) -> CompilationConfig:
             if key in data and value is not None
         })
     return CompilationConfig(**data)
+
+
+def subtitles(config, paths: VideoPaths):
+    """Оформление субтитров для этой записи.
+
+    Пресет из конфига, поверх — правки, сделанные для записи. Правки
+    хранятся полями, а не готовым стилем: иначе смена пресета затирала бы
+    их все, хотя человек менял только цвет.
+    """
+    from narezka.core import subtitles as subs  # noqa: PLC0415 — избегаем цикла
+
+    stored = load(paths).get(SUBTITLES_KEY)
+    stored = stored if isinstance(stored, dict) else {}
+    preset = stored.get("preset") or config.subtitles.style
+    try:
+        return subs.preset_style(preset, stored.get("style"))
+    except (KeyError, TypeError):
+        # Пресет мог исчезнуть между версиями. Ролик без субтитров хуже,
+        # чем ролик с обычными.
+        return subs.preset_style(subs.DEFAULT_PRESET, stored.get("style"))

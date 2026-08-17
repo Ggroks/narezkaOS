@@ -145,12 +145,14 @@ export function AnalysisSettings({
 }
 
 export function ShortSettings({
-  value, onChange, splitAvailable, disabled, detectors, encoders,
+  value, onChange, splitAvailable, disabled, detectors, encoders, faceZoom,
 }: Common & {
   /** Раскладка «сплит» доступна только там, где найдена вебка наложением. */
   splitAvailable: boolean;
   detectors?: DetectorsInfo | null;
   encoders?: EncodersInfo | null;
+  /** Готовые степени приближения лица. */
+  faceZoom?: { name: string; title: string; note: string; zoom: number }[];
 }) {
   return (
     <div className="options">
@@ -211,6 +213,79 @@ export function ShortSettings({
           onChange(on ? { background: "blur", blur_sigma: 28 } : { background: "color" })
         }
       />
+
+      {value.layout === "split" && (
+        /* Настройки сплита показываются только когда он выбран: две полосы
+           и приближение лица не значат ничего в других раскладках. */
+        <div className="choice">
+          <span className="choice-label">Насколько крупно лицо</span>
+          <div className="segmented">
+            {(faceZoom ?? []).map((item) => (
+              <button
+                key={item.name}
+                type="button"
+                title={item.note}
+                className={Math.abs(value.face_zoom - item.zoom) < 0.05 ? "current" : ""}
+                disabled={disabled}
+                onClick={() => onChange({ face_zoom: item.zoom })}
+              >
+                {item.title}
+              </button>
+            ))}
+          </div>
+          <label className="slider">
+            <span className="small dim">
+              вплотную ← {value.face_zoom?.toFixed(1)} → с обстановкой
+            </span>
+            <input
+              type="range"
+              min={1.5}
+              max={4}
+              step={0.1}
+              value={value.face_zoom ?? 2.6}
+              disabled={disabled}
+              onChange={(e) => onChange({ face_zoom: Number(e.target.value) })}
+            />
+          </label>
+          <span className="choice-hint">
+            Сколько ширин лица влезает в верхнюю полосу. Меньше — крупнее,
+            но при движении головы лицо чаще уходит за край.
+          </span>
+
+          <label className="slider">
+            <span className="small dim">
+              Высота полосы с лицом: {Math.round((value.split_top_share ?? 0.34) * 100)}% кадра
+            </span>
+            <input
+              type="range"
+              min={0.2}
+              max={0.5}
+              step={0.02}
+              value={value.split_top_share ?? 0.34}
+              disabled={disabled}
+              onChange={(e) => onChange({ split_top_share: Number(e.target.value) })}
+            />
+          </label>
+
+          <label className="slider">
+            <span className="small dim">
+              Лицо по высоте полосы: {Math.round((value.face_vertical ?? 0.45) * 100)}%
+            </span>
+            <input
+              type="range"
+              min={0.2}
+              max={0.7}
+              step={0.05}
+              value={value.face_vertical ?? 0.45}
+              disabled={disabled}
+              onChange={(e) => onChange({ face_vertical: Number(e.target.value) })}
+            />
+          </label>
+          <span className="choice-hint">
+            Чуть выше середины — в кадр входят плечи, а не пустота над головой.
+          </span>
+        </div>
+      )}
 
       {value.layout === "track" && (
         <div className="choice">

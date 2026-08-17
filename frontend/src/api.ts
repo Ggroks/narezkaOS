@@ -181,6 +181,10 @@ export type Framing = {
   /** Слежение за лицом: цепкость рамки и мёртвая зона. */
   track_smoothing: number;
   track_dead_zone: number;
+  /** Сплит: доля высоты под вебку и приближение лица (меньше — ближе). */
+  split_top_share: number;
+  face_zoom: number;
+  face_vertical: number;
   preset: FramingPreset;
   side_crop: number;
   anchor: "center" | "left" | "right";
@@ -433,6 +437,41 @@ export type Billing = {
   }[];
 };
 
+/** Оформление субтитров: набор плюс правки поверх него. */
+export type SubtitleStyle = {
+  name: string;
+  font: string;
+  font_size: number;
+  outline: number;
+  bold: boolean;
+  position: "bottom" | "middle" | "top";
+  max_words_per_line: number;
+  max_chars_per_line: number;
+  max_lines: number;
+  /** Цвета в виде #RRGGBB — в самом ASS порядок байтов обратный. */
+  primary_hex: string;
+  highlight_hex: string;
+  outline_hex: string;
+};
+
+export type SubtitlesState = { preset: string; custom: boolean; style: SubtitleStyle };
+
+export type SubtitlePreset = {
+  name: string;
+  title: string;
+  note: string;
+  style: Record<string, unknown>;
+  colours: { primary: string; highlight: string; outline_colour: string };
+};
+
+export type SubtitleOptions = {
+  presets: SubtitlePreset[];
+  fonts: string[];
+  positions: { name: string; title: string }[];
+  /** Готовые степени приближения лица в сплите. */
+  face_zoom: { name: string; title: string; note: string; zoom: number }[];
+};
+
 export type HealthCheck = { name: string; ok: boolean; detail: string; critical: boolean };
 export type Health = {
   ok: boolean;
@@ -560,6 +599,35 @@ export const api = {
   /** Кадр исходника в заданный момент — миниатюра карточки. */
   frameUrl: (id: string, at: number, height = 240) =>
     `/api/videos/${id}/frame?at=${at.toFixed(2)}&height=${height}`,
+  subtitleOptions: () => request<SubtitleOptions>("/api/settings/subtitles"),
+  subtitles: (id: string) => request<SubtitlesState>(`/api/videos/${id}/subtitles`),
+  setSubtitles: (
+    id: string,
+    payload: {
+      preset: string;
+      font?: string;
+      font_size?: number;
+      primary?: string;
+      highlight?: string;
+      outline_colour?: string;
+      outline?: number;
+      bold?: boolean;
+      position?: string;
+      max_words_per_line?: number;
+      max_chars_per_line?: number;
+      max_lines?: number;
+    },
+  ) =>
+    request<SubtitlesState>(`/api/videos/${id}/subtitles`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+  resetSubtitles: (id: string) =>
+    request<SubtitlesState>(`/api/videos/${id}/subtitles`, { method: "DELETE" }),
+  /** Кадр с вшитыми субтитрами. `v` заставляет браузер перезапросить его
+   *  после правки — адрес иначе тот же, и показался бы прежний. */
+  subtitlePreviewUrl: (id: string, version: string) =>
+    `/api/videos/${id}/subtitles/preview?v=${encodeURIComponent(version)}`,
   framing: (id: string) => request<FramingState>(`/api/videos/${id}/framing`),
   setFraming: (id: string, payload: Framing) =>
     request<FramingState>(`/api/videos/${id}/framing`, {

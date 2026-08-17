@@ -65,9 +65,27 @@ SPLIT_MAX_SHARE = 0.5
 #: на плечи и фон; вплотную к лицу смотреть неприятно.
 FACE_ZOOM_OUT = 2.6
 
+#: Пределы приближения. Меньше полутора — в кадре одно лицо без плеч,
+#: и любое движение головы выносит его за край. Больше четырёх — вебка
+#: показана целиком вместе с комнатой, то есть приближения нет.
+FACE_ZOOM_MIN = 1.5
+FACE_ZOOM_MAX = 4.0
+
 #: Куда попадает центр лица по высоте полосы. Чуть выше середины — так
 #: в кадр входят плечи, а не пустота над головой.
 FACE_VERTICAL_ANCHOR = 0.45
+
+#: Готовые степени приближения. Названы тем, что видно в кадре, а не
+#: числами: «2.0» не говорит ничего, пока не увидишь.
+FACE_PRESETS: dict[str, dict[str, Any]] = {
+    "close": {"title": "Крупно", "note": "Лицо во всю полосу, плечи почти не видны", "zoom": 1.8},
+    "portrait": {"title": "Портрет", "note": "Лицо и плечи — как в обычной вебке", "zoom": 2.6},
+    "wide": {"title": "Свободно", "note": "Видно и обстановку вокруг", "zoom": 3.6},
+}
+
+
+def face_zoom_presets() -> list[dict[str, Any]]:
+    return [{"name": key, **value} for key, value in FACE_PRESETS.items()]
 
 
 @dataclass(frozen=True)
@@ -94,6 +112,10 @@ class Framing:
     track_smoothing: float = 0.6
     track_dead_zone: float = 0.0
     track_max_speed: float = 3.0
+    #: Сплит: доля высоты под вебку и приближение лица.
+    split_top_share: float = SPLIT_TOP_SHARE
+    face_zoom: float = FACE_ZOOM_OUT
+    face_vertical: float = FACE_VERTICAL_ANCHOR
     background: Background = "blur"
     blur_sigma: float = 28.0
     color: str = "0x14171c"
@@ -293,6 +315,8 @@ def plan_split(
     content: tuple[int, int, int, int] | None = None,
     top_share: float = SPLIT_TOP_SHARE,
     anchor: Anchor = "center",
+    face_zoom: float = FACE_ZOOM_OUT,
+    face_vertical: float = FACE_VERTICAL_ANCHOR,
 ) -> SplitPlan | None:
     """Раскладка «сплит» по найденному окну вебки.
 
@@ -318,7 +342,10 @@ def plan_split(
     if face is not None:
         # Кадрируем по лицу, а не по найденному окну: окно ищется грубо,
         # по углам кадра, и захватывает панель браузера или край экрана.
-        cam_crop = _frame_face(face, target_ratio, source_w, source_h)
+        cam_crop = _frame_face(
+            face, target_ratio, source_w, source_h,
+            zoom=face_zoom, vertical=face_vertical,
+        )
     else:
         # Без лица подрезаем само окно под пропорцию полосы, чтобы не
         # искажать картинку растяжением.
@@ -383,18 +410,29 @@ def _clamp_crop(
 
 
 def _frame_face(
-    face: tuple[int, int, int, int], ratio: float, source_w: int, source_h: int
+    face: tuple[int, int, int, int],
+    ratio: float,
+    source_w: int,
+    source_h: int,
+    *,
+    zoom: float = FACE_ZOOM_OUT,
+    vertical: float = FACE_VERTICAL_ANCHOR,
 ) -> tuple[int, int, int, int]:
-    """Портретный кадр вокруг лица под заданную пропорцию."""
+    """Портретный кадр вокруг лица под заданную пропорцию.
+
+    `zoom` — во сколько раз кадр шире лица: меньше значит ближе.
+    `vertical` — где в кадре оказывается центр лица по высоте.
+    """
     fx, fy, fw, fh = face
-    width = min(_even(fw * FACE_ZOOM_OUT), source_w)
+    zoom = min(max(zoom, FACE_ZOOM_MIN), FACE_ZOOM_MAX)
+    width = min(_even(fw * zoom), source_w)
     height = min(_even(width / ratio), source_h)
     width = _even(min(width, height * ratio))
 
     centre_x = fx + fw / 2
     centre_y = fy + fh / 2
     x = _even(centre_x - width / 2)
-    y = _even(centre_y - height * FACE_VERTICAL_ANCHOR)
+    y = _even(centre_y - height * min(max(vertical, 0.1), 0.9))
 
     # Кадр не должен выходить за пределы исходника.
     x = max(0, min(x, source_w - width))

@@ -224,3 +224,59 @@ def test_describe_mentions_both_numbers() -> None:
 
 def test_describe_full_bleed() -> None:
     assert "целиком" in describe(plan("fill"))
+
+
+# --- приближение лица в сплите ---------------------------------------------
+
+
+def test_face_zoom_changes_the_crop():
+    """Меньше — крупнее. Настройка, ради которой всё и делалось."""
+    from narezka.core.framing import plan_split
+
+    cam, face = (860, 40, 280, 260), (900, 80, 180, 180)
+    close = plan_split(1280, 720, 1080, 1920, cam, face=face, face_zoom=1.8)
+    wide = plan_split(1280, 720, 1080, 1920, cam, face=face, face_zoom=3.6)
+    assert close.cam_crop[2] < wide.cam_crop[2]
+
+
+def test_face_zoom_is_clamped():
+    """Вплотную к лицу смотреть неприятно, а вчетверо шире — это уже
+    не приближение. Значения за пределами приводятся к границам."""
+    from narezka.core.framing import FACE_ZOOM_MAX, FACE_ZOOM_MIN, plan_split
+
+    cam, face = (860, 40, 280, 260), (900, 80, 180, 180)
+    tiny = plan_split(1280, 720, 1080, 1920, cam, face=face, face_zoom=0.1)
+    huge = plan_split(1280, 720, 1080, 1920, cam, face=face, face_zoom=99.0)
+    at_min = plan_split(1280, 720, 1080, 1920, cam, face=face, face_zoom=FACE_ZOOM_MIN)
+    at_max = plan_split(1280, 720, 1080, 1920, cam, face=face, face_zoom=FACE_ZOOM_MAX)
+    assert tiny.cam_crop == at_min.cam_crop
+    assert huge.cam_crop == at_max.cam_crop
+
+
+def test_top_share_changes_the_band():
+    from narezka.core.framing import plan_split
+
+    cam = (860, 40, 280, 260)
+    low = plan_split(1280, 720, 1080, 1920, cam, top_share=0.22)
+    high = plan_split(1280, 720, 1080, 1920, cam, top_share=0.48)
+    assert low.cam_height < high.cam_height
+    assert low.cam_height + low.main_height == 1920
+
+
+def test_vertical_anchor_moves_the_face_in_the_band():
+    """Чуть выше середины — в кадр входят плечи, а не пустота над головой."""
+    from narezka.core.framing import plan_split
+
+    cam, face = (400, 300, 280, 260), (440, 340, 180, 180)
+    higher = plan_split(1280, 720, 1080, 1920, cam, face=face, face_vertical=0.3)
+    lower = plan_split(1280, 720, 1080, 1920, cam, face=face, face_vertical=0.7)
+    assert higher.cam_crop[1] > lower.cam_crop[1]
+
+
+def test_face_presets_are_named_by_what_is_seen():
+    from narezka.core.framing import face_zoom_presets
+
+    presets = {item["name"]: item for item in face_zoom_presets()}
+    assert set(presets) == {"close", "portrait", "wide"}
+    assert presets["close"]["zoom"] < presets["wide"]["zoom"]
+    assert all(item["title"] and item["note"] for item in presets.values())

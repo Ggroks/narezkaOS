@@ -14,7 +14,8 @@ from typing import Any
 
 from narezka.core.artifacts import Artifact
 from narezka.core.stage import Device, Stage, StageContext, StageSkipped
-from narezka.core.subtitles import STYLES, build_ass, words_in_range
+from narezka.core.subtitles import build_ass, words_in_range
+from narezka.core import settings
 from narezka.core.clips import SELECTION_NAME, clip_inputs, describe_source, load_clips
 from narezka.stages.transcribe import TRANSCRIPT_NAME
 
@@ -47,17 +48,17 @@ class SubtitlesStage(Stage):
         return artifacts
 
     def config_slice(self, ctx: StageContext) -> dict[str, Any]:
+        # Весь стиль целиком, а не его имя: правка цвета или числа слов
+        # в строке обязана пересобрать субтитры, иначе ролик остаётся
+        # с прежними, и выглядит это как «настройка не работает».
         return {
-            "style": ctx.config.subtitles.style,
+            "style": settings.subtitles(ctx.config, ctx.paths).__dict__,
             "width": ctx.config.output.short.width,
             "height": ctx.config.output.short.height,
         }
 
     def run(self, ctx: StageContext) -> None:
-        style_name = ctx.config.subtitles.style
-        style = STYLES.get(style_name)
-        if style is None:
-            raise StageSkipped(f"неизвестный стиль субтитров '{style_name}'; доступны: {', '.join(STYLES)}")
+        style = settings.subtitles(ctx.config, ctx.paths)
 
         transcript = Artifact(ctx.paths.transcript / TRANSCRIPT_NAME).read_json()
         clips, source = load_clips(ctx.paths)
@@ -101,9 +102,9 @@ class SubtitlesStage(Stage):
             raise StageSkipped("ни у одного кандидата не нашлось слов в границах")
 
         Artifact(directory / INDEX_NAME).write_json(
-            {"style": style_name, "width": short.width, "height": short.height, "files": files}
+            {"style": style.name, "width": short.width, "height": short.height, "files": files}
         )
         ctx.log.info(
             "субтитры для %d кандидатов, стиль %s, слов всего %d",
-            len(files), style_name, sum(f["words"] for f in files),
+            len(files), style.name, sum(f["words"] for f in files),
         )

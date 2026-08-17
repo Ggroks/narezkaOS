@@ -392,3 +392,71 @@ def test_metrics_reject_impossible_values(client, video) -> None:
         json={"clip_id": "x", "retention": 3.0},
     )
     assert response.status_code == 422
+
+
+# --- оформление субтитров --------------------------------------------------
+
+
+def test_subtitle_presets_are_offered_with_names(client) -> None:
+    """«STYLE_2» не говорит ничего, пока не увидишь: наборы названы тем,
+    что видно в кадре."""
+    body = client.get("/api/settings/subtitles").json()
+    names = {p["name"] for p in body["presets"]}
+    assert {"classic", "loud", "one_word"} <= names
+    assert all(p["title"] and p["note"] for p in body["presets"])
+    assert body["fonts"] and body["positions"] and body["face_zoom"]
+
+
+def test_subtitle_settings_are_saved_for_the_record(client, video) -> None:
+    saved = client.put(
+        f"/api/videos/{VIDEO}/subtitles",
+        json={"preset": "loud", "highlight": "#FF3B30", "max_words_per_line": 2},
+    ).json()
+    assert saved["preset"] == "loud" and saved["custom"] is True
+    assert saved["style"]["highlight_hex"] == "#FF3B30"
+    assert saved["style"]["max_words_per_line"] == 2
+    # Остальное осталось от набора, а не сбросилось в умолчания.
+    assert saved["style"]["font_size"] == 78
+
+    again = client.get(f"/api/videos/{VIDEO}/subtitles").json()
+    assert again["style"]["highlight_hex"] == "#FF3B30"
+
+
+def test_subtitle_reset_returns_to_the_preset(client, video) -> None:
+    client.put(
+        f"/api/videos/{VIDEO}/subtitles", json={"preset": "loud", "highlight": "#FF3B30"}
+    )
+    back = client.delete(f"/api/videos/{VIDEO}/subtitles").json()
+    assert back["custom"] is False
+
+
+def test_unknown_preset_is_refused(client, video) -> None:
+    assert client.put(
+        f"/api/videos/{VIDEO}/subtitles", json={"preset": "красивые"}
+    ).status_code == 422
+
+
+def test_bad_colour_is_refused(client, video) -> None:
+    assert client.put(
+        f"/api/videos/{VIDEO}/subtitles", json={"preset": "classic", "primary": "жёлтый"}
+    ).status_code == 422
+
+
+def test_subtitle_settings_land_in_the_cache_key(client, video) -> None:
+    """Правка обязана пересобрать субтитры: иначе ролик остаётся с прежними,
+    и выглядит это как «настройка не работает»."""
+    from narezka.core.paths import video_paths
+    from narezka.stages.subtitles import SubtitlesStage
+    from narezka.core.device import DeviceInfo
+    from narezka.core.stage import StageContext
+    from narezka.core.logging import get_logger
+
+    config, _ = api_app._config()
+    paths = video_paths(config.storage_root, "default", VIDEO)
+    ctx = StageContext(
+        project_id="default", video_id=VIDEO, paths=paths, config=config,
+        device=DeviceInfo(kind="cpu", name="test"), log=get_logger("test"),
+    )
+    before = SubtitlesStage().config_slice(ctx)
+    client.put(f"/api/videos/{VIDEO}/subtitles", json={"preset": "one_word"})
+    assert SubtitlesStage().config_slice(ctx) != before

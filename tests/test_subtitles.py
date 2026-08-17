@@ -166,3 +166,91 @@ def test_words_in_range_returns_sorted() -> None:
         {"suspect": False, "words": words(("рано", 1.0, 1.4))},
     ]
     assert [w["word"] for w in words_in_range(unordered, 0.0, 10.0)] == ["рано", "поздно"]
+
+
+# --- настройка оформления ---------------------------------------------------
+
+
+def test_word_limit_breaks_the_line(): 
+    """Предел по словам задают на глаз: «не больше трёх в строке»."""
+    from narezka.core.subtitles import preset_style, wrap_words
+
+    words = [{"word": w, "start": i * 0.3, "end": i * 0.3 + 0.25}
+             for i, w in enumerate("раз два три четыре пять шесть".split())]
+    lines = wrap_words(words, max_chars=100, max_words=2)
+    assert [len(line) for line in lines] == [2, 2, 2]
+
+    style = preset_style("classic", {"max_words_per_line": 1})
+    assert style.max_words_per_line == 1
+
+
+def test_long_word_still_wraps_by_width():
+    """Предел по символам никуда не девается: «Здравствуйте, уважаемые» —
+    это два слова, но полторы строки."""
+    from narezka.core.subtitles import wrap_words
+
+    words = [{"word": "Здравствуйте,", "start": 0, "end": 0.5},
+             {"word": "уважаемые", "start": 0.5, "end": 1.0}]
+    lines = wrap_words(words, max_chars=14, max_words=5)
+    assert len(lines) == 2
+
+
+def test_position_changes_alignment():
+    """ASS считает выравнивание цифрами; наружу отдаются слова."""
+    from narezka.core.subtitles import build_ass, preset_style
+
+    words = [{"word": "тест", "start": 0.0, "end": 0.5}]
+    for position, alignment in (("bottom", "2"), ("middle", "5"), ("top", "8")):
+        style = preset_style("classic", {"position": position})
+        ass = build_ass(words, style=style, width=1080, height=1920)
+        line = next(l for l in ass.splitlines() if l.startswith("Style:"))
+        assert line.split(",")[18] == alignment, position
+
+
+def test_colour_conversion_is_reversible():
+    """Порядок байтов в ASS обратный привычному, и перепутать его легко:
+    ошибка выглядит как «сделал жёлтый, получил синий»."""
+    from narezka.core.subtitles import ass_colour, hex_colour
+
+    assert ass_colour("#FFCC00") == "&H0000CCFF"
+    assert hex_colour("&H0000CCFF") == "#FFCC00"
+    for colour in ("#FFFFFF", "#000000", "#33D6FF", "#FF3B30"):
+        assert hex_colour(ass_colour(colour)) == colour
+
+
+def test_bad_colour_is_refused():
+    from narezka.core.subtitles import ass_colour
+
+    with pytest.raises(ValueError):
+        ass_colour("почти жёлтый")
+
+
+def test_preset_keeps_untouched_fields():
+    """Человек меняет цвет и ждёт, что остальное останется от набора."""
+    from narezka.core.subtitles import PRESETS, preset_style
+
+    base = preset_style("loud")
+    tuned = preset_style("loud", {"primary": "&H0000FFFF"})
+    assert tuned.font_size == base.font_size and tuned.outline == base.outline
+    assert tuned.primary != base.primary
+    assert set(PRESETS) >= {"classic", "loud", "calm", "center", "one_word"}
+
+
+def test_old_style_names_still_work():
+    """Записи, сделанные до пресетов, ссылаются на STYLE_1: молча подставить
+    другой стиль значило бы поменять готовые ролики."""
+    from narezka.core.subtitles import preset_style
+
+    assert preset_style("STYLE_1").name == "classic"
+    assert preset_style("STYLE_3").font == "DejaVu Serif"
+
+
+def test_colour_must_be_hexadecimal():
+    """Найдено тестом: «жёлтый» — ровно шесть знаков, и проверка длины
+    пропускала его, превращая в цвет «&H00ЫЙЛТЖЁ». Увидеть это можно было бы
+    только на готовом ролике."""
+    from narezka.core.subtitles import ass_colour
+
+    for bad in ("жёлтый", "ffcc0g", "#12345", "не цвет"):
+        with pytest.raises(ValueError):
+            ass_colour(bad)

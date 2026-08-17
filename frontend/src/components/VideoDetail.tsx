@@ -11,6 +11,7 @@ import {
   type ReviewClip,
   type Billing,
   type ShortsIndex,
+  type SubtitleOptions,
   type StageGroup,
   type Transcript,
   type VideoDetail as Detail,
@@ -22,6 +23,7 @@ import { Hint } from "./Hint";
 import { RunPanel } from "./RunPanel";
 import { Workspace, type Tab, type TabId } from "./Workspace";
 import { AnalysisSettings, ShortSettings } from "./SettingsPanel";
+import { SubtitlesPanel } from "./SubtitlesPanel";
 import { PublishView } from "./PublishView";
 import { ReviewView } from "./ReviewView";
 import { ShortsView } from "./ShortsView";
@@ -63,6 +65,7 @@ export function VideoDetail({ videoId, onBack }: Props) {
   const [longChosen, setLongChosen] = useState(false);
   const [longMade, setLongMade] = useState(0);
   const [money, setMoney] = useState<Billing | null>(null);
+  const [subtitleOptions, setSubtitleOptions] = useState<SubtitleOptions | null>(null);
   // Вкладка помнится между заходами: возвращаясь к проекту, человек
   // продолжает с того места, где остановился, а не с начала.
   const [tab, setTab] = useState<TabId>(
@@ -112,6 +115,7 @@ export function VideoDetail({ videoId, onBack }: Props) {
       // Списки грузятся мягко: каталог моделей ходит в сеть, и его отказ
       // не должен мешать остальной работе.
       api.billing().then(setMoney).catch(() => setMoney(null));
+      api.subtitleOptions().then(setSubtitleOptions).catch(() => setSubtitleOptions(null));
       api.models().then(setModels).catch(() => setModels(null));
       api.detectors().then(setDetectors).catch(() => setDetectors(null));
       api.encoders().then(setEncoders).catch(() => setEncoders(null));
@@ -498,6 +502,9 @@ export function VideoDetail({ videoId, onBack }: Props) {
               {/* Предпросмотр рядом с настройками: их правят, глядя на
                   результат, а не вслепую с переходом туда-обратно. */}
               <FramingPanel videoId={videoId} busy={running} onSaved={() => void load()} />
+              {framing?.subtitles_enabled && (
+                <SubtitlesPanel videoId={videoId} disabled={running} />
+              )}
               {framing && (
                 <div className="panel">
                   <ShortSettings
@@ -507,6 +514,7 @@ export function VideoDetail({ videoId, onBack }: Props) {
                     disabled={running}
                     detectors={detectors}
                     encoders={encoders}
+                    faceZoom={subtitleOptions?.face_zoom}
                   />
                 </div>
               )}

@@ -44,7 +44,7 @@ def load_clips(paths, *, apply_review: bool = True) -> tuple[list[dict[str, Any]
     """
     clips, source = _from_artifacts(paths)
     if apply_review:
-        clips = _apply_review(paths, clips)
+        clips = _apply_review(paths, clips, source)
     return clips, source
 
 
@@ -85,8 +85,13 @@ def _from_artifacts(paths) -> tuple[list[dict[str, Any]], str]:
     return [], "none"
 
 
-def _apply_review(paths, clips: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Убирает отклонённое и подставляет границы, поправленные человеком.
+def _apply_review(paths, clips: list[dict[str, Any]], source: str) -> list[dict[str, Any]]:
+    """Слово человека поверх отбора — в обе стороны.
+
+    «Не годится» убирает момент из сборки, «годится» — возвращает тот, что
+    модель отбросила. Без второго выбор был односторонним: убрать лишнее
+    можно, а вернуть зря выброшенное нельзя, и «годится» оставалось отметкой
+    ни на что не влияющей.
 
     Неразмеченный момент остаётся: отсутствие решения — это «ещё не смотрел»,
     а не «не нужен». Требовать одобрения на каждый значило бы заставлять
@@ -118,7 +123,57 @@ def _apply_review(paths, clips: list[dict[str, Any]]) -> list[dict[str, Any]]:
             start, end = float(entry["start"]), float(entry["end"])
             clip = {**clip, "start": start, "end": end, "duration": round(end - start, 3)}
         kept.append(clip)
+
+    if source == "selection":
+        kept.extend(_rescued(paths, decisions, {clip.get("index") for clip in clips}))
+        # По времени, а не по оценке: ролики идут в том порядке, в каком шли
+        # в записи, и возвращённый момент обязан встать на своё место.
+        kept.sort(key=lambda clip: clip["start"])
     return kept
+
+
+def _rescued(paths, decisions: dict, selected: set) -> list[dict[str, Any]]:
+    """Моменты, которые модель не выбрала, а человек отметил «годится».
+
+    Оценки у них нет и взяться ей неоткуда: модель их не разбирала. Ставить
+    им ноль было бы неправдой — `interest_score` остаётся None, «не измерено»
+    (§54), а `rescued` говорит, откуда момент взялся.
+    """
+    wanted = [
+        index for index, entry in decisions.items()
+        if entry.get("verdict") == "accept" and index not in selected
+    ]
+    if not wanted:
+        return []
+
+    artifact = Artifact(paths.analysis / CANDIDATES_NAME)
+    if not artifact.exists():
+        return []
+    try:
+        candidates = artifact.read_json().get("candidates", [])
+    except ValueError:
+        return []
+
+    rescued = []
+    for index in sorted(wanted):
+        if not 0 <= index < len(candidates):
+            continue
+        entry = decisions[index]
+        clip = _normalize(candidates[index], index=index)
+        # Границы человека здесь берутся всегда, а не только подвинутые:
+        # уточнять их было некому — модель этот момент не разбирала.
+        start, end = float(entry["start"]), float(entry["end"])
+        rescued.append({
+            **clip,
+            "start": start,
+            "end": end,
+            "duration": round(end - start, 3),
+            "interest_score": None,
+            "rank": None,
+            "rescued": True,
+            "explanation": "Момент вернул человек: модель его не выбрала",
+        })
+    return rescued
 
 
 def review_summary(paths) -> dict[str, int]:

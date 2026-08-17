@@ -222,8 +222,24 @@ export function VideoDetail({ videoId, onBack }: Props) {
     ? `${STAGE_TITLES[skipped.stage] ?? skipped.stage} — пропущено${skipped.reason ? `: ${skipped.reason}` : ""}`
     : undefined;
 
-  const rejected = reviewClips.filter((c) => c.verdict === "reject").length;
-  const forShorts = reviewClips.length - rejected;
+  // Сколько моментов уйдёт в ролики. Считается так же, как решает сборка:
+  // взятые моделью минус отклонённые человеком плюс возвращённые им.
+  // Раньше здесь стояло «все кандидаты минус отклонённые» и выходило «соберём
+  // 79», когда модель отобрала тридцать.
+  const scored = reviewClips.some((clip) => clip.selected);
+  const rejected = reviewClips.filter(
+    (clip) => clip.verdict === "reject" && (!scored || clip.selected),
+  ).length;
+  const rescued = scored
+    ? reviewClips.filter((clip) => !clip.selected && clip.verdict === "accept").length
+    : 0;
+  const forShorts = scored
+    ? reviewClips.filter(
+        (clip) =>
+          (clip.selected && clip.verdict !== "reject") ||
+          (!clip.selected && clip.verdict === "accept"),
+      ).length
+    : reviewClips.filter((clip) => clip.verdict !== "reject").length;
 
   const tabs: Tab[] = [
     { id: "source", label: "Исходник" },
@@ -411,9 +427,13 @@ export function VideoDetail({ videoId, onBack }: Props) {
             hint={
               reviewClips.length === 0
                 ? "Разбор запустится сам, а из найденных моментов соберутся ролики"
-                : rejected > 0
-                  ? `Соберём ${forShorts} моментов из ${reviewClips.length} — ${rejected} отклонено в обзоре`
-                  : `Соберём ${forShorts} ${forShorts === 1 ? "момент" : "моментов"} из обзора`
+                : [
+                    `Соберём ${forShorts} ${forShorts === 1 ? "момент" : "моментов"}`,
+                    rejected > 0 ? `${rejected} отклонено вами` : "",
+                    rescued > 0 ? `${rescued} возвращено вами` : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")
             }
             done={(shorts?.files.length ?? 0) > 0}
             blocked={forShorts === 0 && reviewClips.length > 0 ? "Все моменты отклонены в обзоре — собирать нечего" : undefined}

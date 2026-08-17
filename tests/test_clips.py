@@ -186,3 +186,43 @@ def test_decisions_are_part_of_the_cache_key(paths) -> None:
     decide(paths, {"index": 0, "verdict": "reject", "start": 10.0, "end": 40.0,
                    "original": {"start": 10.0, "end": 40.0}})
     assert "review.json" in [a.name for a in clip_inputs(paths)]
+
+
+def test_accepted_moment_returns_even_if_the_model_dropped_it(paths) -> None:
+    """Выбор человека работает в обе стороны.
+
+    Иначе «годится» — отметка ни на что не влияющая: убрать лишнее можно,
+    а вернуть зря выброшенное нельзя.
+    """
+    write(paths, "candidates.json", CANDIDATES)
+    write(paths, "selection.json", SELECTION)  # модель выбрала только index=1
+    decide(paths, {"index": 0, "verdict": "accept", "start": 10.0, "end": 40.0,
+                   "original": {"start": 10.0, "end": 40.0}})
+
+    clips, _ = load_clips(paths)
+    assert [c["index"] for c in clips] == [0, 1], "порядок по времени, а не по оценке"
+    returned = clips[0]
+    assert returned["rescued"] is True
+    # Оценки у него нет и взяться ей неоткуда: модель момент не разбирала.
+    assert returned["interest_score"] is None
+
+
+def test_rescued_moment_keeps_the_bounds_the_human_set(paths) -> None:
+    """Уточнять границы было некому — берётся то, что поставил человек."""
+    write(paths, "candidates.json", CANDIDATES)
+    write(paths, "selection.json", SELECTION)
+    decide(paths, {"index": 0, "verdict": "accept", "start": 12.5, "end": 33.0,
+                   "original": {"start": 10.0, "end": 40.0}})
+    clips, _ = load_clips(paths)
+    assert (clips[0]["start"], clips[0]["end"]) == (12.5, 33.0)
+
+
+def test_nothing_is_rescued_without_a_model_selection(paths) -> None:
+    """Без отбора моделью в сборку идут все кандидаты, и возвращать нечего —
+    момент не должен попасть в список дважды."""
+    write(paths, "candidates.json", CANDIDATES)
+    decide(paths, {"index": 0, "verdict": "accept", "start": 10.0, "end": 40.0,
+                   "original": {"start": 10.0, "end": 40.0}})
+    clips, source = load_clips(paths)
+    assert source == "candidates"
+    assert [c["index"] for c in clips] == [0, 1]

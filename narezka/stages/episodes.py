@@ -14,6 +14,7 @@ from typing import Any
 
 from narezka.core import episodes as core
 from narezka.core import llm
+from narezka.core import settings
 from narezka.core.artifacts import Artifact
 from narezka.core.prompts import EPISODES_SYSTEM_PROMPT, build_episodes_message
 from narezka.core.stage import Device, Stage, StageContext, StageSkipped
@@ -24,6 +25,7 @@ EPISODES_NAME = "episodes.json"
 
 class EpisodesStage(Stage):
     name = "episodes"
+    group = "long"
     #: v1 — разметка окон модели с перекрытием и слиянием стыков.
     version = 1
     device = Device.ANY
@@ -38,13 +40,13 @@ class EpisodesStage(Stage):
 
     def config_slice(self, ctx: StageContext) -> dict[str, Any]:
         return {
-            "enabled": ctx.config.compilation.find_episodes,
+            "enabled": settings.compilation(ctx.config, ctx.paths).find_episodes,
             "model": ctx.config.llm.model,
             "chunk_seconds": core.CHUNK_SECONDS,
         }
 
     def check_available(self, ctx: StageContext) -> str | None:
-        if not ctx.config.compilation.find_episodes:
+        if not settings.compilation(ctx.config, ctx.paths).find_episodes:
             return "поиск эпизодов выключен"
         provider = llm.provider(ctx.config.llm.provider)
         if not llm.api_key(provider_name=ctx.config.llm.provider):

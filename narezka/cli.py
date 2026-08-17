@@ -15,14 +15,14 @@ from dotenv import load_dotenv
 from rich.console import Console
 from rich.table import Table
 
-from narezka.core import env, registry
+from narezka.core import env, registry, settings
 from narezka.core.artifacts import Artifact, cleanup_partials
 from narezka.core.config import load_config
 from narezka.core.logging import get_logger, setup_logging
 from narezka.core.paths import list_videos, video_paths
 from narezka.core.runner import Outcome, run_pipeline, run_stage
 from narezka.core.stage import StageContext
-from narezka.stages import PIPELINE, REGISTRY, get_stage
+from narezka.stages import GROUPS, PIPELINE, REGISTRY, get_stage, stages_for
 
 app = typer.Typer(add_completion=False, help="Narezka OS — AI-монтажёр длинных видео")
 console = Console()
@@ -181,10 +181,14 @@ def stages() -> None:
     table = Table(title="Стадии пайплайна")
     table.add_column("#")
     table.add_column("Стадия", style="bold")
+    table.add_column("Кусок работы")
     table.add_column("Устройство")
     table.add_column("Описание")
     for index, stage in enumerate(PIPELINE, 1):
-        table.add_row(str(index), stage.name, stage.device.value, stage.description)
+        table.add_row(
+            str(index), stage.name, GROUPS.get(stage.group, stage.group),
+            stage.device.value, stage.description,
+        )
     console.print(table)
     if not PIPELINE:
         console.print("[yellow]Стадий пока нет.[/yellow]")
@@ -217,16 +221,32 @@ def run(
 @app.command()
 def pipeline(
     video_id: Annotated[str, typer.Option("--video-id", "-i")],
+    group: Annotated[
+        str | None,
+        typer.Option("--group", "-g", help="Кусок работы: analysis | shorts | long"),
+    ] = None,
     project: Annotated[str, typer.Option("--project", "-p")] = "default",
     force: Annotated[bool, typer.Option("--force", help="Игнорировать кэш")] = False,
     profile: Annotated[str | None, typer.Option("--profile", help="dev | batch")] = None,
     config_path: Annotated[Path | None, typer.Option("--config")] = None,
 ) -> None:
-    """Прогнать весь пайплайн."""
+    """Прогнать пайплайн целиком или один кусок работы.
+
+    `--group analysis` доводит запись до расшифровки и найденных моментов,
+    `shorts` добавляет к этому сборку роликов, `long` — длинную нарезку.
+    Недостающее подтягивается само, уже посчитанное берётся из кэша, поэтому
+    порядок нажатий значения не имеет.
+    """
     ctx = _build_context(video_id, project, profile, config_path)
     console.print(f"Профиль [bold]{ctx.config.resolved_profile}[/bold], устройство [bold]{ctx.device.kind}[/bold]")
 
-    results = run_pipeline(list(PIPELINE), ctx, force=force)
+    try:
+        planned = stages_for(group) if group else list(PIPELINE)
+    except KeyError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+
+    results = run_pipeline(planned, ctx, force=force)
 
     table = Table(title="Итог")
     table.add_column("Стадия", style="bold")
@@ -243,6 +263,63 @@ def pipeline(
 
     if any(not r.ok for r in results):
         raise typer.Exit(1)
+
+
+@app.command()
+def longcut(
+    video_id: Annotated[str, typer.Option("--video-id", "-i")],
+    story: Annotated[bool, typer.Option("--story/--no-story", help="Связные эпизоды")] = False,
+    best: Annotated[bool, typer.Option("--best/--no-best", help="Подборка лучших моментов")] = False,
+    episodes: Annotated[
+        str | None,
+        typer.Option("--episodes", help="Номера эпизодов через запятую; пусто — все подряд"),
+    ] = None,
+    minutes: Annotated[int | None, typer.Option("--minutes", help="Желаемая длина, мин")] = None,
+    project: Annotated[str, typer.Option("--project", "-p")] = "default",
+    config_path: Annotated[Path | None, typer.Option("--config")] = None,
+) -> None:
+    """Что собирать в длинную нарезку. То же делает вкладка «Длинная нарезка».
+
+    Настройка хранится при записи, а не в общем конфиге: подходящая длина
+    и состав зависят от того, что в этой записи происходит.
+    """
+    config = load_config(config_path)
+    paths = video_paths(config.storage_root, project, video_id)
+    if not paths.exists():
+        console.print(f"[red]Видео '{video_id}' не найдено.[/red]")
+        raise typer.Exit(1)
+
+    chosen: list[int] | None = None
+    if episodes is not None:
+        try:
+            chosen = [int(part) for part in episodes.split(",") if part.strip()]
+        except ValueError as exc:
+            console.print("[red]Номера эпизодов — числа через запятую, например 0,2,5.[/red]")
+            raise typer.Exit(1) from exc
+
+    current = settings.compilation(config, paths)
+    settings.update(paths, {
+        settings.COMPILATION_KEY: {
+            "story": story,
+            "best": best,
+            "episodes": chosen if chosen is not None else current.episodes,
+            "target_minutes": minutes if minutes is not None else current.target_minutes,
+            # Выбор человека и есть включение: отдельная галочка «собирать»
+            # поверх «собрать подборку» была бы вторым выключателем к той же
+            # лампе. Поиск эпизодов нужен только сюжетному режиму.
+            "enabled": story or best,
+            "find_episodes": story,
+        }
+    })
+
+    updated = settings.compilation(config, paths)
+    what = ", ".join(filter(None, [
+        "связные эпизоды" if updated.story else "",
+        "подборка лучших" if updated.best else "",
+    ])) or "ничего"
+    console.print(f"Длинная нарезка: [bold]{what}[/bold], около {updated.target_minutes} мин")
+    if updated.enabled:
+        console.print(f"Собрать: [bold]narezka pipeline --video-id {video_id} --group long[/bold]")
 
 
 @app.command()

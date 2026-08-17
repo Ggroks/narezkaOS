@@ -17,7 +17,7 @@ from typing import Any
 
 from narezka.core import detectors, tracking, facecam
 from narezka.core.artifacts import Artifact
-from narezka.core.clips import SELECTION_NAME, load_clips
+from narezka.core.clips import SELECTION_NAME, clip_inputs, load_clips
 from narezka.core.media import find_source
 from narezka.core.stage import Device, Stage, StageContext, StageSkipped
 
@@ -121,6 +121,7 @@ MIN_TRACK_HITS = 0.5
 
 class FacecamStage(Stage):
     name = "facecam"
+    group = "shorts"
     #: v3 — область контента ищется по близким кадрам: на разнесённых
     #: движение одинаково высоко по всему экрану и ничего не различает.
     version = 3
@@ -170,8 +171,7 @@ class FacecamStage(Stage):
         return {"points": [[round(t, 3), round(x, 1)] for t, x in points], "travel": round(track.travel, 1)}
 
     def inputs(self, ctx: StageContext) -> list[Artifact]:
-        selection = Artifact(ctx.paths.analysis / SELECTION_NAME)
-        return [selection if selection.exists() else Artifact(ctx.paths.analysis / "candidates.json")]
+        return clip_inputs(ctx.paths)
 
     def outputs(self, ctx: StageContext) -> list[Artifact]:
         return [Artifact(ctx.paths.analysis / FACECAM_NAME)]

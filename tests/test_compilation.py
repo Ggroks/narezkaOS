@@ -182,17 +182,51 @@ def test_several_episodes_can_be_chosen():
     assert CompilationConfig().episodes is None, "None — выбрать самый цельный"
 
 
-def test_nothing_selected_is_reported_not_guessed():
+def test_nothing_selected_is_reported_not_guessed(tmp_path):
     """Ни сюжета, ни подборки — стадия говорит об этом, а не решает сама."""
     from narezka.core.config import CompilationConfig, load_config
+    from narezka.core.paths import video_paths
     from narezka.stages.compilation import CompilationStage
+
+    paths = video_paths(tmp_path, "default", "v")
+    paths.ensure()
 
     class Ctx:
         class config:
             compilation = CompilationConfig(enabled=True, story=False, best=False)
 
-    reason = CompilationStage().check_available(Ctx())
+    ctx = Ctx()
+    # Настройки читаются для конкретной записи, поэтому пути нужны и здесь.
+    ctx.paths = paths
+
+    reason = CompilationStage().check_available(ctx)
     assert reason and "не выбран" in reason
+
+
+def test_choice_for_one_video_beats_the_common_config(tmp_path):
+    """Правка для записи важнее общей настройки — и попадает в ключ кэша.
+
+    Без второго стадия отдала бы прежний ролик после того, как человек
+    поменял выбор: молча и без единого признака, что его не услышали.
+    """
+    import json
+
+    from narezka.core import settings
+    from narezka.core.config import load_config
+    from narezka.core.paths import video_paths
+
+    config = load_config()
+    paths = video_paths(tmp_path, "default", "v")
+    paths.ensure()
+
+    assert settings.compilation(config, paths).enabled is config.compilation.enabled
+
+    settings.update(paths, {"compilation": {"enabled": True, "story": False, "best": True}})
+    effective = settings.compilation(config, paths)
+    assert effective.enabled and effective.best and not effective.story
+    # Остальное берётся из конфига, а не обнуляется.
+    assert effective.target_minutes == config.compilation.target_minutes
+    assert json.loads(paths.framing.read_text(encoding="utf-8"))["compilation"]["best"] is True
 
 
 def _edits_ctx(tmp_path, stored=None):

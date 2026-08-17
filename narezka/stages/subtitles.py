@@ -15,7 +15,7 @@ from typing import Any
 from narezka.core.artifacts import Artifact
 from narezka.core.stage import Device, Stage, StageContext, StageSkipped
 from narezka.core.subtitles import STYLES, build_ass, words_in_range
-from narezka.core.clips import SELECTION_NAME, describe_source, load_clips
+from narezka.core.clips import SELECTION_NAME, clip_inputs, describe_source, load_clips
 from narezka.stages.transcribe import TRANSCRIPT_NAME
 
 INDEX_NAME = "index.json"
@@ -23,6 +23,7 @@ INDEX_NAME = "index.json"
 
 class SubtitlesStage(Stage):
     name = "subtitles"
+    group = "shorts"
     #: v3 — субтитры собираются по отобранным моделью клипам с уточнёнными
     #: границами, а не по сырым кандидатам (§11).
     version = 3
@@ -32,10 +33,7 @@ class SubtitlesStage(Stage):
     def inputs(self, ctx: StageContext) -> list[Artifact]:
         # Отбор моделью необязателен: без него берутся кандидаты. Он указан
         # входом, чтобы появление selection.json пересобрало субтитры.
-        inputs = [Artifact(ctx.paths.transcript / TRANSCRIPT_NAME)]
-        selection = Artifact(ctx.paths.analysis / SELECTION_NAME)
-        inputs.append(selection if selection.exists() else Artifact(ctx.paths.analysis / "candidates.json"))
-        return inputs
+        return [Artifact(ctx.paths.transcript / TRANSCRIPT_NAME), *clip_inputs(ctx.paths)]
 
     def outputs(self, ctx: StageContext) -> list[Artifact]:
         index = Artifact(ctx.paths.base / "subtitles" / INDEX_NAME)

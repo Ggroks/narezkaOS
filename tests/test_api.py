@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -174,6 +175,79 @@ def test_catalog_says_when_there_is_no_frame(client, video) -> None:
 def test_added_date_is_reported_even_for_old_videos(client, video) -> None:
     """У записей, заведённых до появления поля, дата берётся по каталогу."""
     assert client.get("/api/videos").json()[0]["created_at"]
+
+
+# --- запуск по частям ------------------------------------------------------
+
+
+def test_run_accepts_a_known_group(client, video, monkeypatch) -> None:
+    """Кнопка на вкладке запускает свой кусок работы, а не весь пайплайн."""
+    planned: list[list[str]] = []
+    monkeypatch.setattr(
+        api_app, "run_pipeline",
+        lambda stages, ctx, **kw: planned.append([s.name for s in stages]) or [],
+    )
+    assert client.post(f"/api/videos/{VIDEO}/run", json={"group": "shorts"}).status_code == 200
+
+    for _ in range(100):
+        if planned:
+            break
+        time.sleep(0.02)
+    assert planned, "фоновая задача не запустилась"
+    assert "render" in planned[0] and "episodes" not in planned[0]
+
+
+def test_unknown_group_is_a_clear_400(client, video) -> None:
+    response = client.post(f"/api/videos/{VIDEO}/run", json={"group": "чтонибудь"})
+    assert response.status_code == 400
+    assert "кусок работы" in response.json()["detail"]
+
+
+def test_groups_are_published_for_the_interface(client) -> None:
+    body = client.get("/api/groups").json()["groups"]
+    assert {g["name"] for g in body} == {"analysis", "shorts", "long"}
+    assert all(g["stages"] for g in body)
+
+
+# --- длинная нарезка -------------------------------------------------------
+
+
+def test_long_cut_choice_is_saved_per_video(client, video) -> None:
+    """Выбор человека переживает перезагрузку страницы: без сохранения
+    галочки на вкладке были бы украшением, а кнопка собирала бы по умолчанию."""
+    saved = client.put(
+        f"/api/videos/{VIDEO}/compilation",
+        json={"story": True, "best": False, "episodes": [0, 2], "target_minutes": 15},
+    ).json()
+    assert saved["story"] is True and saved["selected"] == [0, 2]
+    assert saved["target_minutes"] == 15
+
+    again = client.get(f"/api/videos/{VIDEO}/episodes").json()
+    assert again["story"] is True and again["selected"] == [0, 2]
+
+
+def test_choosing_nothing_turns_the_stage_off(client, video) -> None:
+    """Ни сюжета, ни подборки — собирать нечего, и стадия это знает."""
+    from narezka.core import settings as core_settings
+    from narezka.core.paths import video_paths
+
+    client.put(
+        f"/api/videos/{VIDEO}/compilation",
+        json={"story": False, "best": False, "target_minutes": 20},
+    )
+    config, _ = api_app._config()
+    effective = core_settings.compilation(
+        config, video_paths(config.storage_root, "default", VIDEO)
+    )
+    assert effective.enabled is False and effective.find_episodes is False
+
+
+def test_episode_settings_are_available_before_the_search(client, video) -> None:
+    """Вкладка настраивается до того, как эпизоды посчитаны, — иначе выбрать
+    режим нельзя, а без выбора нечего и считать."""
+    body = client.get(f"/api/videos/{VIDEO}/episodes").json()
+    assert body["episodes"] == [] and "reason" in body
+    assert "story" in body and "target_minutes" in body
 
 
 # --- обзор и разметка ------------------------------------------------------

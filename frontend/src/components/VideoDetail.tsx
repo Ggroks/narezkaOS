@@ -9,6 +9,7 @@ import {
   type ModelsInfo,
   type ReviewClip,
   type ShortsIndex,
+  type StageGroup,
   type Transcript,
   type VideoDetail as Detail,
 } from "../api";
@@ -16,8 +17,9 @@ import { FramingPanel } from "./FramingPanel";
 import { PerformanceView } from "./PerformanceView";
 import { EpisodesPanel } from "./EpisodesPanel";
 import { Hint } from "./Hint";
+import { RunPanel } from "./RunPanel";
 import { Workspace, type Tab, type TabId } from "./Workspace";
-import { SettingsPanel } from "./SettingsPanel";
+import { AnalysisSettings, ShortSettings } from "./SettingsPanel";
 import { PublishView } from "./PublishView";
 import { ReviewView } from "./ReviewView";
 import { ShortsView } from "./ShortsView";
@@ -54,6 +56,10 @@ export function VideoDetail({ videoId, onBack }: Props) {
   const [encoders, setEncoders] = useState<EncodersInfo | null>(null);
   const [events, setEvents] = useState<JobEvent[]>([]);
   const [running, setRunning] = useState(false);
+  // Выбрано ли что-нибудь для длинной нарезки. Живёт здесь, потому что от
+  // этого зависит кнопка запуска, а она стоит над панелью выбора.
+  const [longChosen, setLongChosen] = useState(false);
+  const [longMade, setLongMade] = useState(0);
   // Вкладка помнится между заходами: возвращаясь к проекту, человек
   // продолжает с того места, где остановился, а не с начала.
   const [tab, setTab] = useState<TabId>(
@@ -140,12 +146,27 @@ export function VideoDetail({ videoId, onBack }: Props) {
     }
   }
 
-  async function start(stage?: string, force = false) {
+  /**
+   * Запуск куска работы.
+   *
+   * Недостающее подтягивается на сервере, а посчитанное берётся из кэша,
+   * поэтому нажать «не ту» кнопку нельзя: сборка роликов на необработанной
+   * записи сама сделает разбор, а на обработанной не станет делать его заново.
+   */
+  async function start(payload: { group?: StageGroup; stage?: string; force?: boolean }) {
     setError(null);
     setEvents([]);
     try {
-      await api.run(videoId, { stage, force });
+      await api.run(videoId, payload);
       setRunning(true);
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : String(exc));
+    }
+  }
+
+  async function stop() {
+    try {
+      await api.stop(videoId);
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : String(exc));
     }
@@ -168,7 +189,7 @@ export function VideoDetail({ videoId, onBack }: Props) {
         ) : (
           <p className="empty">Загрузка…</p>
         )}
-        <button onClick={onBack}>← К списку</button>
+        <button onClick={onBack}>← К проектам</button>
       </div>
     );
   }
@@ -182,19 +203,37 @@ export function VideoDetail({ videoId, onBack }: Props) {
   const progress = running
     ? [...events].reverse().find((e) => e.event === "progress" && e.stage === activeStage)
     : undefined;
+
+  // Чем кончился прошлый прогон. Сломанное и пропущенное разведены: поломка
+  // это новость всегда, а пропуск — только когда результата так и нет.
+  // Иначе на каждой записи без чата висело бы «чтение чата пропущено».
+  const finished = running ? [] : [...events].reverse();
+  const failed = finished.find(
+    (e) => e.event === "error" || (e.event === "finished" && e.outcome === "failed"),
+  );
+  const skipped = finished.find((e) => e.event === "finished" && e.outcome === "skipped");
+
+  const failure = failed
+    ? failed.event === "error"
+      ? `Ошибка: ${failed.message}`
+      : `${STAGE_TITLES[failed.stage] ?? failed.stage} — ошибка${failed.reason ? `: ${failed.reason}` : ""}`
+    : undefined;
+  const skipNote = skipped
+    ? `${STAGE_TITLES[skipped.stage] ?? skipped.stage} — пропущено${skipped.reason ? `: ${skipped.reason}` : ""}`
+    : undefined;
+
+  const rejected = reviewClips.filter((c) => c.verdict === "reject").length;
+  const forShorts = reviewClips.length - rejected;
+
   const tabs: Tab[] = [
     { id: "source", label: "Исходник" },
     { id: "moments", label: "Обзор моментов", count: reviewClips.length },
-    { id: "framing", label: "Кадрирование" },
-    {
-      id: "shorts",
-      label: "Короткие видео",
-      count: shorts?.files.length ?? 0,
-      blockedBy: shorts?.files.length ? undefined : "Появится после сборки роликов",
-    },
+    { id: "shorts", label: "Короткие видео", count: shorts?.files.length ?? 0 },
     { id: "long", label: "Длинная нарезка" },
     { id: "results", label: "Результаты" },
   ];
+
+  const runShared = { running, activeStage, progress, onStop: stop, failure, note: skipNote };
 
   return (
     <Workspace
@@ -205,14 +244,9 @@ export function VideoDetail({ videoId, onBack }: Props) {
       title={meta.title || meta.source_title || meta.source_file || videoId}
       subtitle={formatDuration(meta.duration_seconds)}
       actions={
-        <>
-          <button className="ghost" onClick={onBack}>
-            К проектам
-          </button>
-          <button className="primary" disabled={running} onClick={() => start()}>
-            {running ? "Обработка идёт…" : "Запустить обработку"}
-          </button>
-        </>
+        <button className="ghost" onClick={onBack}>
+          К проектам
+        </button>
       }
       stages={
       <div className="stages-panel">
@@ -261,7 +295,7 @@ export function VideoDetail({ videoId, onBack }: Props) {
                   className="icon"
                   disabled={running}
                   aria-label={`Выполнить заново: ${STAGE_TITLES[stage.name] ?? stage.name}`}
-                  onClick={() => start(stage.name, true)}
+                  onClick={() => start({ stage: stage.name, force: true })}
                 >
                   <span aria-hidden="true">▶</span>
                 </button>
@@ -298,86 +332,153 @@ export function VideoDetail({ videoId, onBack }: Props) {
         </div>
       )}
 
+      {/* ── Исходник: по чему искать моменты и кнопка разбора ───────────── */}
       {tab === "source" && (
         <>
+          <RunPanel
+            {...runShared}
+            title="Разбор записи"
+            hint="Скачает запись, расшифрует речь и найдёт места, из которых выйдут ролики. Сами ролики пока не собираются"
+            label="Найти моменты"
+            againLabel="Найти заново"
+            done={reviewClips.length > 0}
+            onRun={() => start({ group: "analysis" })}
+          />
 
-      <section className="card source-preview" aria-labelledby="source-heading">
-        <h2 id="source-heading">Исходник</h2>
-        <video
-          ref={videoRef}
-          controls
-          preload="metadata"
-          src={api.mediaUrl(videoId)}
-          onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
-        />
-        <div className="row wrap small dim" style={{ marginTop: 10, gap: 14 }}>
-          <span className="tnum">{formatDuration(meta.duration_seconds)}</span>
-          {meta.video?.width && (
-            <span className="tnum">
-              {meta.video.width}×{meta.video.height} @ {meta.video.fps} fps
-            </span>
+          <section className="card source-preview" aria-labelledby="source-heading">
+            <h2 id="source-heading">Исходник</h2>
+            <video
+              ref={videoRef}
+              controls
+              preload="metadata"
+              src={api.mediaUrl(videoId)}
+              onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
+            />
+            <div className="row wrap small dim" style={{ marginTop: 10, gap: 14 }}>
+              <span className="tnum">{formatDuration(meta.duration_seconds)}</span>
+              {meta.video?.width && (
+                <span className="tnum">
+                  {meta.video.width}×{meta.video.height} @ {meta.video.fps} fps
+                </span>
+              )}
+              {meta.audio?.codec && <span>звук: {meta.audio.codec}</span>}
+              {meta.size_bytes && <span className="tnum">{(meta.size_bytes / 1024 ** 3).toFixed(2)} ГБ</span>}
+            </div>
+          </section>
+
+          {/* Свёрнуты, когда моменты уже найдены, и открыты, когда ещё нет:
+              то же правило, что на вкладке роликов. Настройки нужны, пока
+              настраиваешь, и мешают, когда смотришь результат. */}
+          {framing && (
+            <details
+              className="section"
+              key={reviewClips.length > 0 ? "с-моментами" : "пусто"}
+              open={reviewClips.length === 0}
+            >
+              <summary>Как искать моменты: сигналы, звук, модель</summary>
+              <div className="section-body">
+                <div className="panel">
+                  <AnalysisSettings
+                    value={framing}
+                    onChange={updateFraming}
+                    disabled={running}
+                    models={models}
+                  />
+                </div>
+              </div>
+            </details>
           )}
-          {meta.audio?.codec && <span>звук: {meta.audio.codec}</span>}
-          {meta.size_bytes && <span className="tnum">{(meta.size_bytes / 1024 ** 3).toFixed(2)} ГБ</span>}
-        </div>
-      </section>
 
+          {transcript && (
+            <TranscriptView transcript={transcript} currentTime={currentTime} onSeek={seek} />
+          )}
         </>
       )}
 
-      {tab === "source" && transcript && (
-        <TranscriptView
-          transcript={transcript}
-          currentTime={currentTime}
-          onSeek={seek}
-        />
-      )}
-
+      {/* ── Обзор моментов ─────────────────────────────────────────────── */}
       {tab === "moments" && (
         <ReviewView videoId={videoId} durationSeconds={meta.duration_seconds ?? null} />
       )}
 
-      {tab === "framing" && (
-        <div className="settings-column">
-          {/* Предпросмотр рядом с настройками: их правят, глядя на результат,
-              а не вслепую с переходом туда-обратно. */}
-          <FramingPanel videoId={videoId} busy={running} onSaved={() => void load()} />
-<div className="settings-column">
-          {framing && (
-            <div className="panel">
-              <h3>Что вошло в ролик</h3>
-              <SettingsPanel
-                value={framing}
-                onChange={updateFraming}
-                splitAvailable={splitAvailable}
-                disabled={running}
-                // Отбор моментов идёт до сборки, поэтому пересчитывать надо
-                // с него: перерендерить старые кандидаты бессмысленно.
-                models={models}
-                detectors={detectors}
-                encoders={encoders}
-                onReanalyse={() => start("candidates", true)}
-              />
-              <button
-                className="primary"
-                style={{ inlineSize: "100%", marginBlockStart: 10 }}
-                disabled={running}
-                onClick={() => start("render", true)}
-              >
-                Пересобрать ролики
-              </button>
+      {/* ── Короткие видео: кадр, настройки ролика и сборка ─────────────── */}
+      {tab === "shorts" && (
+        <>
+          <RunPanel
+            {...runShared}
+            title="Сборка коротких роликов"
+            label="Собрать"
+            againLabel="Пересобрать"
+            hint={
+              reviewClips.length === 0
+                ? "Разбор запустится сам, а из найденных моментов соберутся ролики"
+                : rejected > 0
+                  ? `Соберём ${forShorts} моментов из ${reviewClips.length} — ${rejected} отклонено в обзоре`
+                  : `Соберём ${forShorts} ${forShorts === 1 ? "момент" : "моментов"} из обзора`
+            }
+            done={(shorts?.files.length ?? 0) > 0}
+            blocked={forShorts === 0 && reviewClips.length > 0 ? "Все моменты отклонены в обзоре — собирать нечего" : undefined}
+            onRun={() => start({ group: "shorts" })}
+          />
+
+          {/* Пока роликов нет, настройки открыты: человек пришёл настраивать.
+              Когда ролики есть — свёрнуты, потому что пришёл он смотреть их,
+              а не листать мимо двух десятков переключателей. Ключ заставляет
+              блок пересобраться при смене условия: иначе `open` осталось бы
+              от первого показа, когда роликов ещё не было. */}
+          <details
+            className="section"
+            key={(shorts?.files.length ?? 0) > 0 ? "с-роликами" : "пусто"}
+            open={(shorts?.files.length ?? 0) === 0}
+          >
+            <summary>Настройки ролика: кадр, субтитры, звук</summary>
+            <div className="section-body settings-column">
+              {/* Предпросмотр рядом с настройками: их правят, глядя на
+                  результат, а не вслепую с переходом туда-обратно. */}
+              <FramingPanel videoId={videoId} busy={running} onSaved={() => void load()} />
+              {framing && (
+                <div className="panel">
+                  <ShortSettings
+                    value={framing}
+                    onChange={updateFraming}
+                    splitAvailable={splitAvailable}
+                    disabled={running}
+                    detectors={detectors}
+                    encoders={encoders}
+                  />
+                </div>
+              )}
             </div>
-          )}
-        </div>
-        </div>
+          </details>
+
+          {shorts && shorts.files.length > 0 && <ShortsView videoId={videoId} shorts={shorts} />}
+        </>
       )}
 
-      {tab === "shorts" && shorts && shorts.files.length > 0 && (
-        <ShortsView videoId={videoId} shorts={shorts} />
+      {/* ── Длинная нарезка ────────────────────────────────────────────── */}
+      {tab === "long" && (
+        <>
+          <RunPanel
+            {...runShared}
+            title="Длинная нарезка"
+            hint="Соберёт выбранное ниже. Связные эпизоды сначала ищет модель по расшифровке — это отдельная работа, и она идёт только под свою галочку"
+            label="Собрать"
+            againLabel="Пересобрать"
+            done={longMade > 0}
+            blocked={longChosen ? undefined : "Отметьте ниже, что собирать: подборку, эпизоды или оба"}
+            onRun={() => start({ group: "long" })}
+          />
+          <EpisodesPanel
+            videoId={videoId}
+            busy={running}
+            onState={(chosen, made) => {
+              setLongChosen(chosen);
+              setLongMade(made);
+            }}
+          />
+        </>
       )}
 
-      {tab === "long" && <EpisodesPanel videoId={videoId} />}
-
+      {/* ── Результаты ─────────────────────────────────────────────────── */}
       {tab === "results" && (
         <>
           <PublishView videoId={videoId} />

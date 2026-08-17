@@ -1,10 +1,15 @@
 /** Клиент API. Тот же слой, что и CLI — см. BAZA.md §33. */
 
+/** Кусок работы, который запускается одной кнопкой на своей вкладке. */
+export type StageGroup = "analysis" | "shorts" | "long";
+
 export type StageState = {
   name: string;
   description: string;
   device: string;
   optional: boolean;
+  /** К какой кнопке относится стадия: разбор, ролики или длинная нарезка. */
+  group: StageGroup;
   status: "pending" | "done";
   finished_at?: string;
   duration?: number;
@@ -430,7 +435,7 @@ export const api = {
   renameVideo: (id: string, title: string) =>
     request<VideoSummary>(`/api/videos/${id}`, { method: "PATCH", body: JSON.stringify({ title }) }),
   deleteVideo: (id: string) => request<{ status: string }>(`/api/videos/${id}`, { method: "DELETE" }),
-  run: (id: string, payload: { stage?: string; force?: boolean }) =>
+  run: (id: string, payload: { stage?: string; group?: StageGroup; force?: boolean }) =>
     request<{ started: boolean; status: string }>(`/api/videos/${id}/run`, {
       method: "POST",
       body: JSON.stringify(payload),
@@ -441,6 +446,16 @@ export const api = {
   models: () => request<ModelsInfo>("/api/settings/models"),
   detectors: () => request<DetectorsInfo>("/api/settings/detectors"),
   episodes: (id: string) => request<EpisodesInfo>(`/api/videos/${id}/episodes`),
+  /** Что собирать в длинную нарезку. Выбор хранится при записи. */
+  setCompilation: (
+    id: string,
+    payload: { story: boolean; best: boolean; episodes: number[] | null; target_minutes: number },
+  ) =>
+    request<EpisodesInfo>(`/api/videos/${id}/compilation`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+  stop: (id: string) => request<{ stopping: boolean }>(`/api/videos/${id}/stop`, { method: "POST" }),
   compilations: (id: string) => request<CompilationsInfo>(`/api/videos/${id}/compilations`),
   compilationUrl: (id: string, file: string) =>
     `/api/videos/${id}/compilations/${encodeURIComponent(file)}/media`,

@@ -118,7 +118,7 @@ def merge(candidates: list[dict[str, Any]], review: dict[str, Any]) -> list[dict
             merged["start"] = entry["start"]
             merged["end"] = entry["end"]
             merged["original"] = entry["original"]
-            merged["edited"] = _moved(entry)
+            merged["edited"] = moved(entry)
         else:
             merged["verdict"] = None
             merged["edited"] = False
@@ -127,7 +127,14 @@ def merge(candidates: list[dict[str, Any]], review: dict[str, Any]) -> list[dict
     return result
 
 
-def _moved(entry: dict[str, Any]) -> bool:
+def moved(entry: dict[str, Any]) -> bool:
+    """Двигал ли человек границы этого момента.
+
+    Публичная: по ней сборка решает, брать границы из разметки или те, что
+    уточнила модель. Записанные границы есть у каждого решения, даже когда
+    человек только нажал «годится», — поэтому «есть запись» и «границы
+    поправлены» это разные вещи.
+    """
     original = entry.get("original") or {}
     return (
         abs(entry["start"] - original.get("start", entry["start"])) > NUDGE_EPSILON

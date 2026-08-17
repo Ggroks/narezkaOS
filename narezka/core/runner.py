@@ -95,7 +95,15 @@ def _run_stage_inner(stage: Stage, ctx: StageContext, *, force: bool) -> StageRe
 
         missing = [a.path.name for a in stage.inputs(ctx) if not a.exists()]
         if missing:
-            reason = f"нет входных артефактов: {', '.join(missing)}"
+            reason = f"нет данных от предыдущего шага: {', '.join(missing)}"
+            # Необязательная стадия здесь пропускается, а не падает (§62).
+            # Иначе честно пропущенный шаг («в записи нет речи») превращал
+            # следующий в ошибку и обрывал весь прогон: человек нажимал
+            # «найти моменты» и получал красное «нет входных артефактов»
+            # вместо «искать не в чем».
+            if stage.optional and ctx.config.degrade_gracefully:
+                ctx.log.warning("пропущена: %s", reason)
+                return StageResult(stage.name, Outcome.SKIPPED, reason=reason)
             ctx.log.error(reason)
             return StageResult(stage.name, Outcome.FAILED, reason=reason)
 

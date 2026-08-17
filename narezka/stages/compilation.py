@@ -23,7 +23,8 @@ from narezka.core.assemble import cut_piece, join_pieces, total_duration
 from narezka.core import chapters as chap
 from narezka.core import llm
 from narezka.core.prompts import MARKS_SYSTEM_PROMPT, build_marks_message
-from narezka.core.clips import load_clips
+from narezka.core import settings
+from narezka.core.clips import clip_inputs, load_clips
 from narezka.core.media import find_source
 from narezka.core.stage import Device, Stage, StageContext, StageSkipped
 
@@ -33,6 +34,7 @@ PLAN_NAME = "compilation.json"
 
 class CompilationStage(Stage):
     name = "compilation"
+    group = "long"
     #: v1 — сюжетный эпизод и подборка лучших моментов.
     version = 1
     #: Двадцать минут видео перекодируются дольше тридцати шортсов.
@@ -42,7 +44,7 @@ class CompilationStage(Stage):
     description = "Длинная компиляция: сюжетный эпизод или подборка лучших"
 
     def inputs(self, ctx: StageContext) -> list[Artifact]:
-        inputs = [Artifact(ctx.paths.analysis / "selection.json")]
+        inputs = clip_inputs(ctx.paths)
         episodes = Artifact(ctx.paths.analysis / EPISODES_NAME)
         if episodes.exists():
             inputs.append(episodes)
@@ -60,7 +62,7 @@ class CompilationStage(Stage):
         return artifacts
 
     def config_slice(self, ctx: StageContext) -> dict[str, Any]:
-        cfg = ctx.config.compilation
+        cfg = settings.compilation(ctx.config, ctx.paths)
         # Правка входит в ключ кэша: без этого стадия отдала бы прежний
         # ролик после того, как человек подвинул границы.
         edits = Artifact(ctx.paths.analysis / "compilation-edits.json")
@@ -75,7 +77,7 @@ class CompilationStage(Stage):
         }
 
     def check_available(self, ctx: StageContext) -> str | None:
-        cfg = ctx.config.compilation
+        cfg = settings.compilation(ctx.config, ctx.paths)
         if not cfg.enabled:
             return "компиляция выключена"
         if not cfg.story and not cfg.best:
@@ -83,7 +85,7 @@ class CompilationStage(Stage):
         return None
 
     def run(self, ctx: StageContext) -> None:
-        cfg = ctx.config.compilation
+        cfg = settings.compilation(ctx.config, ctx.paths)
         target = cfg.target_minutes * 60.0
         clips, source_name = load_clips(ctx.paths)
         if not clips:
@@ -275,7 +277,7 @@ class CompilationStage(Stage):
             ctx.log.warning("связных эпизодов в записи не нашлось")
             return []
 
-        chosen = ctx.config.compilation.episodes
+        chosen = settings.compilation(ctx.config, ctx.paths).episodes
         if chosen is None:
             # Без явного выбора берётся самый цельный и достаточно длинный:
             # короткий цельный не растянуть до двадцати минут, а длинный

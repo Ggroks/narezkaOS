@@ -16,8 +16,11 @@ from narezka.core.clips import load_clips
 
 
 class Paths:
+    """Двойник раскладки хранилища: сборке нужны только эти два пути."""
+
     def __init__(self, analysis: Path) -> None:
         self.analysis = analysis
+        self.review = analysis / "review.json"
 
 
 @pytest.fixture
@@ -29,6 +32,13 @@ def paths(tmp_path: Path) -> Paths:
 
 def write(paths: Paths, name: str, payload: dict) -> None:
     (paths.analysis / name).write_text(json.dumps(payload), encoding="utf-8")
+
+
+def decide(paths: Paths, *entries: dict) -> None:
+    """Записывает решения обзора так же, как их пишет интерфейс."""
+    paths.review.write_text(
+        json.dumps({"schema_version": 1, "decisions": list(entries)}), encoding="utf-8"
+    )
 
 
 CANDIDATES = {"candidates": [{"start": 10.0, "end": 40.0}, {"start": 100.0, "end": 130.0}]}
@@ -100,3 +110,79 @@ def test_duration_is_computed(paths) -> None:
     write(paths, "candidates.json", CANDIDATES)
     clips, _ = load_clips(paths)
     assert clips[0]["duration"] == 30.0
+
+
+# --- слово человека последнее ----------------------------------------------
+
+
+def test_rejected_moment_does_not_reach_the_shorts(paths) -> None:
+    """«Не годится» в обзоре обязано что-то значить.
+
+    Иначе человек отсматривает тридцать моментов, отбрасывает половину —
+    и получает в роликах ровно то, что отбросил.
+    """
+    write(paths, "candidates.json", CANDIDATES)
+    decide(paths, {"index": 0, "verdict": "reject", "start": 10.0, "end": 40.0,
+                   "original": {"start": 10.0, "end": 40.0}})
+    clips, _ = load_clips(paths)
+    assert [c["index"] for c in clips] == [1]
+
+
+def test_undecided_moment_stays(paths) -> None:
+    """Отсутствие решения — «ещё не смотрел», а не «не нужен».
+
+    Требовать одобрения на каждый момент значило бы заставлять размечать
+    все тридцать ради одной сборки.
+    """
+    write(paths, "candidates.json", CANDIDATES)
+    decide(paths, {"index": 0, "verdict": "accept", "start": 10.0, "end": 40.0,
+                   "original": {"start": 10.0, "end": 40.0}})
+    clips, _ = load_clips(paths)
+    assert [c["index"] for c in clips] == [0, 1]
+
+
+def test_hand_moved_bounds_win_over_the_model(paths) -> None:
+    write(paths, "candidates.json", CANDIDATES)
+    write(paths, "selection.json", SELECTION)
+    decide(paths, {"index": 1, "verdict": None, "start": 107.5, "end": 126.0,
+                   "original": {"start": 100.0, "end": 130.0}})
+    clips, _ = load_clips(paths)
+    assert (clips[0]["start"], clips[0]["end"]) == (107.5, 126.0)
+    assert clips[0]["duration"] == 18.5
+
+
+def test_untouched_bounds_do_not_roll_back_the_model(paths) -> None:
+    """Ловушка: в решении лежат границы кандидата на момент нажатия.
+
+    Человек мог нажать «годится» до того, как модель уточнила границы.
+    Подставлять записанное поверх уточнённого значило бы откатывать
+    уточнение при каждой отметке.
+    """
+    write(paths, "candidates.json", CANDIDATES)
+    write(paths, "selection.json", SELECTION)
+    decide(paths, {"index": 1, "verdict": "accept", "start": 100.0, "end": 130.0,
+                   "original": {"start": 100.0, "end": 130.0}})
+    clips, _ = load_clips(paths)
+    assert (clips[0]["start"], clips[0]["end"]) == (105.0, 128.0)
+
+
+def test_review_can_be_ignored_on_purpose(paths) -> None:
+    """Обзору и полосе записи отклонённое нужно показать, а не спрятать."""
+    write(paths, "candidates.json", CANDIDATES)
+    decide(paths, {"index": 0, "verdict": "reject", "start": 10.0, "end": 40.0,
+                   "original": {"start": 10.0, "end": 40.0}})
+    clips, _ = load_clips(paths, apply_review=False)
+    assert len(clips) == 2
+
+
+def test_decisions_are_part_of_the_cache_key(paths) -> None:
+    """Разметка объявлена входом сборки: без этого «не годится», поставленное
+    после сборки, оставило бы прежние ролики — молча."""
+    from narezka.core.clips import clip_inputs
+
+    write(paths, "candidates.json", CANDIDATES)
+    assert [a.name for a in clip_inputs(paths)] == ["candidates.json"]
+
+    decide(paths, {"index": 0, "verdict": "reject", "start": 10.0, "end": 40.0,
+                   "original": {"start": 10.0, "end": 40.0}})
+    assert "review.json" in [a.name for a in clip_inputs(paths)]

@@ -5,7 +5,8 @@ type Props = {
   videoId: string;
   /** Рендер идёт — менять кадрирование в этот момент бессмысленно. */
   busy: boolean;
-  /** Настройки сохранены: пора перерендерить ролики. */
+  /** Настройки сохранены — обновить остальной экран. Сборку запускает
+      кнопка вкладки, а не эта панель. */
   onSaved: () => void;
 };
 
@@ -351,14 +352,19 @@ export function FramingPanel({ videoId, busy, onSaved }: Props) {
           </fieldset>
 
           <div className="framing-actions">
+            {/* Кнопка только сохраняет. Сборкой ведает одна кнопка на всю
+                вкладку: две кнопки, запускающие рендер с разных мест экрана,
+                — это способ запустить его дважды. */}
             <button className="primary" disabled={busy || saving || !changed} onClick={save}>
-              {saving ? "Сохранение…" : "Сохранить и перерендерить"}
+              {saving ? "Сохранение…" : "Запомнить кадр"}
             </button>
             <button disabled={busy || saving || !state.custom} onClick={reset}>
-              Вернуть как в конфиге
+              Вернуть как было
             </button>
             <span className="small dim status">
-              {changed ? "Не сохранено — ролики пока со старой рамкой." : state.plan.summary}
+              {changed
+                ? "Не сохранено — ролики пока со старой рамкой."
+                : `${state.plan.summary} · применится при сборке`}
             </span>
           </div>
         </div>

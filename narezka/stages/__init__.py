@@ -60,6 +60,34 @@ PIPELINE: list[Stage] = [
 
 REGISTRY: dict[str, Stage] = {stage.name: stage for stage in PIPELINE}
 
+#: Куски работы, которые человек запускает по отдельности. Названия — для
+#: сообщений; порядок — от того, что делается раньше.
+GROUPS: dict[str, str] = {
+    "analysis": "разбор записи",
+    "shorts": "короткие ролики",
+    "long": "длинная нарезка",
+}
+
+
+def stages_for(group: str) -> list[Stage]:
+    """Стадии, которые нужно выполнить ради этого куска работы.
+
+    Разбор записи входит в любой запуск, потому что и ролики, и нарезка
+    делаются из его результатов. Уже посчитанное берётся из кэша за доли
+    секунды, поэтому «лишними» эти стадии не бывают — зато сборка не может
+    оказаться запущенной без того, на чём стоит.
+
+    Обратное неверно: поиск эпизодов не попадает в сборку роликов, хотя
+    в общем порядке стоит раньше неё. Он нужен только длинной нарезке
+    и стоит запросов к модели — платить за него тем, кому он не нужен,
+    было бы обманом.
+    """
+    if group not in GROUPS:
+        known = ", ".join(GROUPS)
+        raise KeyError(f"неизвестный кусок работы '{group}'. Доступны: {known}")
+    wanted = {"analysis", group}
+    return [stage for stage in PIPELINE if stage.group in wanted]
+
 
 def get_stage(name: str) -> Stage:
     try:
@@ -69,4 +97,4 @@ def get_stage(name: str) -> Stage:
         raise KeyError(f"неизвестная стадия '{name}'. Доступны: {known}") from None
 
 
-__all__ = ["PIPELINE", "REGISTRY", "get_stage"]
+__all__ = ["GROUPS", "PIPELINE", "REGISTRY", "get_stage", "stages_for"]

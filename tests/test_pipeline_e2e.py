@@ -212,3 +212,46 @@ def test_subtitles_are_written_for_every_clip(context) -> None:
         text = (context.paths.base / "subtitles" / entry["file"]).read_text(encoding="utf-8")
         # Караоке-подсветка слова и кириллица на месте (§18, §60).
         assert "\\kf" in text and "интересный" in text
+
+
+def test_rejected_moment_is_not_rendered(context) -> None:
+    """Сквозная проверка главного в новом порядке работы: человек смотрит
+    моменты, отклоняет ненужные, нажимает «собрать» — и отклонённого
+    в роликах нет. До этого «не годится» не влияло ни на что.
+
+    Кандидаты здесь записаны руками, а не найдены стадией: на синтетическом
+    ролике их находится ровно один, а проверять надо, что из двух остаётся
+    один, — то есть что лишний именно выпал, а не что список опустел.
+    """
+    from narezka.core import review
+
+    run(ProbeStage(), context)
+    run(ExtractAudioStage(), context)
+    fake_transcript(context.paths)
+
+    candidates = [
+        {"start": 2.0, "end": 9.0, "peak_at": 6.0, "provisional_score": 2.0,
+         "signals": {"loudness_z": 2.4}, "text": "первый"},
+        {"start": 12.0, "end": 19.0, "peak_at": 16.0, "provisional_score": 1.5,
+         "signals": {"loudness_z": 1.8}, "text": "второй"},
+    ]
+    Artifact(context.paths.analysis / "candidates.json").write_json(
+        {"candidates": candidates, "stats": {"total": 2}}
+    )
+
+    run(SubtitlesStage(), context)
+    run(RenderStage(), context)
+    before = Artifact(context.paths.shorts / "index.json").read_json()["files"]
+    assert [f["index"] for f in before] == [0, 1]
+
+    Artifact(context.paths.review).write_json(
+        review.record(review.empty(), index=0, candidate=candidates[0], verdict="reject")
+    )
+
+    # Разметка входит в ключ кэша: стадии обязаны пересчитаться, а не отдать
+    # прежний результат молча.
+    assert run(SubtitlesStage(), context).outcome is Outcome.DONE
+    assert run(RenderStage(), context).outcome is Outcome.DONE
+
+    after = Artifact(context.paths.shorts / "index.json").read_json()["files"]
+    assert [f["index"] for f in after] == [1]

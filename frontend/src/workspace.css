@@ -221,6 +221,29 @@ button.ghost {
 }
 button.ghost:hover:not(:disabled) { color: var(--text); background: var(--surface-2); }
 
+/* ── Полоса запуска ────────────────────────────────────────────────────── */
+
+/* Стоит первой на каждой вкладке: главное действие экрана должно быть видно
+   без прокрутки, а не находиться под настройками. Акцент на экране один,
+   и он принадлежит ей. */
+.runbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap);
+  flex-wrap: wrap;
+  padding: 14px var(--pad);
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+}
+.runbar.running { border-color: var(--accent); background: var(--accent-soft); }
+
+.runbar-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.runbar-text b { font-size: 15px; font-weight: 600; }
+.runbar-text span { text-wrap: pretty; }
+.runbar button { flex: none; }
+
 /* ── Панель хода работы ────────────────────────────────────────────────── */
 
 .stages-panel h3 { margin: 0 0 var(--gap) 0; font-size: 15px; font-weight: 600; }
@@ -302,3 +325,9 @@ button.ghost:hover:not(:disabled) { color: var(--text); background: var(--surfac
 
 /* Подробности ролика: два главных числа видно, остальное под значком. */
 .short-facts { display: flex; align-items: center; gap: var(--gap-sm); }
+
+/* Чем кончился прошлый прогон, когда кончился не тем, чего ждали.
+   Жёлтым, а не красным: пропущенная стадия — обычный ход работы
+   («в записи нет речи»), а не поломка. */
+.runbar-note { color: var(--warn); text-wrap: pretty; }
+.runbar-fail { color: var(--bad); text-wrap: pretty; }

@@ -1,69 +1,39 @@
 import type { DetectorsInfo, EncodersInfo, Framing, ModelsInfo } from "../api";
 
-type Props = {
+/**
+ * Настройки, разложенные по тому, на что они влияют.
+ *
+ * Раньше все два десятка стояли одним списком на вкладке кадрирования, и
+ * понять, что именно изменится от переключателя, было нельзя: сигналы поиска
+ * моментов стояли рядом с размытием фона. Теперь настройка живёт там, где
+ * стоит кнопка, которая её применит:
+ *
+ * - `AnalysisSettings` — вкладка «Исходник»: по чему искать моменты;
+ * - `ShortSettings` — вкладка «Короткие видео»: что попадёт в готовый ролик.
+ *
+ * Выбор для длинной нарезки живёт в `EpisodesPanel` по той же причине.
+ *
+ * Каждая возможность отключается отдельно и по умолчанию включена: нарезка
+ * должна оставаться полезной и в неполном составе — кому-то нужен ролик без
+ * субтитров под свой монтаж, кому-то без нормализации, потому что звук
+ * уже сведён.
+ */
+
+type Common = {
   value: Framing;
   onChange: (patch: Partial<Framing>) => void;
-  /** Пересчёт отбора, а не только сборки: настройка выше по пайплайну. */
-  onReanalyse?: () => void;
-  /** Раскладка «сплит» доступна только там, где найдена вебка наложением. */
-  splitAvailable: boolean;
-  models?: ModelsInfo | null;
-  detectors?: DetectorsInfo | null;
-  encoders?: EncodersInfo | null;
   disabled?: boolean;
 };
 
-/**
- * Переключатели того, что попадёт в готовый ролик.
- *
- * Каждая возможность отключается отдельно и по умолчанию включена. Смысл
- * в том, чтобы нарезка оставалась полезной и в неполном составе: кому-то
- * нужен ролик без субтитров под свой монтаж, кому-то — без нормализации
- * громкости, потому что звук уже сведён.
- */
-export function SettingsPanel({
-  value, onChange, onReanalyse, splitAvailable, disabled, models, detectors, encoders,
-}: Props) {
+export function AnalysisSettings({
+  value, onChange, disabled, models,
+}: Common & { models?: ModelsInfo | null }) {
   return (
     <div className="options">
-      {encoders && (
-        <label className="choice">
-          <span className="choice-label">Чем сжимать видео</span>
-          <select
-            value={value.encoder ?? encoders.selected}
-            disabled={disabled}
-            onChange={(e) => onChange({ encoder: e.target.value })}
-          >
-            {encoders.encoders.map((e) => (
-              <option key={e.name} value={e.name} disabled={!e.available}>
-                {e.label}
-                {e.available ? "" : " — недоступно"}
-              </option>
-            ))}
-          </select>
-          {/* Названы обе стороны: выбор между качеством и скоростью не имеет
-              однозначно верного ответа, и решать его должен человек. */}
-          {(() => {
-            const chosen = encoders.encoders.find(
-              (e) => e.name === (value.encoder ?? encoders.selected),
-            );
-            if (!chosen) return null;
-            return (
-              <span className="choice-hint">
-                <b>плюс:</b> {chosen.pros}
-                <br />
-                <b>минус:</b> {chosen.cons}
-                {chosen.available ? "" : ` · ${chosen.note}`}
-              </span>
-            );
-          })()}
-        </label>
-      )}
-
-      {/* Сигналы поиска моментов. Материал бывает разный: на музыкальном
-          стриме громкость ровная и ничего не различает, на записи без чата
-          чат бесполезен. Выключенный сигнал исключается из расчёта, а не
-          обнуляется — иначе он тянул бы оценку вниз как измеренный ноль. */}
+      {/* Материал бывает разный: на музыкальном стриме громкость ровная и
+          ничего не различает, на записи без чата чат бесполезен. Выключенный
+          сигнал исключается из расчёта, а не обнуляется — иначе он тянул бы
+          оценку вниз как измеренный ноль. */}
       <h4 className="group-title">Где искать интересное</h4>
       <div className="choice">
         <Toggle
@@ -94,12 +64,19 @@ export function SettingsPanel({
           disabled={disabled}
           onChange={(v) => onChange({ use_chat_reactions: v })}
         />
+        <Toggle
+          label="Пропускать приветствия"
+          hint="в начале записи здороваются, а не реагируют на происходящее"
+          checked={value.chat_ignore_start}
+          disabled={disabled}
+          onChange={(chat_ignore_start) => onChange({ chat_ignore_start })}
+        />
       </div>
 
-      {/* Теги звука. Смех полезен почти всем, музыка — тем, кто публикует
-          ролики и рискует правами на неё, аплодисменты и толпа осмысленны
-          лишь на записях с залом. Считать то, чем не пользуются, значит
-          платить временем за ничто. */}
+      {/* Смех полезен почти всем, музыка — тем, кто публикует ролики и рискует
+          правами на неё, аплодисменты и толпа осмысленны лишь на записях
+          с залом. Считать то, чем не пользуются, значит платить временем
+          за ничто. */}
       <h4 className="group-title">Что слышать в звуке</h4>
       <div className="choice">
         <Toggle
@@ -139,6 +116,44 @@ export function SettingsPanel({
         />
       </div>
 
+      {models && models.models.length > 0 && (
+        <>
+          <h4 className="group-title">Кто оценивает моменты</h4>
+          <label className="choice">
+            <span className="sr-only">Модель отбора</span>
+            <select
+              value={value.llm_model ?? models.selected ?? ""}
+              disabled={disabled}
+              onChange={(e) => onChange({ llm_model: e.target.value })}
+            >
+              {models.models.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.id.split("/").pop()}
+                  {m.free ? " · бесплатно" : ""}
+                </option>
+              ))}
+            </select>
+            <span className="choice-hint">
+              {models.provider} · читает расшифровку и решает, какие места
+              стоят ролика
+            </span>
+          </label>
+        </>
+      )}
+    </div>
+  );
+}
+
+export function ShortSettings({
+  value, onChange, splitAvailable, disabled, detectors, encoders,
+}: Common & {
+  /** Раскладка «сплит» доступна только там, где найдена вебка наложением. */
+  splitAvailable: boolean;
+  detectors?: DetectorsInfo | null;
+  encoders?: EncodersInfo | null;
+}) {
+  return (
+    <div className="options">
       <h4 className="group-title">Что войдёт в ролик</h4>
       <Toggle
         label="Субтитры"
@@ -147,15 +162,18 @@ export function SettingsPanel({
         disabled={disabled}
         onChange={(subtitles_enabled) => onChange({ subtitles_enabled })}
       />
+      <Toggle
+        label="Ровная громкость"
+        hint="Приводит все ролики к одному уровню"
+        checked={value.loudnorm_enabled}
+        disabled={disabled}
+        onChange={(loudnorm_enabled) => onChange({ loudnorm_enabled })}
+      />
 
       <h4 className="group-title">Как показать кадр</h4>
       <Toggle
         label="Вебка сверху"
-        hint={
-          splitAvailable
-            ? "Лицо стримера над контентом"
-            : "Вебка не найдена в этом видео"
-        }
+        hint={splitAvailable ? "Лицо стримера над контентом" : "Вебка не найдена в этом видео"}
         checked={value.layout === "split"}
         disabled={disabled || !splitAvailable}
         onChange={(on) => onChange({ layout: on ? "split" : "single" })}
@@ -182,6 +200,16 @@ export function SettingsPanel({
         checked={value.layout === "pip"}
         disabled={disabled || !splitAvailable}
         onChange={(on) => onChange({ layout: on ? "pip" : "single" })}
+      />
+
+      <Toggle
+        label="Размытый фон"
+        hint={value.layout === "split" ? "В раскладке со сплитом не нужен" : "Полосы сверху и снизу"}
+        checked={value.background === "blur" && value.blur_sigma > 0}
+        disabled={disabled || value.layout === "split"}
+        onChange={(on) =>
+          onChange(on ? { background: "blur", blur_sigma: 28 } : { background: "color" })
+        }
       />
 
       {value.layout === "track" && (
@@ -227,55 +255,11 @@ export function SettingsPanel({
         </div>
       )}
 
-      {/* Настройка выше по пайплайну: меняет отбор моментов, а не сборку,
-          поэтому и пересчитывать надо с отбора. */}
       <h4 className="group-title">Тонкая настройка</h4>
-      <Toggle
-        label="Пропускать приветствия"
-        hint="В начале записи здороваются, а не реагируют"
-        checked={value.chat_ignore_start}
-        disabled={disabled}
-        onChange={(chat_ignore_start) => {
-          onChange({ chat_ignore_start });
-          onReanalyse?.();
-        }}
-      />
-
-      <Toggle
-        label="Ровная громкость"
-        hint="Приводит все клипы к одному уровню"
-        checked={value.loudnorm_enabled}
-        disabled={disabled}
-        onChange={(loudnorm_enabled) => onChange({ loudnorm_enabled })}
-      />
-
-      {models && models.models.length > 0 && (
-        <label className="choice">
-          <span className="choice-label">Модель отбора</span>
-          <select
-            value={value.llm_model ?? models.selected ?? ""}
-            disabled={disabled}
-            onChange={(e) => {
-              onChange({ llm_model: e.target.value });
-              onReanalyse?.();
-            }}
-          >
-            {models.models.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.id.split("/").pop()}
-                {m.free ? " · бесплатно" : ""}
-              </option>
-            ))}
-          </select>
-          <span className="choice-hint">
-            {models.provider} · смена модели пересчитывает отбор
-          </span>
-        </label>
-      )}
 
       {detectors && (
         <label className="choice">
-          <span className="choice-label">Компьютерное зрение</span>
+          <span className="choice-label">Чем искать лицо</span>
           <select
             value={value.detector_backend ?? detectors.selected}
             disabled={disabled}
@@ -298,15 +282,39 @@ export function SettingsPanel({
         </label>
       )}
 
-      <Toggle
-        label="Размытый фон"
-        hint={value.layout === "split" ? "В раскладке со сплитом не нужен" : "Полосы сверху и снизу"}
-        checked={value.background === "blur" && value.blur_sigma > 0}
-        disabled={disabled || value.layout === "split"}
-        onChange={(on) =>
-          onChange(on ? { background: "blur", blur_sigma: 28 } : { background: "color" })
-        }
-      />
+      {encoders && (
+        <label className="choice">
+          <span className="choice-label">Чем сжимать видео</span>
+          <select
+            value={value.encoder ?? encoders.selected}
+            disabled={disabled}
+            onChange={(e) => onChange({ encoder: e.target.value })}
+          >
+            {encoders.encoders.map((e) => (
+              <option key={e.name} value={e.name} disabled={!e.available}>
+                {e.label}
+                {e.available ? "" : " — недоступно"}
+              </option>
+            ))}
+          </select>
+          {/* Названы обе стороны: выбор между качеством и скоростью не имеет
+              однозначно верного ответа, и решать его должен человек. */}
+          {(() => {
+            const chosen = encoders.encoders.find(
+              (e) => e.name === (value.encoder ?? encoders.selected),
+            );
+            if (!chosen) return null;
+            return (
+              <span className="choice-hint">
+                <b>плюс:</b> {chosen.pros}
+                <br />
+                <b>минус:</b> {chosen.cons}
+                {chosen.available ? "" : ` · ${chosen.note}`}
+              </span>
+            );
+          })()}
+        </label>
+      )}
     </div>
   );
 }

@@ -34,7 +34,7 @@ from narezka.core.framing import (
 )
 from narezka.core.media import find_source, run_tool
 from narezka.core.stage import Device, Stage, StageContext, StageSkipped
-from narezka.core.clips import SELECTION_NAME, describe_source, load_clips
+from narezka.core.clips import SELECTION_NAME, clip_inputs, describe_source, load_clips
 from narezka.stages.subtitles import INDEX_NAME
 
 SHORTS_INDEX = "index.json"
@@ -103,15 +103,15 @@ def source_size(metadata: dict[str, Any]) -> tuple[int, int]:
 
 class RenderStage(Stage):
     name = "render"
+    group = "shorts"
     #: v7 — нижняя полоса сплита режется по найденной области контента.
     version = 7
     device = Device.ANY
     description = "Вертикальные ролики 9:16 с вшитыми субтитрами"
 
     def inputs(self, ctx: StageContext) -> list[Artifact]:
-        selection = Artifact(ctx.paths.analysis / SELECTION_NAME)
         return [
-            selection if selection.exists() else Artifact(ctx.paths.analysis / "candidates.json"),
+            *clip_inputs(ctx.paths),
             Artifact(ctx.paths.base / "subtitles" / INDEX_NAME),
         ]
 

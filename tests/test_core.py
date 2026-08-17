@@ -182,7 +182,24 @@ def test_missing_input_fails_before_running(ctx: StageContext) -> None:
     result = run_stage(stage, ctx)
     assert result.outcome is Outcome.FAILED
     assert stage.runs == 0
-    assert "нет входных артефактов" in result.reason
+    assert "нет данных от предыдущего шага" in result.reason
+
+
+def test_optional_stage_without_input_is_skipped_not_failed(ctx: StageContext) -> None:
+    """Пропущенный шаг не должен превращать следующий в ошибку.
+
+    Так было: на записи без речи поиск моментов честно пропускался, а оценка
+    моментов падала с «нет входных артефактов» и обрывала весь прогон.
+    Для необязательной стадии отсутствие входа — причина пропустить (§62).
+    """
+    class Optional(CountingStage):
+        name = "optional_stage"
+        optional = True
+
+    (ctx.paths.source / "input.txt").unlink()
+    result = run_stage(Optional(), ctx)
+    assert result.outcome is Outcome.SKIPPED
+    assert "предыдущего шага" in result.reason
 
 
 def test_gpu_stage_skipped_on_cpu_when_optional(ctx: StageContext) -> None:

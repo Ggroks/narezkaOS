@@ -35,11 +35,11 @@ from narezka.core.framing import (
     preview_presets,
 )
 from narezka.core.media import MediaError, find_source, run_tool
-from narezka.core import db, detectors, feedback, llm, publish, registry, review
+from narezka.core import db, detectors, feedback, llm, publish, registry, review, settings
 from narezka.core.paths import list_videos, video_paths
 from narezka.core.runner import run_pipeline, run_stage
 from narezka.core.stage import StageContext
-from narezka.stages import PIPELINE, get_stage
+from narezka.stages import GROUPS, PIPELINE, get_stage, stages_for
 from narezka.stages.render import load_framing, load_options, source_size
 
 app = FastAPI(title="Narezka OS", version="0.1.0")
@@ -92,6 +92,9 @@ def _stage_states(paths) -> list[dict[str, Any]]:
             "description": stage.description,
             "device": stage.device.value,
             "optional": stage.optional,
+            # Кусок работы, к которому стадия относится: интерфейс по нему
+            # показывает ход той кнопки, которую человек нажал.
+            "group": stage.group,
             "status": "pending",
         }
         if state_file.exists():
@@ -123,10 +126,27 @@ def health() -> dict[str, Any]:
     }
 
 
+@app.get("/api/groups")
+def groups() -> dict[str, Any]:
+    """Куски работы и стадии, которые в каждый входят."""
+    return {
+        "groups": [
+            {"name": name, "title": title, "stages": [s.name for s in stages_for(name)]}
+            for name, title in GROUPS.items()
+        ]
+    }
+
+
 @app.get("/api/stages")
 def stages() -> list[dict[str, Any]]:
     return [
-        {"name": s.name, "description": s.description, "device": s.device.value, "optional": s.optional}
+        {
+            "name": s.name,
+            "description": s.description,
+            "device": s.device.value,
+            "optional": s.optional,
+            "group": s.group,
+        }
         for s in PIPELINE
     ]
 
@@ -313,6 +333,10 @@ def delete_video(video_id: str, project: str = "default") -> dict[str, str]:
 
 class RunRequest(BaseModel):
     stage: str | None = None
+    #: Кусок работы: `analysis`, `shorts` или `long`. Единой кнопки «сделать
+    #: всё» нет намеренно — человек запускает то, что ему сейчас нужно,
+    #: а недостающее подтягивается само (см. stages.stages_for).
+    group: str | None = None
     force: bool = False
     profile: str | None = None
     project: str = "default"
@@ -323,13 +347,21 @@ def run(video_id: str, payload: RunRequest) -> dict[str, Any]:
     ctx = _context(video_id, payload.project, payload.profile)
     stage = get_stage(payload.stage) if payload.stage else None
 
+    if payload.group is not None:
+        try:
+            planned = stages_for(payload.group)
+        except KeyError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    else:
+        planned = list(PIPELINE)
+
     def work(emit) -> None:
         observer = lambda name, event, data: emit(name, event, data)  # noqa: E731
         if stage is not None:
             run_stage(stage, ctx, force=payload.force, observer=observer)
         else:
             run_pipeline(
-                list(PIPELINE), ctx, force=payload.force, observer=observer,
+                planned, ctx, force=payload.force, observer=observer,
                 should_stop=lambda: jobs.manager.get(video_id).stop_requested,
             )
 
@@ -363,7 +395,7 @@ def timeline(video_id: str, buckets: int = Query(600, ge=60, le=2000)) -> dict[s
 
     moments: list[dict[str, Any]] = []
     try:
-        clips, _ = load_clips(ctx.paths)
+        clips, _ = load_clips(ctx.paths, apply_review=False)
     except (FileNotFoundError, ValueError):
         # Отбора может ещё не быть — полоса тогда рисует только чат.
         # Перехват узкий намеренно: широкий скрыл отсутствующий импорт,
@@ -475,26 +507,78 @@ def compilation_media(
     return serve_file(ctx.paths.base / name, range_header)
 
 
-@app.get("/api/videos/{video_id}/episodes")
-def episodes(video_id: str) -> dict[str, Any]:
-    """Найденные эпизоды — чтобы человек выбрал, из каких делать ролики."""
-    ctx = _context(video_id, "default", None)
+def _episodes_payload(ctx) -> dict[str, Any]:
+    """Найденные эпизоды и выбор человека по этой записи."""
+    cfg = settings.compilation(ctx.config, ctx.paths)
+    found: list[dict[str, Any]] = []
+    reason = None
+
     artifact = Artifact(ctx.paths.analysis / "episodes.json")
     if not artifact.exists():
-        return {"episodes": [], "reason": "эпизоды ещё не размечены"}
-    try:
-        data = artifact.read_json()
-    except ValueError:
-        return {"episodes": [], "reason": "файл эпизодов не читается"}
+        reason = "эпизоды ещё не размечены"
+    else:
+        try:
+            found = artifact.read_json().get("episodes", [])
+        except ValueError:
+            reason = "файл эпизодов не читается"
 
-    cfg = ctx.config.compilation
-    return {
-        "episodes": data.get("episodes", []),
+    payload = {
+        "episodes": found,
         "selected": cfg.episodes,
         "story": cfg.story,
         "best": cfg.best,
         "target_minutes": cfg.target_minutes,
     }
+    # Настройки отдаются всегда, даже когда эпизодов ещё нет: на этой вкладке
+    # человек их и задаёт — до того, как что-то посчитано.
+    return payload if reason is None else {**payload, "reason": reason}
+
+
+@app.get("/api/videos/{video_id}/episodes")
+def episodes(video_id: str, project: str = "default") -> dict[str, Any]:
+    """Найденные эпизоды — чтобы человек выбрал, из каких делать ролики."""
+    return _episodes_payload(_context(video_id, project, None))
+
+
+class CompilationSettings(BaseModel):
+    """Что собирать в длинную нарезку. Правка для одной записи."""
+
+    story: bool = False
+    best: bool = False
+    #: Номера выбранных эпизодов; пустой список — ни одного.
+    episodes: list[int] | None = None
+    target_minutes: int = Field(default=20, ge=1, le=180)
+
+
+@app.put("/api/videos/{video_id}/compilation")
+def set_compilation(
+    video_id: str, payload: CompilationSettings, project: str = "default"
+) -> dict[str, Any]:
+    """Сохраняет выбор по длинной нарезке для этой записи.
+
+    Выбор человека и есть включение стадии: `enabled` не отдельная галочка,
+    а следствие того, что хоть что-то выбрано. Отдельный переключатель
+    «собирать длинную нарезку» поверх «собрать подборку» был бы вторым
+    выключателем к той же лампе.
+
+    Поиск эпизодов включается только под сюжетный режим: он стоит запросов
+    к модели, и платить за него ради подборки лучших незачем.
+    """
+    ctx = _context(video_id, project, None)
+    settings.update(
+        ctx.paths,
+        {
+            settings.COMPILATION_KEY: {
+                "story": payload.story,
+                "best": payload.best,
+                "episodes": payload.episodes,
+                "target_minutes": payload.target_minutes,
+                "enabled": payload.story or payload.best,
+                "find_episodes": payload.story,
+            }
+        },
+    )
+    return _episodes_payload(ctx)
 
 
 @app.get("/api/settings/encoders")

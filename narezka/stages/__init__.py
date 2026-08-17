@@ -15,6 +15,7 @@ from narezka.stages.facecam import FacecamStage
 from narezka.stages.llm_select import LlmSelectStage
 from narezka.stages.metadata import MetadataStage
 from narezka.stages.audiotags import AudioTagsStage
+from narezka.stages.compilation import CompilationStage
 from narezka.stages.episodes import EpisodesStage
 from narezka.stages.timeline import TimelineStage
 from narezka.stages.probe import ProbeStage
@@ -52,6 +53,9 @@ PIPELINE: list[Stage] = [
     # ненужное можно снять с очереди до траты времени на кодирование.
     MetadataStage(),
     RenderStage(),
+    # Компиляция после шортсов: она тяжелее всего в пайплайне, и её отказ
+    # не должен оставлять человека без готовых роликов.
+    CompilationStage(),
 ]
 
 REGISTRY: dict[str, Stage] = {stage.name: stage for stage in PIPELINE}

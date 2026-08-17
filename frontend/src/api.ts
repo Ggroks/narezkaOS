@@ -416,6 +416,23 @@ export type Whoami = {
   user: { login: string; workspace: string; is_admin: boolean; local: boolean } | null;
 };
 
+/** Счёт и цены. Цены рядом с балансом: «осталось 40» ничего не значит,
+ *  пока непонятно, на сколько часов записи этого хватит. */
+export type Billing = {
+  enabled: boolean;
+  balance: number;
+  rates: { version: number; per_video_hour: Record<string, number>; minimum: number };
+  history: {
+    at: string;
+    kind: string;
+    amount: number;
+    video_id: string | null;
+    work_groups: string | null;
+    video_hours: number | null;
+    note: string | null;
+  }[];
+};
+
 export type HealthCheck = { name: string; ok: boolean; detail: string; critical: boolean };
 export type Health = {
   ok: boolean;
@@ -445,15 +462,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   health: () => request<Health>("/api/health"),
   me: () => request<Whoami>("/api/auth/me"),
+  billing: () => request<Billing>("/api/billing"),
   login: (login: string, password: string) =>
     request<Whoami>("/api/auth/login", {
       method: "POST",
       body: JSON.stringify({ login, password }),
     }),
-  signup: (login: string, password: string) =>
+  signup: (login: string, password: string, invite: string) =>
     request<Whoami>("/api/auth/signup", {
       method: "POST",
-      body: JSON.stringify({ login, password }),
+      body: JSON.stringify({ login, password, invite }),
     }),
   logout: () => request<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
   videos: () => request<VideoSummary[]>("/api/videos"),
@@ -611,6 +629,27 @@ export function uploadVideo(
     request.onerror = () => reject(new Error("не удалось отправить файл"));
     request.send(file);
   });
+}
+
+/**
+ * Во сколько обойдётся работа — та же формула, что на сервере.
+ *
+ * Считается по всем кускам, которые могут выполниться, то есть как если бы
+ * кэша не было: списание выйдет меньше или столько же. Показывать меньше
+ * названного можно, больше — нельзя, поэтому граница верхняя.
+ */
+export function estimateCredits(
+  billing: Billing | null,
+  groups: string[],
+  seconds: number | null | undefined,
+): number | null {
+  if (!billing?.enabled || !seconds) return null;
+  const hours = seconds / 3600;
+  const total = groups.reduce(
+    (sum, group) => sum + (billing.rates.per_video_hour[group] ?? 0) * hours,
+    0,
+  );
+  return total > 0 ? Math.max(total, billing.rates.minimum) : 0;
 }
 
 export function formatDate(iso: string | null | undefined): string {

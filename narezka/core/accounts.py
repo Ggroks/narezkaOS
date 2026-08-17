@@ -75,6 +75,18 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+
+-- Приглашения. Регистрация закрыта кодом, а не настройкой: код можно
+-- выдать одному человеку и отозвать, настройка открыта всем сразу.
+CREATE TABLE IF NOT EXISTS invites (
+    code       TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    note       TEXT,
+    -- Сколько кредитов подарить вошедшему по этому коду.
+    credits    REAL NOT NULL DEFAULT 0,
+    used_by    INTEGER REFERENCES users(user_id),
+    used_at    TEXT
+);
 """
 
 
@@ -251,3 +263,71 @@ def listing(connection: sqlite3.Connection) -> list[User]:
 def count(connection: sqlite3.Connection) -> int:
     ensure_schema(connection)
     return int(connection.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"])
+
+
+# --- приглашения ------------------------------------------------------------
+
+
+def new_invite(
+    connection: sqlite3.Connection, *, credits: float = 0.0, note: str | None = None
+) -> str:
+    """Заводит код приглашения и возвращает его.
+
+    Код, а не открытая регистрация: его выдают одному человеку и можно
+    не выдать другому. Настройка «регистрация открыта» такого различия
+    не знает.
+    """
+    ensure_schema(connection)
+    code = "-".join(secrets.token_hex(2) for _ in range(3))
+    connection.execute(
+        "INSERT INTO invites (code, created_at, note, credits) VALUES (?, ?, ?, ?)",
+        (code, _now().isoformat(timespec="seconds"), note, float(credits)),
+    )
+    connection.commit()
+    return code
+
+
+def take_invite(connection: sqlite3.Connection, code: str, user: User) -> float:
+    """Гасит код за этим человеком. Возвращает подаренные кредиты.
+
+    Проверка и пометка одной транзакцией: иначе один код при двух
+    одновременных попытках пропустил бы обоих.
+    """
+    ensure_schema(connection)
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        row = connection.execute(
+            "SELECT credits, used_by FROM invites WHERE code = ?", (code.strip().lower(),)
+        ).fetchone()
+        if row is None:
+            raise AccountError("приглашение не найдено")
+        if row["used_by"] is not None:
+            raise AccountError("приглашение уже использовано")
+        connection.execute(
+            "UPDATE invites SET used_by = ?, used_at = ? WHERE code = ?",
+            (user.user_id, _now().isoformat(timespec="seconds"), code.strip().lower()),
+        )
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    return float(row["credits"])
+
+
+def invites(connection: sqlite3.Connection) -> list[dict[str, Any]]:
+    ensure_schema(connection)
+    rows = connection.execute(
+        "SELECT i.*, u.login FROM invites i LEFT JOIN users u ON u.user_id = i.used_by"
+        " ORDER BY i.created_at DESC"
+    ).fetchall()
+    return [
+        {
+            "code": row["code"],
+            "created_at": row["created_at"],
+            "note": row["note"],
+            "credits": row["credits"],
+            "used_by": row["login"],
+            "used_at": row["used_at"],
+        }
+        for row in rows
+    ]

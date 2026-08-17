@@ -74,6 +74,21 @@ def video_id_for_file(path: Path) -> str:
     return digest.hexdigest()[:12]
 
 
+def has_media(source_dir: Path) -> bool:
+    """Есть ли в записи исходник. Одна запись — один файл.
+
+    На этом соглашении стоят все стадии: `find_source` отказывается работать,
+    когда файлов больше одного. Проверять надо здесь, а не там: там уже
+    поздно, запись сломана.
+    """
+    if not source_dir.is_dir():
+        return False
+    return any(
+        item.is_file() and not item.name.startswith(".") and item.suffix.lower() in MEDIA_SUFFIXES
+        for item in source_dir.iterdir()
+    )
+
+
 def place_source(src: Path, dst: Path) -> str:
     """Жёсткая ссылка, иначе символическая, иначе копия.
 
@@ -81,6 +96,12 @@ def place_source(src: Path, dst: Path) -> str:
     хранилища, смысла нет (§65).
     """
     dst.parent.mkdir(parents=True, exist_ok=True)
+    if has_media(dst.parent):
+        # Исходник уже есть. Класть второй нельзя: идентификатор считается
+        # по содержимому, значит это тот же материал, но под другим именем —
+        # переименованная копия или повторная загрузка. Два файла в одной
+        # записи ломают её целиком, и чинится это только руками.
+        return "уже на месте"
     if dst.exists():
         return "уже на месте"
     try:

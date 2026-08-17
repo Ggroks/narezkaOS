@@ -17,6 +17,7 @@ export function LoginScreen({ state, onEntered }: Props) {
   const [mode, setMode] = useState<"login" | "signup">("login");
   const [login, setLogin] = useState("");
   const [password, setPassword] = useState("");
+  const [invite, setInvite] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -28,7 +29,7 @@ export function LoginScreen({ state, onEntered }: Props) {
     setError(null);
     try {
       const next = signing
-        ? await api.signup(login.trim(), password)
+        ? await api.signup(login.trim(), password, invite.trim())
         : await api.login(login.trim(), password);
       onEntered(next);
     } catch (exc) {
@@ -42,7 +43,7 @@ export function LoginScreen({ state, onEntered }: Props) {
       <h3>{signing ? "Новая учётка" : "Вход"}</h3>
       <p className="dim">
         {signing
-          ? "Логин и пароль от восьми знаков. Записи каждого лежат отдельно."
+          ? "Нужен код приглашения. Записи каждого лежат отдельно."
           : "Narezka OS — нарезка стримов на короткие ролики."}
       </p>
 
@@ -66,13 +67,29 @@ export function LoginScreen({ state, onEntered }: Props) {
           />
         </label>
 
+        {signing && (
+          <label>
+            <span className="sheet-label">Код приглашения</span>
+            <input
+              className="mono"
+              placeholder="0000-0000-0000"
+              value={invite}
+              onChange={(event) => setInvite(event.target.value)}
+            />
+          </label>
+        )}
+
         {error && (
           <div className="error" role="alert" style={{ margin: 0 }}>
             {error}
           </div>
         )}
 
-        <button className="primary" type="submit" disabled={busy || !login.trim() || !password}>
+        <button
+          className="primary"
+          type="submit"
+          disabled={busy || !login.trim() || !password || (signing && !invite.trim())}
+        >
           {busy ? "Проверяем…" : signing ? "Завести" : "Войти"}
         </button>
       </form>

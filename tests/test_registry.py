@@ -127,3 +127,29 @@ def test_local_file_stays_where_it_was(tmp_path: Path) -> None:
     placed = video_paths(tmp_path, "default", result.video_id).source / "stream.mp4"
     assert placed.is_file() and source.is_file()
     assert result.placement in {"жёсткая ссылка", "символическая ссылка", "копия"}
+
+
+def test_second_copy_does_not_break_the_record(tmp_path: Path) -> None:
+    """Одна запись — один исходник.
+
+    Найдено живым прогоном: повторная загрузка того же файла положила
+    в запись второй экземпляр под другим именем, и `find_source` отказался
+    работать — «больше одного медиафайла». Идентификатор считается по
+    содержимому, значит это тот же материал, и класть его второй раз незачем.
+    """
+    payload = b"NAREZKA" * 2000
+    first = registry.register(
+        storage_root=tmp_path, project="default",
+        file=media_file(tmp_path / "stream.mp4", payload),
+    )
+    registry.register(
+        storage_root=tmp_path, project="default",
+        file=media_file(tmp_path / "стрим-копия.mp4", payload),
+    )
+
+    source = video_paths(tmp_path, "default", first.video_id).source
+    assert len([p for p in source.iterdir() if p.is_file()]) == 1
+
+    from narezka.core.media import find_source
+
+    assert find_source(source).is_file()

@@ -30,6 +30,8 @@ type Props = {
   running: boolean;
   /** Место в очереди: 0 — не ждёт. */
   queued?: number;
+  /** Во сколько кредитов обойдётся — верхняя граница. null — оплата выключена. */
+  price?: number | null;
   /** Ход текущего прогона, если он идёт. */
   activeStage?: string;
   progress?: JobEvent;
@@ -48,7 +50,7 @@ type Props = {
 };
 
 export function RunPanel({
-  title, hint, label, againLabel, done, running, queued = 0, activeStage, progress,
+  title, hint, label, againLabel, done, running, queued = 0, price, activeStage, progress,
   onRun, onStop, blocked, failure, note,
 }: Props) {
   const waiting = !running && queued > 0;
@@ -63,6 +65,12 @@ export function RunPanel({
               ? `В очереди, ${queued}-й. Начнём, когда освободится машина — она берёт по одной записи`
               : blocked || hint}
         </span>
+        {!running && !waiting && price != null && price > 0 && (
+          /* «Не больше»: часть работы возьмётся из кэша и не будет стоить
+             ничего. Списание никогда не превышает названного — обратный
+             порядок был бы обманом. */
+          <span className="small dim tnum">Спишем не больше {price.toFixed(0)} кредитов</span>
+        )}
         {!running && failure && <span className="small runbar-fail">{failure}</span>}
         {!running && !failure && !done && note && (
           <span className="small runbar-note">{note}</span>

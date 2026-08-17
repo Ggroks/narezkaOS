@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   api,
+  estimateCredits,
   formatDuration,
   subscribeToJob,
   type JobEvent,
@@ -8,6 +9,7 @@ import {
   type Framing,
   type ModelsInfo,
   type ReviewClip,
+  type Billing,
   type ShortsIndex,
   type StageGroup,
   type Transcript,
@@ -60,6 +62,7 @@ export function VideoDetail({ videoId, onBack }: Props) {
   // этого зависит кнопка запуска, а она стоит над панелью выбора.
   const [longChosen, setLongChosen] = useState(false);
   const [longMade, setLongMade] = useState(0);
+  const [money, setMoney] = useState<Billing | null>(null);
   // Вкладка помнится между заходами: возвращаясь к проекту, человек
   // продолжает с того места, где остановился, а не с начала.
   const [tab, setTab] = useState<TabId>(
@@ -108,6 +111,7 @@ export function VideoDetail({ videoId, onBack }: Props) {
       }
       // Списки грузятся мягко: каталог моделей ходит в сеть, и его отказ
       // не должен мешать остальной работе.
+      api.billing().then(setMoney).catch(() => setMoney(null));
       api.models().then(setModels).catch(() => setModels(null));
       api.detectors().then(setDetectors).catch(() => setDetectors(null));
       api.encoders().then(setEncoders).catch(() => setEncoders(null));
@@ -259,6 +263,7 @@ export function VideoDetail({ videoId, onBack }: Props) {
     { id: "results", label: "Результаты" },
   ];
 
+  const seconds = meta.duration_seconds ?? null;
   const runShared = {
     running,
     queued: detail.queue_position,
@@ -372,6 +377,7 @@ export function VideoDetail({ videoId, onBack }: Props) {
           <RunPanel
             {...runShared}
             title="Разбор записи"
+            price={estimateCredits(money, ["analysis"], seconds)}
             hint="Скачает запись, расшифрует речь и найдёт места, из которых выйдут ролики. Сами ролики пока не собираются"
             label="Найти моменты"
             againLabel="Найти заново"
@@ -440,6 +446,7 @@ export function VideoDetail({ videoId, onBack }: Props) {
           <RunPanel
             {...runShared}
             title="Сборка коротких роликов"
+            price={estimateCredits(money, ["analysis", "shorts"], seconds)}
             label="Собрать"
             againLabel="Пересобрать"
             hint={
@@ -498,6 +505,7 @@ export function VideoDetail({ videoId, onBack }: Props) {
           <RunPanel
             {...runShared}
             title="Длинная нарезка"
+            price={estimateCredits(money, ["analysis", "long"], seconds)}
             hint="Соберёт выбранное ниже. Связные эпизоды сначала ищет модель по расшифровке — это отдельная работа, и она идёт только под свою галочку"
             label="Собрать"
             againLabel="Пересобрать"

@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 from rich.console import Console
 from rich.table import Table
 
-from narezka.core import accounts, db, env, queue, registry, settings
+from narezka.core import accounts, credits, db, env, queue, registry, settings
 from narezka.core.artifacts import Artifact, cleanup_partials
 from narezka.core.config import load_config
 from narezka.core.logging import get_logger, setup_logging
@@ -201,6 +201,126 @@ def user_list(
             "хозяин" if user.is_admin else "",
         )
     console.print(table)
+
+
+invite_app = typer.Typer(help="Приглашения: регистрация закрыта кодом")
+app.add_typer(invite_app, name="invite")
+
+
+@invite_app.command("new")
+def invite_new(
+    credits_amount: Annotated[
+        float, typer.Option("--credits", "-c", help="Сколько кредитов подарить вошедшему")
+    ] = 0.0,
+    note: Annotated[str | None, typer.Option("--note", "-n", help="Для кого — себе на память")] = None,
+    config_path: Annotated[Path | None, typer.Option("--config")] = None,
+) -> None:
+    """Выдать код приглашения.
+
+    Ноль кредитов означает «подарить сколько положено по конфигу»
+    (`billing.signup_bonus`), а не «ничего»: человек, вошедший с пустым
+    счётом, упрётся в отказ, не увидев, ради чего всё затевалось.
+    """
+    config = load_config(config_path)
+    with db.connect(config.storage_root) as connection:
+        code = accounts.new_invite(connection, credits=credits_amount, note=note)
+
+    gift = credits_amount or config.billing.signup_bonus
+    console.print(f"Код: [bold]{code}[/bold]")
+    console.print(f"Подарок при входе: [bold]{gift:.0f}[/bold] кредитов")
+
+
+@invite_app.command("list")
+def invite_list(
+    config_path: Annotated[Path | None, typer.Option("--config")] = None,
+) -> None:
+    """Выданные приглашения и кто по ним вошёл."""
+    config = load_config(config_path)
+    with db.connect(config.storage_root) as connection:
+        rows = accounts.invites(connection)
+
+    if not rows:
+        console.print("Приглашений нет. Выдать: [bold]narezka invite new[/bold]")
+        return
+    table = Table(title="Приглашения")
+    table.add_column("Код", style="bold")
+    table.add_column("Кредитов", justify="right")
+    table.add_column("Кому")
+    table.add_column("Использовано")
+    for row in rows:
+        table.add_row(
+            row["code"], f"{row['credits']:.0f}", row["note"] or "",
+            row["used_by"] or "[dim]ждёт[/dim]",
+        )
+    console.print(table)
+
+
+credits_app = typer.Typer(help="Счёт в кредитах")
+app.add_typer(credits_app, name="credits")
+
+
+@credits_app.command("show")
+def credits_show(
+    workspace: Annotated[str, typer.Option("--workspace", "-w")] = "default",
+    config_path: Annotated[Path | None, typer.Option("--config")] = None,
+) -> None:
+    """Счёт и последние движения."""
+    config = load_config(config_path)
+    with db.connect(config.storage_root) as connection:
+        balance = credits.balance(connection, workspace)
+        rows = credits.history(connection, workspace, limit=20)
+
+    console.print(f"Счёт [bold]{workspace}[/bold]: [bold]{balance:.0f}[/bold] кредитов")
+    hourly = config.billing.per_video_hour
+    console.print(
+        "Цены (версия {v}): {rates}".format(
+            v=config.billing.version,
+            rates=", ".join(f"{name} {price:.0f}/час записи" for name, price in hourly.items()),
+        )
+    )
+    if not rows:
+        return
+
+    table = Table(title="Последние движения")
+    table.add_column("Когда")
+    table.add_column("Что")
+    table.add_column("Кредитов", justify="right")
+    table.add_column("За что")
+    for row in rows:
+        sign = "green" if row["amount"] > 0 else "white"
+        table.add_row(
+            row["at"][:16].replace("T", " "),
+            {"topup": "пополнение", "grant": "подарок", "charge": "списание",
+             "refund": "возврат"}.get(row["kind"], row["kind"]),
+            f"[{sign}]{row['amount']:+.0f}[/{sign}]",
+            row["note"] or (f"{row['work_groups']}, {row['video_hours']} ч записи"
+                            if row["work_groups"] else ""),
+        )
+    console.print(table)
+
+
+@credits_app.command("add")
+def credits_add(
+    workspace: Annotated[str, typer.Option("--workspace", "-w", help="Кому")],
+    amount: Annotated[float, typer.Option("--amount", "-a", help="Сколько кредитов")],
+    note: Annotated[str | None, typer.Option("--note", "-n")] = None,
+    config_path: Annotated[Path | None, typer.Option("--config")] = None,
+) -> None:
+    """Пополнить счёт.
+
+    Пока вручную: приём платежей — отдельная задача, а книга к нему готова.
+    Когда он появится, он будет писать те же самые записи.
+    """
+    config = load_config(config_path)
+    with db.connect(config.storage_root) as connection:
+        try:
+            balance = credits.add(
+                connection, workspace=workspace, amount=amount, note=note or "вручную"
+            )
+        except ValueError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(1) from exc
+    console.print(f"[green]Пополнено[/green] на {amount:.0f}, стало [bold]{balance:.0f}[/bold]")
 
 
 @app.command()

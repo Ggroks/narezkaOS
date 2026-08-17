@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type Health, type VideoSummary, type Whoami } from "./api";
+import { api, type Billing, type Health, type VideoSummary, type Whoami } from "./api";
 import { ThemePicker } from "./components/ThemePicker";
 import { LoginScreen } from "./components/LoginScreen";
 import { ProjectCatalog } from "./components/ProjectCatalog";
@@ -36,6 +36,7 @@ export function App() {
   const [videos, setVideos] = useState<VideoSummary[]>([]);
   const [health, setHealth] = useState<Health | null>(null);
   const [who, setWho] = useState<Whoami | null>(null);
+  const [money, setMoney] = useState<Billing | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -62,6 +63,7 @@ export function App() {
         if (!state.auth_required || state.user) {
           void refresh();
           api.health().then(setHealth).catch(() => setHealth(null));
+          api.billing().then(setMoney).catch(() => setMoney(null));
         }
       })
       .catch(() => setWho({ auth_required: false, allow_signup: false, user: null }));
@@ -72,6 +74,7 @@ export function App() {
       setWho(state);
       void refresh();
       api.health().then(setHealth).catch(() => setHealth(null));
+      api.billing().then(setMoney).catch(() => setMoney(null));
     },
     [refresh],
   );
@@ -144,6 +147,16 @@ export function App() {
         {health && (
           <span className="env small dim">
             профиль {health.profile} · {health.device.kind} · {health.device.name}
+          </span>
+        )}
+        {money?.enabled && (
+          /* Счёт рядом с ценами: «осталось 40» ничего не значит, пока
+             непонятно, на сколько часов записи этого хватит. */
+          <span
+            className={`badge tnum${money.balance <= 0 ? " bad" : ""}`}
+            title={`Разбор записи — ${money.rates.per_video_hour.analysis ?? 0} кредитов за час`}
+          >
+            {money.balance.toFixed(0)} кредитов
           </span>
         )}
         {who.user && !who.user.local && (

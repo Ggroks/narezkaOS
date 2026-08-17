@@ -303,6 +303,34 @@ class CompilationConfig(BaseModel):
 
 
 
+class BillingConfig(BaseModel):
+    """Цены на работу (§9A, экономическая модель от 17 августа 2026).
+
+    Оплата счётом в кредитах: пополнил и тратишь. Цены живут здесь, а не
+    в коде, и версионируются: каждое списание помнит версию, по которой
+    посчитано, поэтому тариф можно менять целиком, не теряя объяснимости
+    старых списаний.
+
+    Значения по умолчанию взяты из замеров себестоимости: час записи
+    обходится в 15–20 ₽, из них примерно две трети — запросы к модели.
+    Кредит намеренно абстрактен: его цену в деньгах задаёт продажа,
+    а не этот файл.
+    """
+
+    enabled: bool = False
+    #: Версия цен. Поднимать при любом изменении ставок — по ней читаются
+    #: старые списания.
+    version: int = 1
+    #: Цена часа записи по кускам работы. `shorts` и `long` дешевле разбора:
+    #: расшифровка — три четверти всей работы, и она входит в разбор.
+    per_video_hour: dict[str, float] = {"analysis": 20.0, "shorts": 8.0, "long": 12.0}
+    #: Минимум за задачу: короткая запись всё равно требует запуска модели,
+    #: скачивания и кодирования.
+    minimum: float = 2.0
+    #: Сколько кредитов даётся при регистрации по приглашению.
+    signup_bonus: float = 60.0
+
+
 class SourcesConfig(BaseModel):
     """Откуда можно брать записи (§66, §68).
 
@@ -363,6 +391,7 @@ class Config(BaseModel):
     auth: AuthConfig = AuthConfig()
     queue: QueueConfig = QueueConfig()
     sources: SourcesConfig = SourcesConfig()
+    billing: BillingConfig = BillingConfig()
 
     download: DownloadConfig = Field(default_factory=DownloadConfig)
     audio: AudioConfig = Field(default_factory=AudioConfig)

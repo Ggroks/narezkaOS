@@ -18,13 +18,13 @@ import time
 from typing import Any
 
 from narezka.api import jobs
-from narezka.core import db, queue
+from narezka.core import credits, db, queue
 from narezka.core.artifacts import Artifact
 from narezka.core.logging import get_logger
 from narezka.core.paths import video_paths
-from narezka.core.runner import run_pipeline, run_stage
+from narezka.core.runner import Outcome, run_pipeline, run_stage
 from narezka.core.stage import StageContext
-from narezka.stages import PIPELINE, get_stage, stages_for
+from narezka.stages import PIPELINE, REGISTRY, get_stage, stages_for
 
 log = get_logger("worker")
 
@@ -33,11 +33,16 @@ log = get_logger("worker")
 IDLE_SLEEP = 1.0
 
 
-def execute(task: queue.Task, config, device) -> tuple[str, str | None, float]:
-    """Выполняет одну задачу. Возвращает итог, причину и потраченное время."""
+def execute(task: queue.Task, config, device) -> tuple[str, str | None, float, set[str]]:
+    """Выполняет одну задачу.
+
+    Возвращает итог, причину, потраченное время и куски работы, которые
+    действительно выполнялись. Последнее — для оплаты: взятое из кэша не
+    стоит ничего, иначе повторное нажатие штрафовало бы за осторожность.
+    """
     paths = video_paths(config.storage_root, task.workspace, task.video_id)
     if not paths.exists():
-        return "failed", "запись не найдена", 0.0
+        return "failed", "запись не найдена", 0.0, set()
 
     ctx = StageContext(
         project_id=task.workspace,
@@ -54,6 +59,9 @@ def execute(task: queue.Task, config, device) -> tuple[str, str | None, float]:
     #: и возвращает итоги, поэтому без этого списка задача записывалась бы
     #: «выполненной» даже когда ни один ролик не собрался.
     trouble: list[str] = []
+    #: Куски работы, где хоть одна стадия отработала заново. Только они
+    #: и оплачиваются.
+    executed: set[str] = set()
 
     def work(emit) -> None:
         observer = lambda name, event, data: emit(name, event, data)  # noqa: E731
@@ -68,13 +76,18 @@ def execute(task: queue.Task, config, device) -> tuple[str, str | None, float]:
         trouble.extend(
             f"{item.stage}: {item.reason or 'ошибка'}" for item in results if not item.ok
         )
+        executed.update(
+            REGISTRY[item.stage].group
+            for item in results
+            if item.outcome is Outcome.DONE and item.stage in REGISTRY
+        )
 
     status, error = job.execute(work)
     if status == "finished" and trouble:
-        # Учёт должен быть честным: по этим записям считается нагрузка,
-        # а позже — и деньги.
+        # Учёт должен быть честным: по этим записям считается нагрузка
+        # и деньги.
         status, error = "failed", "; ".join(trouble)
-    return status, error, time.monotonic() - started
+    return status, error, time.monotonic() - started, executed
 
 
 def video_seconds(config, task: queue.Task) -> float:
@@ -122,14 +135,42 @@ class Worker(threading.Thread):
             task.task_id[:8], task.workspace, task.video_id,
             task.stage or task.work_group or "всё",
         )
-        status, error, seconds = execute(task, config, device)
+        status, error, seconds, executed = execute(task, config, device)
+        length = video_seconds(config, task)
+
         with db.connect(config.storage_root) as connection:
             queue.finish(
                 connection, task.task_id,
                 status=status, error=error,
-                seconds=seconds, video_seconds=video_seconds(config, task),
+                seconds=seconds, video_seconds=length,
             )
-        log.info("задача %s: %s за %.1f с", task.task_id[:8], status, seconds)
+            charged = self._charge(connection, config, task, status, executed, length)
+
+        log.info(
+            "задача %s: %s за %.1f с%s",
+            task.task_id[:8], status, seconds,
+            f", списано {charged:.0f}" if charged else "",
+        )
+
+    @staticmethod
+    def _charge(connection, config, task, status: str, executed: set[str], length: float) -> float:
+        """Списывает за выполненную работу.
+
+        Неудача и остановка не оплачиваются: человек не получил результата,
+        а цена ошибки сервиса не должна ложиться на того, кто её не совершал.
+        Взятое из кэша тоже бесплатно — иначе повторное нажатие штрафовало бы
+        за осторожность.
+        """
+        if not config.billing.enabled or status != "finished" or not executed:
+            return 0.0
+        quote = credits.quote_for(config.billing, executed, length)
+        if quote.credits <= 0:
+            return 0.0
+        credits.charge(
+            connection, workspace=task.workspace, quote=quote,
+            task_id=task.task_id, video_id=task.video_id,
+        )
+        return quote.credits
 
 
 def start(config_provider: Any, parallel: int) -> list[Worker]:

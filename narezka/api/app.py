@@ -39,7 +39,8 @@ from narezka.core.framing import (
 )
 from narezka.core.media import MediaError, find_source, run_tool
 from narezka.core import (
-    accounts, db, detectors, feedback, llm, publish, queue, registry, review, settings,
+    accounts, credits, db, detectors, feedback, llm, publish, queue, registry, review,
+    settings,
 )
 from narezka.core.paths import list_videos, video_paths
 from narezka.core.runner import run_pipeline, run_stage
@@ -195,6 +196,9 @@ def health() -> dict[str, Any]:
 class Credentials(BaseModel):
     login: str = Field(min_length=1, max_length=64)
     password: str = Field(min_length=1, max_length=256)
+    #: Код приглашения. Нужен при регистрации: код выдают одному человеку
+    #: и можно не выдать другому, а открытая настройка такого не умеет.
+    invite: str | None = Field(default=None, max_length=64)
 
 
 def _set_session(response: JSONResponse, token: str, config) -> None:
@@ -209,6 +213,28 @@ def _set_session(response: JSONResponse, token: str, config) -> None:
         max_age=accounts.SESSION_DAYS * 86400,
         path="/",
     )
+
+
+@app.get("/api/billing")
+def billing(project: str = "default") -> dict[str, Any]:
+    """Счёт, цены и последние движения.
+
+    Цены отдаются вместе с балансом: «осталось 40 кредитов» ничего не
+    значит, пока непонятно, на сколько часов записи этого хватит.
+    """
+    config, _ = _config()
+    space = _workspace(project)
+    with db.connect(config.storage_root) as connection:
+        return {
+            "enabled": config.billing.enabled,
+            "balance": credits.balance(connection, space),
+            "rates": {
+                "version": config.billing.version,
+                "per_video_hour": config.billing.per_video_hour,
+                "minimum": config.billing.minimum,
+            },
+            "history": credits.history(connection, space, limit=30),
+        }
 
 
 @app.get("/api/auth/me")
@@ -257,11 +283,24 @@ def signup(payload: Credentials) -> JSONResponse:
     if not config.auth.enabled or not config.auth.allow_signup:
         raise HTTPException(status_code=403, detail="регистрация закрыта")
 
+    if not payload.invite:
+        raise HTTPException(status_code=400, detail="нужен код приглашения")
+
     with db.connect(config.storage_root) as connection:
         try:
             user = accounts.create(connection, login=payload.login, password=payload.password)
+            gift = accounts.take_invite(connection, payload.invite, user)
         except accounts.AccountError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        # Подарок при регистрации: без него человек входит и упирается
+        # в «не хватает кредитов», не увидев, ради чего всё затевалось.
+        bonus = gift or config.billing.signup_bonus
+        if config.billing.enabled and bonus > 0:
+            credits.add(
+                connection, workspace=user.workspace, amount=bonus,
+                kind="grant", note=f"приглашение {payload.invite}",
+            )
         token = accounts.open_session(connection, user)
 
     log.info("заведена учётка %s, пространство %s", user.login, user.workspace)
@@ -646,7 +685,15 @@ def run(video_id: str, payload: RunRequest) -> dict[str, Any]:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     config, _ = _config()
+    quote = _quote(config, ctx, payload)
     with db.connect(config.storage_root) as connection:
+        if config.billing.enabled:
+            try:
+                credits.ensure_enough(connection, workspace=ctx.project_id, quote=quote)
+            except credits.NotEnoughCredits as exc:
+                # 402 — «нужна оплата»: отдельный код, чтобы интерфейс мог
+                # показать пополнение, а не общую ошибку.
+                raise HTTPException(status_code=402, detail=str(exc)) from exc
         task, created = queue.enqueue(
             connection,
             workspace=ctx.project_id,
@@ -659,7 +706,38 @@ def run(video_id: str, payload: RunRequest) -> dict[str, Any]:
 
     job, _ = jobs.manager.reserve(video_id, ctx.project_id)
     log.info("в очередь: %s/%s, место %d", ctx.project_id, video_id, place)
-    return {"started": created, "status": job.status, "queued": place > 0, "position": place}
+    return {
+        "started": created,
+        "status": job.status,
+        "queued": place > 0,
+        "position": place,
+        # «Не больше»: часть стадий возьмётся из кэша и не будет стоить
+        # ничего. Списание никогда не превышает названного.
+        "estimate": quote.credits if quote.known else None,
+    }
+
+
+def _quote(config, ctx, payload) -> credits.Quote:
+    """Верхняя граница стоимости запуска.
+
+    Считается по всем кускам работы, которые могут выполниться, — то есть
+    как если бы кэша не было. Реально спишется меньше или столько же.
+    """
+    meta = Artifact(ctx.paths.metadata)
+    duration = None
+    if meta.exists():
+        try:
+            duration = meta.read_json().get("duration_seconds")
+        except ValueError:
+            duration = None
+
+    if payload.stage:
+        groups = [get_stage(payload.stage).group]
+    elif payload.group:
+        groups = sorted({stage.group for stage in stages_for(payload.group)})
+    else:
+        groups = sorted({stage.group for stage in PIPELINE})
+    return credits.quote_for(config.billing, groups, duration)
 
 
 @app.get("/api/videos/{video_id}/timeline")

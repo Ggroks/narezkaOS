@@ -76,6 +76,22 @@ export function EpisodesPanel({ videoId }: Props) {
                 <a href={api.compilationUrl(videoId, item.file)} download>
                   скачать
                 </a>
+                {item.chapters_text && (
+                  /* Оглавление копируют целиком в описание под видео,
+                     поэтому оно даётся одним блоком, а не списком. */
+                  <details className="chapters">
+                    <summary className="small">
+                      Таймкоды ({item.chapters_text.split("\n").length})
+                    </summary>
+                    <pre>{item.chapters_text}</pre>
+                    <button
+                      type="button"
+                      onClick={() => navigator.clipboard?.writeText(item.chapters_text ?? "")}
+                    >
+                      скопировать
+                    </button>
+                  </details>
+                )}
               </figcaption>
             </figure>
           ))}

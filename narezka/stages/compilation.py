@@ -20,6 +20,12 @@ from typing import Any
 from narezka.core import compilation as core
 from narezka.core.artifacts import Artifact
 from narezka.core.assemble import cut_piece, join_pieces, total_duration
+import json
+import re
+
+from narezka.core import chapters as chap
+from narezka.core import llm
+from narezka.core.prompts import CHAPTERS_SYSTEM_PROMPT, build_chapters_message
 from narezka.core.clips import load_clips
 from narezka.core.media import find_source
 from narezka.core.stage import Device, Stage, StageContext, StageSkipped
@@ -109,10 +115,17 @@ class CompilationStage(Stage):
             )
             target_file = Artifact(ctx.paths.base / name)
             done = self._assemble(ctx, source, pieces, target_file, done, steps)
+            length = total_duration(pieces)
+            marks = chap.build(pieces, plan.pop("titles", None))
             results.append({
                 "file": name,
-                "duration": round(total_duration(pieces), 2),
+                "duration": round(length, 2),
                 "pieces": [{"start": round(a, 2), "end": round(b, 2)} for a, b in pieces],
+                "chapters": [c.as_dict() for c in marks],
+                # Готовая строка для описания под видео: её копируют целиком,
+                # и собирать её на стороне интерфейса значило бы повторять
+                # правила площадок в двух местах.
+                "chapters_text": chap.as_text(marks, length),
                 **plan,
             })
             ctx.log.info(
@@ -159,6 +172,69 @@ class CompilationStage(Stage):
             workdir.rmdir()
         return done
 
+    def _name_pieces(self, ctx: StageContext, pieces) -> dict[int, str]:
+        """Просит модель подписать куски сюжетной нарезки.
+
+        Отказ модели не срывает сборку: ролик выйдет без оглавления, а это
+        досадно, но не сравнимо с потерей самого ролика.
+        """
+        artifact = Artifact(ctx.paths.transcript / "transcript.json")
+        if not artifact.exists() or not ctx.config.llm.model:
+            return {}
+        try:
+            segments = artifact.read_json().get("segments", [])
+        except ValueError:
+            return {}
+
+        blocks = []
+        for start, end in pieces:
+            text = " ".join(
+                str(s.get("text", "")) for s in segments
+                if start <= float(s.get("start", 0.0)) < end
+            ).strip()
+            blocks.append((start, text or "(без речи)"))
+
+        key = llm.api_key(provider_name=ctx.config.llm.provider)
+        if not key:
+            return {}
+        try:
+            response = llm.chat(
+                key,
+                [ctx.config.llm.model, *ctx.config.llm.fallback_models],
+                {
+                    "messages": [
+                        {"role": "system", "content": CHAPTERS_SYSTEM_PROMPT},
+                        {"role": "user", "content": build_chapters_message(blocks)},
+                    ],
+                    "temperature": 0.3,
+                },
+                timeout=ctx.config.llm.timeout_seconds,
+                provider_name=ctx.config.llm.provider,
+            )
+            content = response["choices"][0]["message"]["content"]
+            match = re.search(r"\[.*\]", content, re.S)
+            names = json.loads(match.group(0)) if match else []
+        except (llm.LlmError, ValueError, KeyError, IndexError) as exc:
+            ctx.log.warning("подписи к кускам не получены — оглавления не будет: %s", exc)
+            return {}
+
+        return {
+            number: str(name).strip()
+            for number, name in enumerate(names)
+            if number < len(pieces) and str(name).strip()
+        }
+
+    @staticmethod
+    def _titles(ctx: StageContext) -> dict[int, str]:
+        """Заголовки клипов, если стадия текстов выполнялась."""
+        artifact = Artifact(ctx.paths.analysis / "publish.json")
+        if not artifact.exists():
+            return {}
+        try:
+            return {c["index"]: c.get("title", "") for c in artifact.read_json().get("clips", [])}
+        except (ValueError, KeyError, TypeError):
+            return {}
+
     def _story_jobs(self, ctx: StageContext, clips, target: float):
         """Задания на сюжетные ролики — по одному на выбранный эпизод."""
         artifact = Artifact(ctx.paths.analysis / EPISODES_NAME)
@@ -202,7 +278,14 @@ class CompilationStage(Stage):
                 jobs.append((
                     f"compilation-story-{index:02d}.mp4",
                     pieces,
-                    {"episode": episode, "episode_index": index, "highlights_inside": len(keep)},
+                    {
+                        "episode": episode,
+                        "episode_index": index,
+                        "highlights_inside": len(keep),
+                        # Готовых заголовков у сюжетных кусков нет: это части
+                        # одного занятия, и подписать их может только модель.
+                        "titles": self._name_pieces(ctx, pieces),
+                    },
                 ))
         return jobs
 
@@ -210,9 +293,16 @@ class CompilationStage(Stage):
         """Подборка лучших: моменты со всей записи, расставленные по ролям."""
         result = core.arrange(clips, target)
         pieces = [(p.clip["start"], p.clip["end"]) for p in result.parts]
+        # Заголовки уже написаны стадией metadata — брать их заново значило бы
+        # платить за то, что лежит рядом.
+        written = self._titles(ctx)
+        titles = {
+            number: written.get(part.clip.get("index"), "")
+            for number, part in enumerate(result.parts)
+        }
         for part in result.parts:
             ctx.log.info(
                 "  %-8s #%s оценка %s",
                 part.role, part.clip.get("index"), part.clip.get("interest_score"),
             )
-        return pieces, {"arrangement": result.as_dict()}
+        return pieces, {"arrangement": result.as_dict(), "titles": titles}

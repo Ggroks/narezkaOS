@@ -324,6 +324,8 @@ export type CompilationFile = {
   duration: number;
   pieces: number;
   size_bytes: number;
+  /** Готовая строка оглавления для описания под видео. */
+  chapters_text?: string;
 };
 
 export type CompilationsInfo = { files: CompilationFile[]; reason?: string };

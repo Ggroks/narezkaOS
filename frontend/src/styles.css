@@ -1172,3 +1172,18 @@ details.section .section-body > .card > h2 { display: none; }
   gap: 3px;
   margin-top: 8px;
 }
+
+/* Оглавление: копируется целиком, поэтому моноширинным и одним блоком. */
+.chapters { margin-top: 8px; }
+.chapters summary { cursor: pointer; color: var(--text-dim); }
+.chapters pre {
+  margin: 8px 0;
+  padding: 10px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-small);
+}

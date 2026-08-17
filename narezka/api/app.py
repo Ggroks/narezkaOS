@@ -334,6 +334,7 @@ def compilations(video_id: str, project: str = "default") -> dict[str, Any]:
             "duration": item.get("duration", 0.0),
             "pieces": len(item.get("pieces", [])),
             "size_bytes": path.stat().st_size,
+            "chapters_text": item.get("chapters_text", ""),
         })
     return {"files": files}
 

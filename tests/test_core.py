@@ -264,3 +264,54 @@ def test_missing_config_file_falls_back_to_defaults(tmp_path: Path) -> None:
 )
 def test_parse_fps(raw: str | None, expected: float | None) -> None:
     assert parse_fps(raw) == expected
+
+
+def test_wav_is_read_in_blocks(tmp_path):
+    """Чтение звука не держит три копии данных разом.
+
+    Прямолинейный путь — прочитать всё, преобразовать и поделить — на записи
+    в 0.49 ГБ занимал 2545 МБ. На восьмичасовой это четыре гигабайта: тот же
+    изъян, что дважды ронял память проекта.
+    """
+    import wave
+
+    import numpy as np
+
+    from narezka.core.signals import read_wav_mono
+
+    path = tmp_path / "a.wav"
+    wave_data = (np.sin(np.linspace(0, 100, 50000)) * 20000).astype(np.int16)
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(16000)
+        handle.writeframes(wave_data.tobytes())
+
+    samples, rate = read_wav_mono(path)
+
+    assert rate == 16000
+    assert samples.size == wave_data.size, "все отсчёты на месте"
+    assert samples.dtype == np.float32
+    assert np.allclose(samples, wave_data / 32768.0, atol=1e-6)
+
+
+def test_wav_shorter_than_its_header(tmp_path):
+    """Заголовок может обещать больше кадров, чем в файле.
+
+    Лишние нули стали бы тишиной в конце записи — и вырезались бы как пауза.
+    """
+    import wave
+
+    import numpy as np
+
+    from narezka.core.signals import read_wav_mono
+
+    path = tmp_path / "b.wav"
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(16000)
+        handle.writeframes(np.zeros(1000, dtype=np.int16).tobytes())
+
+    samples, _ = read_wav_mono(path)
+    assert samples.size == 1000

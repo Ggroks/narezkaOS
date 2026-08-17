@@ -17,9 +17,14 @@ type Props = {
   children: React.ReactNode;
   /** Где показать плашку: снизу по умолчанию, сверху — если места нет. */
   side?: "top" | "bottom";
+  /**
+   * По центру значка или от его левого края. `start` — для узких мест
+   * у края окна: по центру плашка вылезает за границу и висит в пустоте.
+   */
+  align?: "center" | "start";
 };
 
-export function Hint({ children, side = "bottom" }: Props) {
+export function Hint({ children, side = "bottom", align = "center" }: Props) {
   const [open, setOpen] = useState(false);
   const id = useId();
 
@@ -45,7 +50,7 @@ export function Hint({ children, side = "bottom" }: Props) {
         i
       </button>
       {open && (
-        <span id={id} role="tooltip" className={`hint-body ${side}`}>
+        <span id={id} role="tooltip" className={`hint-body ${side} ${align}`}>
           {children}
         </span>
       )}

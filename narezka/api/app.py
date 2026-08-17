@@ -34,8 +34,8 @@ from narezka.core.framing import (
     plan_frame,
     preview_presets,
 )
-from narezka.core.media import find_source, run_tool
-from narezka.core import db, detectors, feedback, llm, publish, review
+from narezka.core.media import MediaError, find_source, run_tool
+from narezka.core import db, detectors, feedback, llm, publish, registry, review
 from narezka.core.paths import list_videos, video_paths
 from narezka.core.runner import run_pipeline, run_stage
 from narezka.core.stage import StageContext
@@ -138,73 +138,146 @@ class AddVideo(BaseModel):
     url: str | None = None
     file: str | None = None
     project: str = "default"
+    #: Своё название записи. В интерфейсе она зовётся проектом, в коде и в
+    #: хранилище — видео: переименовывать сущность ради слова на экране
+    #: незачем, а помнить о расхождении надо (см. core/registry.py).
+    title: str | None = Field(default=None, max_length=registry.TITLE_LIMIT)
+
+
+class RenameVideo(BaseModel):
+    #: Пустая строка означает возврат к заголовку из источника.
+    title: str = Field(default="", max_length=registry.TITLE_LIMIT)
+
+
+def _summary(config, project: str, video_id: str) -> dict[str, Any]:
+    """Карточка каталога: что за запись, откуда и на чём остановилась работа."""
+    paths = video_paths(config.storage_root, project, video_id)
+    meta = Artifact(paths.metadata)
+    data = meta.read_json() if meta.exists() else {}
+
+    done = {p.stem for p in paths.stage_state.glob("*.json")} if paths.stage_state.is_dir() else set()
+    stages_done = sum(1 for stage in PIPELINE if stage.name in done)
+
+    shorts_index = Artifact(paths.shorts / "index.json")
+    shorts_count = 0
+    if shorts_index.exists():
+        try:
+            shorts_count = len(shorts_index.read_json().get("files", []))
+        except ValueError:
+            shorts_count = 0
+
+    job = jobs.manager.get(video_id)
+    if job is not None and job.is_active:
+        state = "processing"
+    elif job is not None and job.status == "failed":
+        # Упавший прогон важнее готовых роликов: о нём надо узнать из каталога,
+        # а не открыв запись и не найдя ожидаемого.
+        state = "failed"
+    elif shorts_count:
+        state = "ready"
+    elif stages_done:
+        state = "started"
+    else:
+        state = "draft"
+
+    return {
+        "video_id": video_id,
+        "title": registry.display_title(data, video_id),
+        # Название из источника показывается второй строкой, когда человек
+        # дал записи своё имя: иначе непонятно, что это за запись вообще.
+        "source_title": data.get("source_title") or data.get("source_file"),
+        "named": bool(data.get("title")),
+        "origin": data.get("origin", {}).get("type"),
+        "created_at": data.get("created_at") or _added_at(paths),
+        "duration_seconds": data.get("duration_seconds"),
+        "video": data.get("video"),
+        # None означает «ещё неизвестно»: проверка файла не выполнялась.
+        # Карточке это нужно, чтобы объяснить отсутствие кадра честно —
+        # «только звук» и «запись ещё не скачана» разные вещи.
+        "has_video": data.get("has_video"),
+        "state": state,
+        "stages_done": stages_done,
+        "stages_total": len(PIPELINE),
+        "shorts": shorts_count,
+        "poster_at": _poster_at(paths, data),
+        "job_status": job.status if job else None,
+        "job": job.progress() if job else None,
+    }
+
+
+def _added_at(paths) -> str | None:
+    """Когда запись завели, если дата не записана.
+
+    Видео, добавленные до появления поля, датируются по каталогу — «дата
+    неизвестна» в карточке выглядит поломкой, хотя ничего не сломано.
+    """
+    try:
+        stamp = paths.base.stat().st_mtime
+    except OSError:
+        return None
+    from datetime import datetime, timezone  # noqa: PLC0415
+
+    return datetime.fromtimestamp(stamp, timezone.utc).isoformat(timespec="seconds")
+
+
+def _poster_at(paths, metadata: dict[str, Any]) -> float | None:
+    """Момент, из которого брать кадр для карточки, или None.
+
+    None значит «кадра не будет»: запись ещё не скачана или это звук без
+    картинки. Решает сервер, а не браузер, — иначе карточка запрашивает кадр,
+    получает ошибку и показывает битую картинку.
+    """
+    if not metadata.get("has_video", False):
+        return None
+    try:
+        find_source(paths.source)
+    except MediaError:
+        return None
+    # Округление держит имя файла кадра постоянным: карточка при каждом
+    # опросе просит тот же кадр и получает его из кэша, а не гоняет ffmpeg.
+    return round(_preview_position(paths, metadata), 2)
 
 
 @app.get("/api/videos")
 def videos(project: str = "default") -> list[dict[str, Any]]:
     config, _ = _config()
-    result = []
-    for video_id in list_videos(config.storage_root, project):
-        paths = video_paths(config.storage_root, project, video_id)
-        meta = Artifact(paths.metadata)
-        data = meta.read_json() if meta.exists() else {}
-        job = jobs.manager.get(video_id)
-        result.append(
-            {
-                "video_id": video_id,
-                "title": data.get("source_title") or data.get("source_file") or video_id,
-                "origin": data.get("origin", {}).get("type"),
-                "duration_seconds": data.get("duration_seconds"),
-                "video": data.get("video"),
-                "job_status": job.status if job else None,
-            }
-        )
-    return result
+    return [_summary(config, project, vid) for vid in list_videos(config.storage_root, project)]
 
 
 @app.post("/api/videos")
 def add_video(payload: AddVideo) -> dict[str, Any]:
-    if bool(payload.url) == bool(payload.file):
-        raise HTTPException(status_code=400, detail="укажите ровно одно: url или file")
-
     config, _ = _config()
+    try:
+        result = registry.register(
+            storage_root=config.storage_root,
+            project=payload.project,
+            url=payload.url,
+            file=Path(payload.file) if payload.file else None,
+            title=payload.title,
+        )
+    except registry.RegistrationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"не удалось привязать файл: {exc}") from exc
 
-    if payload.url:
-        url = payload.url.strip()
-        video_id = hashlib.sha256(url.encode()).hexdigest()[:12]
-        origin = {"type": "url", "url": url}
-    else:
-        assert payload.file
-        source = Path(payload.file).expanduser()
-        if not source.is_file():
-            raise HTTPException(status_code=400, detail=f"файл не найден: {source}")
-        video_id = hashlib.sha256(f"{source.stat().st_size}:{source.name}".encode()).hexdigest()[:12]
-        origin = {"type": "local_file", "path": str(source.resolve())}
+    log.info("добавлено видео %s (%s)", result.video_id, result.placement)
+    return {
+        "video_id": result.video_id,
+        "created": result.created,
+        "title": result.title,
+        "placement": result.placement,
+    }
 
-    paths = video_paths(config.storage_root, payload.project, video_id)
-    paths.ensure()
 
-    if payload.file:
-        target = paths.source / Path(payload.file).name
-        if not target.exists():
-            try:
-                target.symlink_to(Path(payload.file).expanduser().resolve())
-            except OSError as exc:
-                raise HTTPException(status_code=500, detail=f"не удалось привязать файл: {exc}") from exc
-
-    metadata = Artifact(paths.metadata)
-    existing = metadata.read_json() if metadata.exists() else {}
-    existing.update(
-        {
-            "video_id": video_id,
-            "project_id": payload.project,
-            "origin": origin,
-            "content_origin": "own",
-            "retention_until": None,
-        }
-    )
-    metadata.write_json(existing)
-    return {"video_id": video_id}
+@app.patch("/api/videos/{video_id}")
+def rename_video(video_id: str, payload: RenameVideo, project: str = "default") -> dict[str, Any]:
+    """Переименование записи. Пустое название возвращает заголовок источника."""
+    paths, config = _paths(video_id, project)
+    try:
+        registry.rename(paths, payload.title)
+    except registry.RegistrationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _summary(config, project, video_id)
 
 
 @app.get("/api/videos/{video_id}")
@@ -1113,7 +1186,7 @@ def mark_published(video_id: str, payload: PublishRequest, project: str = "defau
             connection,
             video_id=video_id,
             project_id=project,
-            title=metadata.get("source_title") or metadata.get("source_file"),
+            title=registry.display_title(metadata, video_id),
             content_origin=metadata.get("content_origin", "own"),
             retention_until=metadata.get("retention_until"),
         )

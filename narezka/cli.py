@@ -7,9 +7,6 @@ BAZA.md §33: каждая операция доступна и из CLI, и (п
 
 from __future__ import annotations
 
-import hashlib
-import os
-import shutil
 from pathlib import Path
 from typing import Annotated
 
@@ -18,11 +15,10 @@ from dotenv import load_dotenv
 from rich.console import Console
 from rich.table import Table
 
-from narezka.core import env
+from narezka.core import env, registry
 from narezka.core.artifacts import Artifact, cleanup_partials
 from narezka.core.config import load_config
 from narezka.core.logging import get_logger, setup_logging
-from narezka.core.media import MEDIA_SUFFIXES
 from narezka.core.paths import list_videos, video_paths
 from narezka.core.runner import Outcome, run_pipeline, run_stage
 from narezka.core.stage import StageContext
@@ -58,41 +54,6 @@ def _build_context(video_id: str, project: str, profile: str | None, config_path
         device=device,
         log=get_logger("stage"),
     )
-
-
-def _video_id_for_file(path: Path) -> str:
-    """Идентификатор по содержимому: повторное добавление того же файла даёт тот же id."""
-    size = path.stat().st_size
-    digest = hashlib.sha256(str(size).encode())
-    with path.open("rb") as handle:
-        digest.update(handle.read(1024 * 1024))
-        if size > 2 * 1024 * 1024:
-            handle.seek(-1024 * 1024, os.SEEK_END)
-            digest.update(handle.read(1024 * 1024))
-    return digest.hexdigest()[:12]
-
-
-def _place_source(src: Path, dst: Path) -> str:
-    """Жёсткая ссылка, иначе символическая, иначе копия.
-
-    Копировать десятки гигабайт ради того, чтобы файл лежал «внутри» хранилища,
-    смысла нет (§65).
-    """
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    if dst.exists():
-        return "уже на месте"
-    try:
-        os.link(src, dst)
-        return "жёсткая ссылка"
-    except OSError:
-        pass
-    try:
-        dst.symlink_to(src.resolve())
-        return "символическая ссылка"
-    except OSError:
-        pass
-    shutil.copy2(src, dst)
-    return "копия"
 
 
 @app.callback()
@@ -140,47 +101,50 @@ def doctor(
 def add(
     file: Annotated[Path | None, typer.Option("--file", "-f", help="Локальный медиафайл", exists=True)] = None,
     url: Annotated[str | None, typer.Option("--url", "-u", help="YouTube или Twitch VOD")] = None,
+    title: Annotated[str | None, typer.Option("--title", "-t", help="Своё название записи")] = None,
     project: Annotated[str, typer.Option("--project", "-p")] = "default",
     config_path: Annotated[Path | None, typer.Option("--config")] = None,
 ) -> None:
     """Зарегистрировать видео проекта: локальный файл или URL."""
-    if (file is None) == (url is None):
-        console.print("[red]Укажите ровно одно: --file или --url.[/red]")
-        raise typer.Exit(1)
-
     config = load_config(config_path)
 
-    if file is not None:
-        if file.suffix.lower() not in MEDIA_SUFFIXES:
-            console.print(f"[yellow]Расширение {file.suffix} не в списке известных — пробую всё равно.[/yellow]")
-        video_id = _video_id_for_file(file)
-        origin = {"type": "local_file", "path": str(file.resolve())}
-    else:
-        assert url is not None
-        video_id = hashlib.sha256(url.strip().encode()).hexdigest()[:12]
-        origin = {"type": "url", "url": url.strip()}
+    if file is not None and not registry.known_suffix(file):
+        console.print(f"[yellow]Расширение {file.suffix} не в списке известных — пробую всё равно.[/yellow]")
 
-    paths = video_paths(config.storage_root, project, video_id)
-    paths.ensure()
+    try:
+        result = registry.register(
+            storage_root=config.storage_root, project=project, url=url, file=file, title=title
+        )
+    except registry.RegistrationError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
 
-    how = _place_source(file, paths.source / file.name) if file is not None else "будет скачано"
-
-    metadata = Artifact(paths.metadata)
-    existing = metadata.read_json() if metadata.exists() else {}
-    existing.update(
-        {
-            "video_id": video_id,
-            "project_id": project,
-            "origin": origin,
-            # §31: поля закладываются сразу, чтобы потом не мигрировать схему.
-            "content_origin": "own",
-            "retention_until": None,
-        }
+    console.print(
+        f"[green]{'Добавлено' if result.created else 'Уже было'}[/green] "
+        f"«{result.title}» video_id=[bold]{result.video_id}[/bold] ({result.placement})"
     )
-    metadata.write_json(existing)
+    console.print(f"Дальше: [bold]narezka pipeline --video-id {result.video_id}[/bold]")
 
-    console.print(f"[green]Добавлено[/green] video_id=[bold]{video_id}[/bold] ({how})")
-    console.print(f"Дальше: [bold]narezka pipeline --video-id {video_id}[/bold]")
+
+@app.command()
+def rename(
+    video_id: Annotated[str, typer.Option("--video-id", "-i")],
+    title: Annotated[str, typer.Argument(help="Новое название; пустое вернёт заголовок источника")] = "",
+    project: Annotated[str, typer.Option("--project", "-p")] = "default",
+    config_path: Annotated[Path | None, typer.Option("--config")] = None,
+) -> None:
+    """Переименовать запись. То же делает карандаш на карточке в каталоге."""
+    config = load_config(config_path)
+    paths = video_paths(config.storage_root, project, video_id)
+    if not paths.exists():
+        console.print(f"[red]Видео '{video_id}' не найдено.[/red]")
+        raise typer.Exit(1)
+    try:
+        current = registry.rename(paths, title)
+    except registry.RegistrationError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+    console.print(f"[green]Теперь[/green] «{current}»")
 
 
 @app.command()
@@ -585,7 +549,7 @@ def publish(
             connection,
             video_id=video_id,
             project_id=project,
-            title=metadata.get("source_title") or metadata.get("source_file"),
+            title=registry.display_title(metadata, video_id),
             content_origin=metadata.get("content_origin", "own"),
             retention_until=metadata.get("retention_until"),
         )
@@ -741,6 +705,7 @@ def status(
             return
         table = Table(title=f"Проект {project}")
         table.add_column("video_id", style="bold")
+        table.add_column("Название")
         table.add_column("Длительность")
         table.add_column("Разрешение")
         for vid in ids:
@@ -751,6 +716,7 @@ def status(
             video = data.get("video") or {}
             table.add_row(
                 vid,
+                registry.display_title(data, vid),
                 f"{duration / 60:.1f} мин" if duration else "—",
                 f"{video.get('width')}x{video.get('height')}" if video.get("width") else "—",
             )

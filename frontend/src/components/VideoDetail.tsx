@@ -22,6 +22,7 @@ import { PublishView } from "./PublishView";
 import { ReviewView } from "./ReviewView";
 import { ShortsView } from "./ShortsView";
 import { TranscriptView } from "./TranscriptView";
+import { STAGE_TITLES } from "../stages";
 
 type Props = { videoId: string; onBack: () => void };
 
@@ -37,25 +38,6 @@ const OUTCOME_LABEL: Record<string, string> = {
   cached: "из кэша",
   skipped: "пропущено",
   failed: "ошибка",
-};
-
-/** Человеческие названия стадий: внутренние имена пользователю знать неоткуда. */
-const STAGE_TITLES: Record<string, string> = {
-  download: "Загрузка записи",
-  probe: "Проверка файла",
-  extract_audio: "Извлечение звука",
-  chat: "Чтение чата",
-  transcribe: "Распознавание речи",
-  audiotags: "Разбор звука",
-  timeline: "Удаление пауз",
-  candidates: "Поиск моментов",
-  llm_select: "Оценка моментов",
-  episodes: "Поиск эпизодов",
-  facecam: "Поиск лица",
-  subtitles: "Субтитры",
-  metadata: "Тексты для публикации",
-  render: "Сборка роликов",
-  compilation: "Длинная нарезка",
 };
 
 export function VideoDetail({ videoId, onBack }: Props) {
@@ -219,7 +201,8 @@ export function VideoDetail({ videoId, onBack }: Props) {
       tabs={tabs}
       active={tab}
       onSelect={setTab}
-      title={meta.source_title || meta.source_file || videoId}
+      // Своё название важнее взятого из источника — как и в каталоге.
+      title={meta.title || meta.source_title || meta.source_file || videoId}
       subtitle={formatDuration(meta.duration_seconds)}
       actions={
         <>

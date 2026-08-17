@@ -10,13 +10,52 @@ export type StageState = {
   duration?: number;
 };
 
+/**
+ * Состояние записи в каталоге.
+ *
+ * `started` — работа начата, но роликов ещё нет: это не черновик и не
+ * готовое, и сваливать его в одно из двух значит врать в карточке.
+ */
+export type ProjectState = "draft" | "started" | "processing" | "ready" | "failed";
+
+/** Что идёт прямо сейчас: стадия и, если она умеет считать, сколько сделано. */
+export type JobProgress = {
+  status: string;
+  stage: string | null;
+  done: number | null;
+  total: number | null;
+  note: string | null;
+  error: string | null;
+};
+
+/**
+ * Карточка каталога.
+ *
+ * В интерфейсе запись называется проектом, в API и в хранилище — видео.
+ * Расхождение намеренное: переименовывать сущность в путях, в базе и в
+ * тридцати модулях ради слова на экране незачем (см. narezka/core/registry.py).
+ */
 export type VideoSummary = {
   video_id: string;
+  /** Имя для показа: своё, иначе заголовок источника, иначе идентификатор. */
   title: string;
+  /** Заголовок из источника — второй строкой, когда имя дал человек. */
+  source_title: string | null;
+  named: boolean;
   origin: string | null;
+  created_at: string | null;
   duration_seconds: number | null;
   video: { width?: number; height?: number; fps?: number } | null;
+  /** null — проверка файла ещё не выполнялась, есть ли картинка, неизвестно. */
+  has_video: boolean | null;
+  state: ProjectState;
+  stages_done: number;
+  stages_total: number;
+  shorts: number;
+  /** Момент для кадра-превью; null — кадра не будет (нет записи или это звук). */
+  poster_at: number | null;
   job_status: string | null;
+  job: JobProgress | null;
 };
 
 export type Word = { word: string; start: number; end: number; probability: number };
@@ -382,8 +421,14 @@ export const api = {
   video: (id: string) => request<VideoDetail>(`/api/videos/${id}`),
   transcript: (id: string) => request<Transcript>(`/api/videos/${id}/transcript`),
   shorts: (id: string) => request<ShortsIndex>(`/api/videos/${id}/shorts`),
-  addVideo: (payload: { url?: string; file?: string }) =>
-    request<{ video_id: string }>("/api/videos", { method: "POST", body: JSON.stringify(payload) }),
+  addVideo: (payload: { url?: string; file?: string; title?: string }) =>
+    request<{ video_id: string; created: boolean; title: string; placement: string }>("/api/videos", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  /** Пустое название возвращает заголовок из источника. */
+  renameVideo: (id: string, title: string) =>
+    request<VideoSummary>(`/api/videos/${id}`, { method: "PATCH", body: JSON.stringify({ title }) }),
   deleteVideo: (id: string) => request<{ status: string }>(`/api/videos/${id}`, { method: "DELETE" }),
   run: (id: string, payload: { stage?: string; force?: boolean }) =>
     request<{ started: boolean; status: string }>(`/api/videos/${id}/run`, {
@@ -468,6 +513,31 @@ export function subscribeToJob(
   };
   source.onerror = () => source.close();
   return () => source.close();
+}
+
+/**
+ * Дата добавления обычными словами.
+ *
+ * «Сегодня» и «вчера» вместо числа: в каталоге, где работа идёт каждый день,
+ * дата нужна, чтобы отличить свежее от старого, а не чтобы её прочесть.
+ */
+export function formatDate(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+
+  const midnight = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const days = Math.round((midnight(new Date()) - midnight(date)) / 86_400_000);
+  if (days === 0) return "сегодня";
+  if (days === 1) return "вчера";
+  if (days < 7) return `${days} дн. назад`;
+
+  const sameYear = date.getFullYear() === new Date().getFullYear();
+  return date.toLocaleDateString("ru-RU", {
+    day: "numeric",
+    month: "long",
+    year: sameYear ? undefined : "numeric",
+  });
 }
 
 export function formatDuration(seconds: number | null | undefined): string {

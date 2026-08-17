@@ -106,6 +106,76 @@ def test_add_by_missing_file_is_rejected(client) -> None:
     assert client.post("/api/videos", json={"file": "/нет/такого.mp4"}).status_code == 400
 
 
+# --- каталог проектов ------------------------------------------------------
+
+
+def test_own_title_is_saved_and_shown(client) -> None:
+    """Название, данное человеком, важнее заголовка из источника.
+
+    В каталоге из десяти записей «Стрим #482 [VOD]» друг от друга
+    не отличаются, а своё имя отличает.
+    """
+    added = client.post(
+        "/api/videos", json={"url": "https://twitch.tv/videos/7", "title": "Разбор катки"}
+    ).json()
+    card = next(v for v in client.get("/api/videos").json() if v["video_id"] == added["video_id"])
+    assert card["title"] == "Разбор катки" and card["named"] is True
+
+
+def test_rename_and_reset_to_source_title(client, video) -> None:
+    write(video, "meta/metadata.json", {"video_id": VIDEO, "source_title": "VOD 4821"})
+
+    renamed = client.patch(f"/api/videos/{VIDEO}", json={"title": "Про котов"}).json()
+    assert renamed["title"] == "Про котов" and renamed["source_title"] == "VOD 4821"
+
+    # Пустое название — не ошибка, а возврат к заголовку площадки.
+    restored = client.patch(f"/api/videos/{VIDEO}", json={"title": ""}).json()
+    assert restored["title"] == "VOD 4821" and restored["named"] is False
+
+
+def test_rename_of_unknown_video_is_404(client) -> None:
+    assert client.patch("/api/videos/нетакого", json={"title": "х"}).status_code == 404
+
+
+def test_too_long_title_is_refused(client, video) -> None:
+    assert client.patch(f"/api/videos/{VIDEO}", json={"title": "я" * 500}).status_code == 422
+
+
+def test_catalog_state_follows_the_work(client, video) -> None:
+    """Черновик → в работе → готов. Три разных ответа, а не два."""
+    def state() -> str:
+        return client.get("/api/videos").json()[0]["state"]
+
+    assert state() == "draft"
+
+    (video / "meta" / "stages").mkdir(parents=True, exist_ok=True)
+    write(video, "meta/stages/probe.json", {"finished_at": "2026-08-17T10:00:00"})
+    card = client.get("/api/videos").json()[0]
+    assert card["state"] == "started" and card["stages_done"] == 1
+
+    write(video, "shorts/index.json", {"files": [{"index": 0}, {"index": 1}]})
+    card = client.get("/api/videos").json()[0]
+    assert card["state"] == "ready" and card["shorts"] == 2
+
+
+def test_catalog_says_when_there_is_no_frame(client, video) -> None:
+    """poster_at решает сервер: иначе карточка просит кадр и получает ошибку.
+
+    Запись не скачана — кадра нет, и об этом надо сказать до запроса,
+    а не показать битую картинку.
+    """
+    assert client.get("/api/videos").json()[0]["poster_at"] is None
+
+    write(video, "meta/metadata.json", {"video_id": VIDEO, "has_video": False})
+    (video / "source" / "audio.mp3").write_bytes(b"\x00")
+    assert client.get("/api/videos").json()[0]["poster_at"] is None
+
+
+def test_added_date_is_reported_even_for_old_videos(client, video) -> None:
+    """У записей, заведённых до появления поля, дата берётся по каталогу."""
+    assert client.get("/api/videos").json()[0]["created_at"]
+
+
 # --- обзор и разметка ------------------------------------------------------
 
 

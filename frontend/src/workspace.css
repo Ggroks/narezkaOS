@@ -162,9 +162,22 @@
 .hint-body.bottom { top: calc(100% + 7px); }
 .hint-body.top { bottom: calc(100% + 7px); }
 
+/* От левого края значка, а не по центру: у края окна отцентрованная плашка
+   наполовину вылезает наружу и висит над пустотой. */
+.hint-body.start {
+  left: -10px;
+  transform: none;
+  animation-name: hint-in-start;
+}
+
 @keyframes hint-in {
   from { opacity: 0; transform: translateX(-50%) translateY(-3px); }
   to   { opacity: 1; transform: translateX(-50%); }
+}
+
+@keyframes hint-in-start {
+  from { opacity: 0; transform: translateY(-3px); }
+  to   { opacity: 1; transform: none; }
 }
 
 /* ── Строка настройки ──────────────────────────────────────────────────── */

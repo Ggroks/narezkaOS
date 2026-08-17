@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type Health, type VideoSummary } from "./api";
 import { ThemePicker } from "./components/ThemePicker";
-import { VideoList } from "./components/VideoList";
+import { ProjectCatalog } from "./components/ProjectCatalog";
 import { VideoDetail } from "./components/VideoDetail";
 
 /** Маршрут в хэше: перезагрузка страницы возвращает туда же (§69). */
@@ -27,6 +27,9 @@ function useHashRoute(): [string | null, (id: string | null) => void] {
   return [videoId, navigate];
 }
 
+/** Как часто обновлять каталог, пока хоть что-то обрабатывается. */
+const POLL_MS = 3000;
+
 export function App() {
   const [videoId, navigate] = useHashRoute();
   const [videos, setVideos] = useState<VideoSummary[]>([]);
@@ -50,6 +53,38 @@ export function App() {
     void refresh();
     api.health().then(setHealth).catch(() => setHealth(null));
   }, [refresh]);
+
+  /**
+   * Живой ход работы в каталоге — опросом, а не потоком событий.
+   *
+   * Поток (`subscribeToJob`) подписан на одну запись, и для каталога
+   * пришлось бы держать по соединению на карточку. Событий здесь немного,
+   * а обновление раз в три секунды человек воспринимает как живое. Опрос
+   * идёт, только пока что-то обрабатывается, и только когда каталог открыт:
+   * висеть в фоне без дела ему незачем.
+   */
+  const busy = videos.some((video) => video.state === "processing");
+  // Ссылка на свежую функцию: интервал ставится один раз на «занят/не занят»,
+  // а не пересоздаётся при каждом обновлении списка.
+  const refreshRef = useRef(refresh);
+  refreshRef.current = refresh;
+
+  useEffect(() => {
+    if (videoId !== null || !busy) return;
+    const timer = setInterval(() => void refreshRef.current(), POLL_MS);
+    return () => clearInterval(timer);
+  }, [busy, videoId]);
+
+  // Возврат к вкладке — повод обновиться сразу: за время отсутствия
+  // обработка могла закончиться, и ждать очередного тика незачем.
+  useEffect(() => {
+    if (videoId !== null) return;
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void refreshRef.current();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [videoId]);
 
   return (
     <div className="app">
@@ -76,7 +111,7 @@ export function App() {
         {videoId ? (
           <VideoDetail videoId={videoId} onBack={() => navigate(null)} />
         ) : (
-          <VideoList videos={videos} onOpen={(id) => navigate(id)} onChanged={refresh} />
+          <ProjectCatalog projects={videos} onOpen={(id) => navigate(id)} onChanged={refresh} />
         )}
       </main>
     </div>

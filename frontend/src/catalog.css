@@ -1,0 +1,303 @@
+/* Каталог проектов — вход в программу.
+
+   Держится тех же правил, что и среда монтажа: шаг сетки 4 px, скругления
+   концентричны (внутреннее равно внешнему минус отступ контейнера), тени
+   только у того, что действительно висит над содержимым. Разделение идёт
+   контрастом поверхностей и линией в один пиксель. */
+
+.catalog {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: var(--gap-lg) var(--gap-lg) var(--gap-xl);
+}
+
+.catalog-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--gap);
+  flex-wrap: wrap;
+  margin-bottom: var(--gap-lg);
+}
+
+.catalog-title h2 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  /* Плотнее обычного: крупный текст с обычным трекингом выглядит рыхлым. */
+  letter-spacing: -0.02em;
+}
+.catalog-title p { margin: 3px 0 0; }
+
+/* ── Сетка карточек ────────────────────────────────────────────────────── */
+
+.catalog-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(272px, 1fr));
+  gap: var(--gap);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.project {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  overflow: hidden;
+  transition: border-color var(--fast) var(--ease), background var(--fast) var(--ease);
+}
+.project:hover { border-color: var(--border); background: var(--surface-2); }
+/* Обводка карточки берётся у ссылки внутри: сама ссылка растянута
+   псевдоэлементом и своего видимого места не имеет. */
+.project:focus-within { border-color: var(--accent); }
+
+.project-poster {
+  position: relative;
+  display: grid;
+  place-items: center;
+  /* Без запрета на растяжение кадр вытягивается до высоты самой высокой
+     карточки в ряду, и пропорции 16:9 в соседних карточках расходятся. */
+  flex: none;
+  aspect-ratio: 16 / 9;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border-soft);
+  overflow: hidden;
+}
+.project-poster img {
+  inline-size: 100%;
+  block-size: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Заглушка вместо кадра: запись ещё не скачана или в ней только звук. */
+.project-noposter {
+  font-size: 30px;
+  line-height: 1;
+  color: var(--text-faint);
+  opacity: 0.55;
+}
+
+.project-state {
+  position: absolute;
+  inset-block-start: var(--gap-sm);
+  inset-inline-start: var(--gap-sm);
+  font-size: 12px;
+  /* Кадр под значком произвольной яркости — фон непрозрачный, иначе на
+     светлом кадре надпись пропадает. */
+  background: var(--surface);
+}
+
+.project-body {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  /* Лишнюю высоту в ряду забирает подпись, а не кадр. */
+  flex: 1;
+  padding: var(--gap) var(--gap) 14px;
+}
+
+/* Ссылка растянута на всю карточку: кликается любая её часть, а обход
+   с клавиатуры остаётся одной остановкой на проект. */
+.project-name {
+  color: var(--text);
+  font-weight: 600;
+  line-height: 1.35;
+  /* Длинное название обрезается двумя строками: карточки в ряду должны
+     сохранять одинаковую высоту. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.project-name::after { content: ""; position: absolute; inset: 0; }
+.project-name:hover { text-decoration: none; color: var(--accent); }
+
+.project-rename {
+  font-weight: 600;
+  /* Поле переименования встаёт ровно на место названия, без прыжка строки. */
+  padding: 5px 8px;
+}
+
+.project-source {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin: 2px 0 0;
+}
+/* Точка-разделитель вместо вертикальной черты: она тише и не спорит
+   с рамками карточки. */
+.project-facts span + span::before {
+  content: "·";
+  margin-inline-end: 10px;
+  color: var(--text-faint);
+}
+
+.project-failed {
+  margin: 4px 0 0;
+  color: var(--bad);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Ход обработки ─────────────────────────────────────────────────────── */
+
+.project-progress { margin-block-start: 6px; }
+.project-progress p { margin: 5px 0 0; }
+
+.progress {
+  block-size: 4px;
+  background: var(--surface-3);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+}
+.progress > span {
+  display: block;
+  block-size: 100%;
+  background: var(--accent);
+  border-radius: inherit;
+  /* Медленнее обычного: полоса обновляется раз в несколько секунд, и резкий
+     скачок читается как сбой, а не как продвижение. */
+  transition: inline-size var(--normal) var(--ease);
+}
+
+/* Идущая работа помечена не только полосой: карточку должно быть видно
+   боковым зрением, не вчитываясь. */
+.project.running { border-color: var(--accent); }
+
+/* ── Кнопки карточки ───────────────────────────────────────────────────── */
+
+.project-tools {
+  position: absolute;
+  inset-block-start: var(--gap-sm);
+  inset-inline-end: var(--gap-sm);
+  display: flex;
+  gap: var(--gap-xs);
+  /* Поверх растянутой ссылки, иначе нажатия достаются ей. */
+  z-index: 1;
+  opacity: 0;
+  transition: opacity var(--fast) var(--ease);
+}
+.project:hover .project-tools,
+.project:focus-within .project-tools { opacity: 1; }
+/* На сенсорном экране наведения нет — там кнопки видны всегда. */
+@media (hover: none) {
+  .project-tools { opacity: 1; }
+}
+
+.project-tools button.icon {
+  inline-size: 28px;
+  block-size: 28px;
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--text-dim);
+}
+.project-tools button.icon:hover:not(:disabled) { color: var(--text); background: var(--surface-3); }
+.project-tools button.icon.danger:hover:not(:disabled) { color: var(--bad); border-color: var(--bad); }
+
+/* ── Пустой каталог ────────────────────────────────────────────────────── */
+
+/* Приглашение с полем ссылки, а не картинка с сожалением: человек пришёл
+   сюда за делом, и первое действие должно быть под рукой. */
+.invite {
+  max-width: 620px;
+  margin: 6vh auto 0;
+  padding: var(--gap-xl);
+  text-align: center;
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-lg);
+}
+.invite h3 {
+  margin: 0 0 var(--gap-sm);
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+.invite p { margin: 0 auto; max-width: 46ch; text-wrap: pretty; }
+
+.invite-form {
+  display: flex;
+  gap: var(--gap-sm);
+  margin-block-start: var(--gap-lg);
+}
+@media (max-width: 520px) {
+  .invite-form { flex-direction: column; }
+}
+
+.invite-alt { margin-block-start: var(--gap); }
+
+/* ── Диалог создания ───────────────────────────────────────────────────── */
+
+.sheet {
+  inline-size: min(460px, calc(100vw - 32px));
+  padding: 0;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-float);
+}
+.sheet::backdrop {
+  background: rgb(0 0 0 / 0.5);
+  /* Затемнение, а не размытие: стекло пользователю не понравилось, да и
+     размывать целый экран ради одного окна — работа впустую. */
+}
+.sheet form { display: flex; flex-direction: column; gap: var(--gap); padding: var(--gap-lg); }
+.sheet h3 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
+
+.sheet-field { display: flex; flex-direction: column; gap: 6px; }
+.sheet-label {
+  display: flex;
+  align-items: center;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+/* Переключатель источника: две кнопки в одной обойме, как в системных
+   настройках. Скругление внутреннее — на отступ обоймы меньше внешнего. */
+.segmented {
+  display: flex;
+  gap: var(--gap-xs);
+  padding: var(--gap-xs);
+  background: var(--surface-2);
+  border-radius: calc(var(--radius-inner) + var(--gap-xs));
+}
+.segmented button {
+  flex: 1;
+  padding: 7px 12px;
+  font-size: 14px;
+  color: var(--text-dim);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-inner);
+}
+.segmented button:hover:not(.current) { color: var(--text); background: var(--surface-3); }
+.segmented button.current { color: var(--text); background: var(--surface-3); }
+
+.sheet-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--gap-sm);
+  margin-block-start: var(--gap-xs);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .sheet[open] { animation: sheet-in 180ms var(--ease); }
+}
+@keyframes sheet-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to   { opacity: 1; transform: none; }
+}

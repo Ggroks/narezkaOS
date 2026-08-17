@@ -83,6 +83,34 @@ class Job:
                 "events": [e.as_dict() for e in self.events],
             }
 
+    def progress(self) -> dict[str, Any]:
+        """Что идёт прямо сейчас — коротко, без всей истории событий.
+
+        Каталог проектов опрашивается раз в несколько секунд, и слать ему
+        тысячу событий на каждую карточку, чтобы он взял из них последнее,
+        значит гонять мегабайты ради трёх чисел.
+        """
+        with self._lock:
+            stage = next(
+                (e.stage for e in reversed(self.events) if e.event == "started"), None
+            )
+            step = next(
+                (
+                    e
+                    for e in reversed(self.events)
+                    if e.event == "progress" and e.stage == stage
+                ),
+                None,
+            )
+        return {
+            "status": self.status,
+            "stage": stage,
+            "done": step.payload.get("done") if step else None,
+            "total": step.payload.get("total") if step else None,
+            "note": step.payload.get("note") if step else None,
+            "error": self.error,
+        }
+
     def events_since(self, seq: int, *, timeout: float = 20.0) -> list[JobEvent]:
         """Возвращает новые события, ожидая появления до timeout секунд.
 

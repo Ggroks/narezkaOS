@@ -89,3 +89,73 @@ def as_text(chapters: list[Chapter], total: float) -> str:
         finish = chapters[index + 1].at if index + 1 < len(chapters) else total
         lines.append(f"{timecode(chapter.at)}-{timecode(finish)} — {chapter.title}")
     return "\n".join(lines)
+
+
+def output_digest(
+    segments: list[dict[str, Any]],
+    pieces: list[tuple[float, float]],
+    step: float = 60.0,
+) -> str:
+    """Расшифровка готового ролика с его собственными таймкодами.
+
+    Ключевое отличие от расшифровки записи: время здесь **выходное**, от
+    начала нарезки. Модель размечает главы в тех же координатах, в которых
+    их увидит зритель, и пересчитывать её ответ не приходится — а именно там
+    и появлялись бы ошибки.
+    """
+    lines: list[str] = []
+    at = 0.0
+    buckets: dict[int, list[str]] = {}
+
+    for start, end in pieces:
+        for segment in segments:
+            source_at = float(segment.get("start", 0.0))
+            if not start <= source_at < end:
+                continue
+            text = str(segment.get("text", "")).strip()
+            if text:
+                buckets.setdefault(int((at + source_at - start) / step), []).append(text)
+        at += max(0.0, end - start)
+
+    for index in sorted(buckets):
+        minutes, seconds = divmod(int(index * step), 60)
+        lines.append(f"[{minutes}:{seconds:02d}] {' '.join(buckets[index])[:200]}")
+    return "\n".join(lines)
+
+
+def parse_marks(answer: str, total: float, min_gap: float = 45.0) -> list[Chapter]:
+    """Разбирает главы, размеченные моделью в выходном времени.
+
+    Главы за пределами ролика отбрасываются: модель иногда продолжает список
+    дальше, чем есть материала, и такая глава ведёт в пустоту.
+    """
+    import json as _json
+    import re as _re
+
+    match = _re.search(r"\[.*\]", answer, _re.S)
+    if not match:
+        return []
+    try:
+        raw = _json.loads(match.group(0))
+    except ValueError:
+        return []
+
+    marks: list[Chapter] = []
+    for item in raw if isinstance(raw, list) else []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            at = float(item["at"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        title = str(item.get("title") or "").strip()
+        if not title or not 0 <= at < total:
+            continue
+        if marks and at - marks[-1].at < min_gap:
+            continue
+        marks.append(Chapter(at, title[:80]))
+
+    marks.sort(key=lambda c: c.at)
+    if marks and marks[0].at > 0:
+        marks[0] = Chapter(0.0, marks[0].title)
+    return marks

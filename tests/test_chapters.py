@@ -70,3 +70,55 @@ def test_text_shows_ranges_not_points():
 def test_empty_input_gives_empty_text():
     assert as_text([], 300) == ""
     assert build([], {}) == []
+
+
+def test_digest_uses_output_time_not_source_time():
+    """Модель размечает главы в тех координатах, что увидит зритель.
+
+    Кусок, снятый на сотой секунде записи, в ролике начинается с нуля.
+    Пересчитывать ответ модели не приходится — а именно там появлялись бы
+    ошибки.
+    """
+    from narezka.core.chapters import output_digest
+
+    segments = [{"start": 100.0, "text": "первое"}, {"start": 400.0, "text": "второе"}]
+    digest = output_digest(segments, [(100, 160), (400, 460)], step=60.0)
+
+    assert digest.startswith("[0:00] первое")
+    assert "[1:00] второе" in digest
+
+
+def test_marks_beyond_the_video_are_dropped():
+    """Модель иногда продолжает список дальше, чем есть материала."""
+    from narezka.core.chapters import parse_marks
+
+    marks = parse_marks('[{"at":0,"title":"есть"},{"at":9999,"title":"в пустоту"}]', 300)
+    assert [m.title for m in marks] == ["есть"]
+
+
+def test_marks_too_close_are_dropped():
+    from narezka.core.chapters import parse_marks
+
+    marks = parse_marks('[{"at":0,"title":"раз"},{"at":5,"title":"два"}]', 300)
+    assert len(marks) == 1
+
+
+def test_marks_first_is_pulled_to_zero():
+    """Площадки отвергают список, где первый таймкод не 0:00."""
+    from narezka.core.chapters import parse_marks
+
+    marks = parse_marks('[{"at":90,"title":"поздняя"}]', 300)
+    assert marks[0].at == 0.0
+
+
+def test_marks_survive_model_chatter():
+    from narezka.core.chapters import parse_marks
+
+    marks = parse_marks('Вот главы:\n[{"at":0,"title":"т"}]\nГотово.', 300)
+    assert len(marks) == 1
+
+
+def test_marks_from_garbage_are_empty():
+    from narezka.core.chapters import parse_marks
+
+    assert parse_marks("модель отказалась", 300) == []

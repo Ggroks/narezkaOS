@@ -20,12 +20,9 @@ from typing import Any
 from narezka.core import compilation as core
 from narezka.core.artifacts import Artifact
 from narezka.core.assemble import cut_piece, join_pieces, total_duration
-import json
-import re
-
 from narezka.core import chapters as chap
 from narezka.core import llm
-from narezka.core.prompts import CHAPTERS_SYSTEM_PROMPT, build_chapters_message
+from narezka.core.prompts import MARKS_SYSTEM_PROMPT, build_marks_message
 from narezka.core.clips import load_clips
 from narezka.core.media import find_source
 from narezka.core.stage import Device, Stage, StageContext, StageSkipped
@@ -116,7 +113,9 @@ class CompilationStage(Stage):
             target_file = Artifact(ctx.paths.base / name)
             done = self._assemble(ctx, source, pieces, target_file, done, steps)
             length = total_duration(pieces)
-            marks = chap.build(pieces, plan.pop("titles", None))
+            ready = plan.pop("marks", None)
+            marks = ready if ready else chap.build(pieces, plan.pop("titles", None))
+            plan.pop("titles", None)
             results.append({
                 "file": name,
                 "duration": round(length, 2),
@@ -172,39 +171,38 @@ class CompilationStage(Stage):
             workdir.rmdir()
         return done
 
-    def _name_pieces(self, ctx: StageContext, pieces) -> dict[int, str]:
-        """Просит модель подписать куски сюжетной нарезки.
+    def _mark_chapters(self, ctx: StageContext, pieces):
+        """Размечает главы сюжетной нарезки по смене подтемы.
 
-        Отказ модели не срывает сборку: ролик выйдет без оглавления, а это
-        досадно, но не сравнимо с потерей самого ролика.
+        Модель получает расшифровку в **выходном** времени и отвечает в нём
+        же: пересчитывать её ответ не приходится, а именно там появлялись бы
+        ошибки. Отказ модели не срывает сборку — ролик выйдет без оглавления,
+        это досадно, но не сравнимо с потерей самого ролика.
         """
         artifact = Artifact(ctx.paths.transcript / "transcript.json")
         if not artifact.exists() or not ctx.config.llm.model:
-            return {}
+            return []
         try:
             segments = artifact.read_json().get("segments", [])
         except ValueError:
-            return {}
+            return []
 
-        blocks = []
-        for start, end in pieces:
-            text = " ".join(
-                str(s.get("text", "")) for s in segments
-                if start <= float(s.get("start", 0.0)) < end
-            ).strip()
-            blocks.append((start, text or "(без речи)"))
+        total = sum(max(0.0, b - a) for a, b in pieces)
+        digest = chap.output_digest(segments, pieces)
+        if not digest:
+            return []
 
         key = llm.api_key(provider_name=ctx.config.llm.provider)
         if not key:
-            return {}
+            return []
         try:
             response = llm.chat(
                 key,
                 [ctx.config.llm.model, *ctx.config.llm.fallback_models],
                 {
                     "messages": [
-                        {"role": "system", "content": CHAPTERS_SYSTEM_PROMPT},
-                        {"role": "user", "content": build_chapters_message(blocks)},
+                        {"role": "system", "content": MARKS_SYSTEM_PROMPT},
+                        {"role": "user", "content": build_marks_message(digest, total)},
                     ],
                     "temperature": 0.3,
                 },
@@ -212,17 +210,13 @@ class CompilationStage(Stage):
                 provider_name=ctx.config.llm.provider,
             )
             content = response["choices"][0]["message"]["content"]
-            match = re.search(r"\[.*\]", content, re.S)
-            names = json.loads(match.group(0)) if match else []
         except (llm.LlmError, ValueError, KeyError, IndexError) as exc:
-            ctx.log.warning("подписи к кускам не получены — оглавления не будет: %s", exc)
-            return {}
+            ctx.log.warning("главы не размечены — оглавления не будет: %s", exc)
+            return []
 
-        return {
-            number: str(name).strip()
-            for number, name in enumerate(names)
-            if number < len(pieces) and str(name).strip()
-        }
+        marks = chap.parse_marks(content, total)
+        ctx.log.info("глав размечено: %d", len(marks))
+        return marks
 
     @staticmethod
     def _titles(ctx: StageContext) -> dict[int, str]:
@@ -282,9 +276,11 @@ class CompilationStage(Stage):
                         "episode": episode,
                         "episode_index": index,
                         "highlights_inside": len(keep),
-                        # Готовых заголовков у сюжетных кусков нет: это части
-                        # одного занятия, и подписать их может только модель.
-                        "titles": self._name_pieces(ctx, pieces),
+                        # Главы размечаются по смене подтемы внутри занятия,
+                        # а не по кускам: уплотнение даёт два-три куска, и
+                        # оглавление из одной строки на восемь минут им и не
+                        # является. Проверено на живой нарезке.
+                        "marks": self._mark_chapters(ctx, pieces),
                     },
                 ))
         return jobs

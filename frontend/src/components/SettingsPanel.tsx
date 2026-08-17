@@ -64,8 +64,8 @@ export function SettingsPanel({
           стриме громкость ровная и ничего не различает, на записи без чата
           чат бесполезен. Выключенный сигнал исключается из расчёта, а не
           обнуляется — иначе он тянул бы оценку вниз как измеренный ноль. */}
+      <h4 className="group-title">Где искать интересное</h4>
       <div className="choice">
-        <span className="choice-label">По чему искать моменты</span>
         <Toggle
           label="Громкость"
           hint="всплеск звука; на музыке почти не различает"
@@ -100,8 +100,8 @@ export function SettingsPanel({
           ролики и рискует правами на неё, аплодисменты и толпа осмысленны
           лишь на записях с залом. Считать то, чем не пользуются, значит
           платить временем за ничто. */}
+      <h4 className="group-title">Что слышать в звуке</h4>
       <div className="choice">
-        <span className="choice-label">Что слышать в звуке</span>
         <Toggle
           label="Смех"
           hint="повышает оценку момента; сильнейший признак удачного"
@@ -139,6 +139,7 @@ export function SettingsPanel({
         />
       </div>
 
+      <h4 className="group-title">Что войдёт в ролик</h4>
       <Toggle
         label="Субтитры"
         hint="Вшиваются в кадр, с подсветкой слова"
@@ -147,6 +148,7 @@ export function SettingsPanel({
         onChange={(subtitles_enabled) => onChange({ subtitles_enabled })}
       />
 
+      <h4 className="group-title">Как показать кадр</h4>
       <Toggle
         label="Вебка сверху"
         hint={
@@ -227,6 +229,7 @@ export function SettingsPanel({
 
       {/* Настройка выше по пайплайну: меняет отбор моментов, а не сборку,
           поэтому и пересчитывать надо с отбора. */}
+      <h4 className="group-title">Тонкая настройка</h4>
       <Toggle
         label="Пропускать приветствия"
         hint="В начале записи здороваются, а не реагируют"

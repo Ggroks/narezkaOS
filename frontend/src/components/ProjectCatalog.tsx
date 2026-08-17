@@ -61,7 +61,7 @@ export function ProjectCatalog({ projects, onOpen, onChanged, local }: Props) {
   const [dialog, setDialog] = useState<null | "url" | "file">(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function create(payload: { url?: string; file?: string; title?: string }) {
+  async function create(payload: { url?: string; file?: string; title?: string; rights?: string }) {
     const { video_id } = await api.addVideo(payload);
     onChanged();
     onOpen(video_id);
@@ -360,7 +360,7 @@ function NewProject({
   initial: "url" | "file";
   local: boolean;
   onCancel: () => void;
-  onCreate: (payload: { url?: string; file?: string; title?: string }) => Promise<void>;
+  onCreate: (payload: { url?: string; file?: string; title?: string; rights?: string }) => Promise<void>;
   onOpen: (videoId: string) => void;
   onChanged: () => void;
 }) {
@@ -371,6 +371,9 @@ function NewProject({
   const [url, setUrl] = useState("");
   const [file, setFile] = useState("");
   const [picked, setPicked] = useState<File | null>(null);
+  // На своей машине вопрос о правах не задаётся: это его компьютер и его
+  // файлы. На сервисе — первый вопрос, и без ответа запись не принимается.
+  const [rights, setRights] = useState(false);
   const [sent, setSent] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -397,13 +400,16 @@ function NewProject({
     const name = title.trim() || undefined;
     try {
       if (source === "file" && !local && picked) {
-        const added = await uploadVideo(picked, name, setSent);
+        const added = await uploadVideo(picked, name, setSent, "own");
         onChanged();
         onOpen(added.video_id);
         return;
       }
+      const rightsAnswer = local ? undefined : "own";
       await onCreate(
-        source === "url" ? { url: value, title: name } : { file: value, title: name },
+        source === "url"
+          ? { url: value, title: name, rights: rightsAnswer }
+          : { file: value, title: name, rights: rightsAnswer },
       );
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : String(exc));
@@ -520,6 +526,23 @@ function NewProject({
           </label>
         )}
 
+        {!local && (
+          <label className="toggle rights">
+            <input
+              type="checkbox"
+              checked={rights}
+              onChange={(event) => setRights(event.target.checked)}
+            />
+            <span className="toggle-body">
+              <b>Это моя запись или у меня есть разрешение</b>
+              <span className="small dim">
+                Нарезать чужие стримы без разрешения нельзя — это нарушает
+                права автора и правила площадок
+              </span>
+            </span>
+          </label>
+        )}
+
         {error && (
           <div className="error" role="alert" style={{ marginBottom: 0 }}>
             {error}
@@ -530,7 +553,7 @@ function NewProject({
           <button type="button" className="ghost" onClick={onCancel}>
             Отмена
           </button>
-          <button className="primary" type="submit" disabled={busy || !value}>
+          <button className="primary" type="submit" disabled={busy || !value || (!local && !rights)}>
             {busy ? "Создаём…" : "Создать"}
           </button>
         </div>

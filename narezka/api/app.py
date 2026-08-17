@@ -357,6 +357,9 @@ class AddVideo(BaseModel):
     #: хранилище — видео: переименовывать сущность ради слова на экране
     #: незачем, а помнить о расхождении надо (см. core/registry.py).
     title: str | None = Field(default=None, max_length=registry.TITLE_LIMIT)
+    #: На каком основании берётся запись: «own» — своя, «permission» —
+    #: есть разрешение правообладателя. На сервисе обязательно.
+    rights: str | None = None
 
 
 class RenameVideo(BaseModel):
@@ -510,6 +513,10 @@ def add_video(payload: AddVideo) -> dict[str, Any]:
             # руками. Разрешено только там, где входа нет вовсе, то есть
             # на своей машине.
             allow_local_paths=config.sources.allow_local_paths and not config.auth.enabled,
+            rights=payload.rights,
+            # На своей машине спрашивать человека о правах на его же записи
+            # незачем; на сервисе это первый вопрос (docs/BACKLOG-legal.md).
+            require_rights=config.auth.enabled,
         )
     except registry.RegistrationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -541,6 +548,7 @@ async def upload(
     request: Request,
     name: str = Query(description="Имя файла с расширением"),
     title: str | None = Query(default=None, max_length=registry.TITLE_LIMIT),
+    rights: str | None = Query(default=None, description="own | permission"),
     project: str = "default",
 ) -> dict[str, Any]:
     """Приём записи файлом.
@@ -596,6 +604,8 @@ async def upload(
             file=target,
             title=title,
             allow_local_paths=True,  # файл уже у нас, путь свой
+            rights=rights,
+            require_rights=config.auth.enabled,
         )
     except registry.RegistrationError as exc:
         target.unlink(missing_ok=True)
@@ -1510,6 +1520,99 @@ def _trim_frames(paths) -> None:
         reverse=True,
     )
     for stale in files[FRAME_KEEP:]:
+        stale.unlink(missing_ok=True)
+
+
+#: Сколько кусков предпросмотра держать на записи. Они служат кэшем, но
+#: расти без предела не должны — как миниатюры и кадры рамки.
+PREVIEW_CLIPS_KEEP = 40
+
+#: Запас до и после момента. Границы правят по позиции плеера, и без запаса
+#: подвинуть начало назад было бы некуда.
+PREVIEW_LEAD = 4.0
+
+#: Высота куска предпросмотра. Разметку ведут по содержанию, а не по
+#: чёткости: 480 хватает, чтобы понять, что происходит в кадре.
+PREVIEW_HEIGHT_SMALL = 480
+
+
+@app.get("/api/videos/{video_id}/review/{index}/media")
+def review_media(
+    video_id: str,
+    index: int,
+    project: str = "default",
+    range_header: Annotated[str | None, Header(alias="range")] = None,
+):
+    """Один момент отдельным файлом — для обзора вместо целой записи.
+
+    **Зачем.** Обзор играл исходник с перемотками, и замер показал, во что
+    это обходится: пятнадцать секунд просмотра на записи в 4.58 часа
+    вытянули 26.7 ГБ — вчетверо больше самого файла. Браузер на каждой
+    перемотке запрашивает новый кусок и бросает предыдущий, а раздаёт их
+    сервер по-настоящему. На домашнем канале один сеанс разметки съел бы
+    весь трафик.
+
+    **Почему кусок перекодируется, а не копируется.** Копирование потока
+    быстрее, но начинается с ближайшего опорного кадра — то есть раньше
+    запрошенного и на неизвестную величину. Обзор правит границы по позиции
+    плеера, и смещение, которого никто не знает, сдвинуло бы их все.
+    Перекодирование двадцати секунд в 480p занимает секунду-другую, зато
+    начало точное, а вес падает ещё вчетверо.
+
+    **Почему не лёгкий двойник всей записи.** Он дал бы меньше трафика, но
+    стоил бы часа работы процессора на каждую запись — включая те моменты,
+    которые никто не откроет. Здесь платят только за просмотренное.
+    """
+    paths, _ = _paths(video_id, project)
+    clips = _candidates_list(paths)
+    if not 0 <= index < len(clips):
+        raise HTTPException(status_code=404, detail=f"момента {index} нет")
+
+    merged = review.merge(clips, _review_state(paths))[index]
+    start, end = float(merged["start"]), float(merged["end"])
+
+    try:
+        source = find_source(paths.source)
+    except MediaError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    begin = max(start - PREVIEW_LEAD, 0.0)
+    target = paths.base / "meta" / f"moment-{index:03d}-{start:.1f}-{end:.1f}.mp4"
+    if not target.exists():
+        try:
+            run_tool(
+                [
+                    "ffmpeg", "-nostdin", "-v", "error", "-y",
+                    # Перемотка до входа: так ffmpeg не читает файл с начала.
+                    "-ss", f"{begin:.3f}",
+                    "-i", str(source.resolve()),
+                    "-t", f"{end - begin + PREVIEW_LEAD:.3f}",
+                    "-vf", f"scale=-2:{PREVIEW_HEIGHT_SMALL}",
+                    "-c:v", "libx264", "-preset", "veryfast", "-crf", "30",
+                    "-pix_fmt", "yuv420p",
+                    "-c:a", "aac", "-b:a", "64k", "-ac", "1",
+                    "-movflags", "+faststart",
+                    str(target),
+                ],
+                timeout=300,
+            )
+        except Exception as exc:  # noqa: BLE001
+            target.unlink(missing_ok=True)
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    _trim_previews_of(paths, "moment-*.mp4", PREVIEW_CLIPS_KEEP)
+    response = serve_file(target, range_header)
+    # Смещение куска относительно записи. Интерфейс пересчитывает по нему
+    # позицию плеера во время записи — иначе правка границ уехала бы.
+    response.headers["X-Fragment-Start"] = f"{begin:.3f}"
+    return response
+
+
+def _trim_previews_of(paths, pattern: str, keep: int) -> None:
+    files = sorted(
+        (paths.base / "meta").glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True
+    )
+    for stale in files[keep:]:
         stale.unlink(missing_ok=True)
 
 

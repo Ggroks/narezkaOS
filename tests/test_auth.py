@@ -90,7 +90,7 @@ def test_logout_closes_it_back(guarded) -> None:
 
 def test_records_do_not_leak_between_people(guarded, tmp_path: Path) -> None:
     enter(guarded, "ivan", "parol-ivana")
-    guarded.post("/api/videos", json={"url": "https://twitch.tv/videos/1", "title": "Иваново"})
+    guarded.post("/api/videos", json={"url": "https://twitch.tv/videos/1", "title": "Иваново", "rights": "own"})
     assert [v["title"] for v in guarded.get("/api/videos").json()] == ["Иваново"]
 
     guarded.post("/api/auth/logout")
@@ -105,11 +105,11 @@ def test_same_url_gives_each_his_own_record(guarded, tmp_path: Path) -> None:
     один и тот же стрим, работают над одной папкой.
     """
     enter(guarded, "ivan", "parol-ivana")
-    first = guarded.post("/api/videos", json={"url": "https://twitch.tv/videos/7"}).json()
+    first = guarded.post("/api/videos", json={"url": "https://twitch.tv/videos/7", "rights": "own"}).json()
     guarded.post("/api/auth/logout")
 
     enter(guarded, "petr", "parol-petra")
-    second = guarded.post("/api/videos", json={"url": "https://twitch.tv/videos/7"}).json()
+    second = guarded.post("/api/videos", json={"url": "https://twitch.tv/videos/7", "rights": "own"}).json()
 
     assert first["video_id"] == second["video_id"]
     spaces = sorted(p.name for p in (tmp_path / "projects").iterdir())
@@ -120,7 +120,7 @@ def test_client_cannot_ask_for_a_foreign_workspace(guarded) -> None:
     """Главная проверка: `project` в запросе при включённом входе не значит
     ничего. Иначе достаточно подменить один параметр."""
     enter(guarded, "ivan", "parol-ivana")
-    guarded.post("/api/videos", json={"url": "https://twitch.tv/videos/1", "title": "Иваново"})
+    guarded.post("/api/videos", json={"url": "https://twitch.tv/videos/1", "title": "Иваново", "rights": "own"})
 
     guarded.post("/api/auth/logout")
     enter(guarded, "petr", "parol-petra")
@@ -131,7 +131,7 @@ def test_foreign_record_is_not_reachable_by_id(guarded) -> None:
     """Знание идентификатора не должно давать доступ: он выводится из ссылки,
     то есть угадывается по одному только адресу стрима."""
     enter(guarded, "ivan", "parol-ivana")
-    added = guarded.post("/api/videos", json={"url": "https://twitch.tv/videos/9"}).json()
+    added = guarded.post("/api/videos", json={"url": "https://twitch.tv/videos/9", "rights": "own"}).json()
     guarded.post("/api/auth/logout")
 
     enter(guarded, "petr", "parol-petra")
@@ -266,7 +266,7 @@ def test_successful_login_clears_the_counter(guarded) -> None:
 def test_upload_accepts_a_file_and_registers_it(guarded, tmp_path: Path) -> None:
     enter(guarded, "ivan", "parol-ivana")
     payload = b"\x00" * 4096
-    body = guarded.post("/api/videos/upload?name=stream.mp4&title=Загруженный", content=payload)
+    body = guarded.post("/api/videos/upload?name=stream.mp4&title=Загруженный&rights=own", content=payload)
     assert body.status_code == 200, body.text
     assert body.json()["size_bytes"] == len(payload)
     assert [v["title"] for v in guarded.get("/api/videos").json()] == ["Загруженный"]
@@ -275,7 +275,7 @@ def test_upload_accepts_a_file_and_registers_it(guarded, tmp_path: Path) -> None
 def test_upload_keeps_only_the_extension_from_the_name(guarded, tmp_path: Path) -> None:
     """Имя приходит от постороннего и в путь на диске попадать не должно."""
     enter(guarded, "ivan", "parol-ivana")
-    body = guarded.post("/api/videos/upload?name=../../побег.mp4", content=b"\x00" * 2048)
+    body = guarded.post("/api/videos/upload?name=../../побег.mp4&rights=own", content=b"\x00" * 2048)
     assert body.status_code == 200
     stored = tmp_path / "projects" / "ivan" / "videos" / body.json()["video_id"] / "source"
     assert [p.suffix for p in stored.iterdir()] == [".mp4"]
@@ -284,12 +284,12 @@ def test_upload_keeps_only_the_extension_from_the_name(guarded, tmp_path: Path) 
 
 def test_upload_without_extension_is_refused(guarded) -> None:
     enter(guarded, "ivan", "parol-ivana")
-    assert guarded.post("/api/videos/upload?name=stream", content=b"\x00" * 16).status_code == 400
+    assert guarded.post("/api/videos/upload?name=stream&rights=own", content=b"\x00" * 16).status_code == 400
 
 
 def test_empty_upload_is_refused(guarded) -> None:
     enter(guarded, "ivan", "parol-ivana")
-    assert guarded.post("/api/videos/upload?name=stream.mp4", content=b"").status_code == 400
+    assert guarded.post("/api/videos/upload?name=stream.mp4&rights=own", content=b"").status_code == 400
 
 
 def test_upload_needs_login(guarded) -> None:
@@ -299,5 +299,41 @@ def test_upload_needs_login(guarded) -> None:
 def test_server_refuses_a_path_when_login_is_on(guarded) -> None:
     """Главное отличие сервера от своей машины: путь читать нельзя."""
     enter(guarded, "ivan", "parol-ivana")
-    response = guarded.post("/api/videos", json={"file": "/etc/passwd"})
+    response = guarded.post("/api/videos", json={"file": "/etc/passwd", "rights": "own"})
     assert response.status_code == 400 and "загрузить" in response.json()["detail"]
+
+
+# --- права на запись -------------------------------------------------------
+
+
+def test_service_asks_about_rights(guarded) -> None:
+    """Первый вопрос из docs/BACKLOG-legal.md: чья это запись.
+
+    Галочка не делает сервис неуязвимым, но переносит утверждение о правах
+    на того, кто запись принёс, и оставляет след с датой.
+    """
+    enter(guarded, "ivan", "parol-ivana")
+    response = guarded.post("/api/videos", json={"url": "https://twitch.tv/videos/3"})
+    assert response.status_code == 400
+    assert "права" in response.json()["detail"]
+
+
+def test_rights_answer_is_written_down(guarded, tmp_path: Path) -> None:
+    enter(guarded, "ivan", "parol-ivana")
+    added = guarded.post(
+        "/api/videos",
+        json={"url": "https://twitch.tv/videos/4", "rights": "permission"},
+    ).json()
+
+    meta = json.loads(
+        (tmp_path / "projects" / "ivan" / "videos" / added["video_id"] / "meta" / "metadata.json")
+        .read_text(encoding="utf-8")
+    )
+    assert meta["content_origin"] == "permission" and meta["rights_confirmed_at"]
+
+
+def test_local_work_asks_nothing(tmp_path: Path, monkeypatch) -> None:
+    """На своей машине спрашивать человека о правах на его же записи
+    незачем — это его компьютер и его файлы."""
+    client, _ = make_client(tmp_path, monkeypatch, auth_enabled=False)
+    assert client.post("/api/videos", json={"url": "https://twitch.tv/videos/5"}).status_code == 200

@@ -28,6 +28,11 @@ from narezka.core.artifacts import Artifact
 from narezka.core.media import MEDIA_SUFFIXES
 from narezka.core.paths import VideoPaths, video_paths
 
+#: На каком основании запись попала в сервис. Поле `content_origin` было
+#: заложено в §31 заранее — здесь оно наконец заполняется не константой.
+#: «own» — своя запись, «permission» — есть разрешение правообладателя.
+RIGHTS = ("own", "permission")
+
 #: Предел длины имени. Не ограничение хранилища, а забота о раскладке: строка
 #: в карточку каталога всё равно не поместится, а обрезать её молча — хуже,
 #: чем не принять.
@@ -165,6 +170,8 @@ def register(
     title: str | None = None,
     allowed_hosts: tuple[str, ...] | list[str] = (),
     allow_local_paths: bool = True,
+    rights: str | None = None,
+    require_rights: bool = False,
 ) -> Registration:
     """Заводит видео по ссылке или по локальному файлу.
 
@@ -174,6 +181,16 @@ def register(
     """
     if (url is None) == (file is None):
         raise RegistrationError("укажите ровно одно: ссылку или файл")
+
+    if require_rights:
+        # Сервис хранит и режет чужие записи, и вопрос о правах на них —
+        # первый в docs/BACKLOG-legal.md. Галочка не делает сервис
+        # неуязвимым, но переносит утверждение о правах на того, кто
+        # запись принёс, и оставляет след с датой.
+        if rights not in RIGHTS:
+            raise RegistrationError(
+                "подтвердите права: это ваша запись или у вас есть разрешение"
+            )
 
     name = clean_title(title)
 
@@ -217,10 +234,12 @@ def register(
             "project_id": project,
             "origin": origin,
             # §31: поля закладываются сразу, чтобы потом не мигрировать схему.
-            "content_origin": "own",
+            "content_origin": rights or existing.get("content_origin") or "own",
             "retention_until": None,
         }
     )
+    if rights:
+        existing["rights_confirmed_at"] = now()
     if name:
         existing["title"] = name
     # Дата добавления ставится один раз: повторное добавление того же

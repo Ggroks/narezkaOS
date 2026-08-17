@@ -14,6 +14,7 @@ BAZA.md §65. Исходное видео — единственный круп�
 from __future__ import annotations
 
 from dataclasses import dataclass
+import time
 from pathlib import Path
 from typing import Any
 
@@ -140,3 +141,73 @@ def summarize(candidates: list[Candidate]) -> dict[str, Any]:
             for kind in sorted({c.kind for c in candidates})
         },
     }
+
+
+# --- автоматическая уборка (§65) --------------------------------------------
+
+#: Что удаляется само. Только восстановимое: скачанный исходник вернётся
+#: скачиванием, звук пересчитается из него, промежуточные нарезки соберутся
+#: заново. Готовые ролики не трогаются никогда — их человек и ждал.
+AUTO_KINDS = ("source", "audio", "clips")
+
+
+def _age_days(path: Path) -> float:
+    """Сколько дней содержимому. По самому свежему файлу внутри."""
+    newest = 0.0
+    for item in path.rglob("*"):
+        if item.is_file():
+            try:
+                newest = max(newest, item.stat().st_mtime)
+            except OSError:
+                continue
+    if newest == 0.0:
+        return 0.0
+    return (time.time() - newest) / 86400
+
+
+def sweep(storage_root: Path, config, *, apply: bool = False) -> dict[str, Any]:
+    """Обходит хранилище и убирает отлежавшееся.
+
+    Возвращает отчёт независимо от `apply`: посмотреть, что будет удалено,
+    можно не удаляя. Это то же правило, что у ручной команды — она тоже
+    показывает, а удаляет только по явному согласию.
+    """
+    from narezka.core.paths import list_videos, video_paths  # noqa: PLC0415
+
+    days = config.retention.source_days
+    report: dict[str, Any] = {"days": days, "freed_bytes": 0, "items": []}
+    if days <= 0:
+        return report
+
+    projects_dir = Path(storage_root) / "projects"
+    if not projects_dir.is_dir():
+        return report
+
+    for project in sorted(p.name for p in projects_dir.iterdir() if p.is_dir()):
+        for video_id in list_videos(storage_root, project):
+            paths = video_paths(storage_root, project, video_id)
+            for candidate in inspect(paths, video_id):
+                if candidate.kind not in AUTO_KINDS:
+                    continue
+                # Своё, добавленное файлом, восстановить нечем: у нас нет
+                # ни ссылки, ни копии у человека под рукой.
+                if candidate.recoverable.startswith("из исходного файла") and not (
+                    config.retention.include_uploads
+                ):
+                    continue
+                if _age_days(candidate.path) < days:
+                    continue
+
+                report["items"].append({
+                    "project": project,
+                    "video_id": video_id,
+                    "kind": candidate.kind,
+                    "bytes": candidate.size_bytes,
+                    "recoverable": candidate.recoverable,
+                })
+                report["freed_bytes"] += candidate.size_bytes
+                if apply:
+                    free(candidate)
+
+    report["freed_gb"] = round(report["freed_bytes"] / 1024**3, 2)
+    return report

@@ -68,13 +68,24 @@ export function ReviewView({ videoId, durationSeconds }: Props) {
   const clips = review?.clips ?? [];
   const clip: ReviewClip | undefined = clips[active];
 
-  const seekTo = useCallback((seconds: number, play = false) => {
-    const element = videoRef.current;
-    if (!element) return;
-    element.currentTime = Math.max(seconds, 0);
-    setPlayhead(element.currentTime);
-    if (play) void element.play();
-  }, []);
+  /**
+   * Начало куска относительно записи. Плеер играет вырезанный момент,
+   * а границы правятся во времени записи — значит одно надо переводить
+   * в другое. Запас должен совпадать с серверным `PREVIEW_LEAD`.
+   */
+  const lead = 4;
+  const offset = clip ? Math.max(clip.start - lead, 0) : 0;
+
+  const seekTo = useCallback(
+    (seconds: number, play = false) => {
+      const element = videoRef.current;
+      if (!element) return;
+      element.currentTime = Math.max(seconds - offset, 0);
+      setPlayhead(offset + element.currentTime);
+      if (play) void element.play();
+    },
+    [offset],
+  );
 
   const select = useCallback(
     (index: number, play = false) => {
@@ -92,15 +103,16 @@ export function ReviewView({ videoId, durationSeconds }: Props) {
     const element = videoRef.current;
     if (!element || !clip) return;
     const onTime = () => {
-      setPlayhead(element.currentTime);
-      if (element.currentTime >= clip.end) {
+      const at = offset + element.currentTime;
+      setPlayhead(at);
+      if (at >= clip.end) {
         element.pause();
-        element.currentTime = clip.end;
+        element.currentTime = Math.max(clip.end - offset, 0);
       }
     };
     element.addEventListener("timeupdate", onTime);
     return () => element.removeEventListener("timeupdate", onTime);
-  }, [clip]);
+  }, [clip, offset]);
 
   const decide = useCallback(
     async (verdict: Verdict) => {
@@ -255,12 +267,13 @@ export function ReviewView({ videoId, durationSeconds }: Props) {
       <div className="review-player">
         <video
           ref={videoRef}
-          src={api.mediaUrl(videoId)}
+          src={clip ? api.reviewMediaUrl(videoId, clip.index, clip.start, clip.end) : undefined}
           preload="metadata"
           onPlay={() => setPlaying(true)}
           onPause={() => setPlaying(false)}
           onLoadedMetadata={() => clip && seekTo(clip.start)}
-          onTimeUpdate={(e) => setPlayhead(e.currentTarget.currentTime)}
+          // Позиция во времени записи, а не куска: по ней правятся границы.
+          onTimeUpdate={(e) => setPlayhead(offset + e.currentTarget.currentTime)}
         />
 
         {clip && (

@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import copy
+import os
 from pathlib import Path
 from typing import Any, Literal
 
@@ -303,6 +304,28 @@ class CompilationConfig(BaseModel):
 
 
 
+class RetentionConfig(BaseModel):
+    """Автоматическое освобождение места (§65).
+
+    Исходник — 79% занятого диска по замеру: 6.6 ГБ из 8.4 на записи в
+    4.5 часа. На своей машине его можно держать сколько угодно, на сервисе
+    он съедает место всех сразу, поэтому удаляется по сроку.
+
+    Выключено по умолчанию (`source_days: 0`): удалять чужое молча нельзя,
+    это включают осознанно. Удаляется только то, что восстановимо, — как
+    и в ручной команде `narezka prune`.
+    """
+
+    #: Через сколько дней после сборки убирать исходник. 0 — не убирать.
+    source_days: int = Field(default=0, ge=0, le=3650)
+    #: Как часто проверять. Раз в шесть часов: спешить некуда, а лишний
+    #: обход хранилища на слабой машине заметен.
+    check_hours: int = Field(default=6, ge=1, le=168)
+    #: Удалять ли исходники, добавленные файлом. По умолчанию нет: их мы
+    #: восстановить не сможем, а у скачанного по ссылке есть источник.
+    include_uploads: bool = False
+
+
 class BillingConfig(BaseModel):
     """Цены на работу (§9A, экономическая модель от 17 августа 2026).
 
@@ -392,6 +415,7 @@ class Config(BaseModel):
     queue: QueueConfig = QueueConfig()
     sources: SourcesConfig = SourcesConfig()
     billing: BillingConfig = BillingConfig()
+    retention: RetentionConfig = RetentionConfig()
 
     download: DownloadConfig = Field(default_factory=DownloadConfig)
     audio: AudioConfig = Field(default_factory=AudioConfig)
@@ -455,6 +479,13 @@ def load_config(
     resolved = resolve_profile(requested, has_accelerator)
 
     merged = _deep_merge(raw, profiles.get(resolved, {}))
+
+    # Хранилище — переменной окружения, если она задана. Единственная
+    # настройка, которую задают снаружи: в контейнере это том, и путь
+    # к нему знает тот, кто контейнер запускает, а не файл внутри него.
+    from_env = os.environ.get("NAREZKA_STORAGE")
+    if from_env:
+        merged["storage_root"] = from_env
     merged["profile"] = requested
     merged["resolved_profile"] = resolved
 

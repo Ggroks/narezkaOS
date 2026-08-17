@@ -387,13 +387,31 @@ export function VideoDetail({ videoId, onBack }: Props) {
 
           <section className="card source-preview" aria-labelledby="source-heading">
             <h2 id="source-heading">Исходник</h2>
+            {/* preload="none" — не «на всякий случай», а по замеру.
+                С "metadata" браузер тянул из четырёхчасовой записи 6.7 ГБ
+                просто при открытии вкладки: у скачанного файла служебный
+                блок лежит в конце, и чтобы прочесть длительность, приходится
+                скачать всё. Ждёт нажатия и показывает кадр вместо чёрного
+                прямоугольника. Моменты смотрят в обзоре — там короткие
+                куски, а не вся запись. */}
             <video
               ref={videoRef}
               controls
-              preload="metadata"
+              preload="none"
+              playsInline
+              poster={
+                meta.has_video === false
+                  ? undefined
+                  : api.frameUrl(videoId, (meta.duration_seconds ?? 60) / 2, 720)
+              }
               src={api.mediaUrl(videoId)}
               onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
             />
+            <p className="small dim" style={{ marginTop: 8 }}>
+              Запись проигрывается целиком и весит гигабайты — включайте, когда
+              она правда нужна. Отдельные моменты короткими кусками лежат
+              в обзоре.
+            </p>
             <div className="row wrap small dim" style={{ marginTop: 10, gap: 14 }}>
               <span className="tnum">{formatDuration(meta.duration_seconds)}</span>
               {meta.video?.width && (

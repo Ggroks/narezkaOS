@@ -18,7 +18,7 @@ import time
 from typing import Any
 
 from narezka.api import jobs
-from narezka.core import credits, db, queue
+from narezka.core import credits, db, queue, retention
 from narezka.core.artifacts import Artifact
 from narezka.core.logging import get_logger
 from narezka.core.paths import video_paths
@@ -173,6 +173,38 @@ class Worker(threading.Thread):
         return quote.credits
 
 
+class Janitor(threading.Thread):
+    """Уборщик: раз в несколько часов убирает отлежавшееся (§65).
+
+    Отдельным потоком, а не внутри рабочего: обход хранилища не должен
+    ждать, пока освободится очередь, и наоборот — уборка не должна
+    задерживать обработку.
+    """
+
+    def __init__(self, config_provider: Any) -> None:
+        super().__init__(name="narezka-janitor", daemon=True)
+        self._config_provider = config_provider
+        self._stop = threading.Event()
+
+    def shutdown(self) -> None:
+        self._stop.set()
+
+    def run(self) -> None:
+        while not self._stop.is_set():
+            config, _ = self._config_provider()
+            if config.retention.source_days > 0:
+                try:
+                    report = retention.sweep(config.storage_root, config, apply=True)
+                    if report["items"]:
+                        log.info(
+                            "уборка: освобождено %.2f ГБ в %d местах",
+                            report["freed_gb"], len(report["items"]),
+                        )
+                except Exception as exc:  # noqa: BLE001 — уборка не должна ронять сервер
+                    log.exception("сбой уборки: %s", exc)
+            self._stop.wait(max(config.retention.check_hours, 1) * 3600)
+
+
 def start(config_provider: Any, parallel: int) -> list[Worker]:
     """Поднимает рабочие потоки и возвращает их в очередь всё, что зависло.
 
@@ -185,7 +217,10 @@ def start(config_provider: Any, parallel: int) -> list[Worker]:
     if orphans:
         log.info("возвращено в очередь после перезапуска: %d", orphans)
 
-    workers = [Worker(config_provider, parallel, f"narezka-worker-{i + 1}") for i in range(parallel)]
+    workers: list[Any] = [
+        Worker(config_provider, parallel, f"narezka-worker-{i + 1}") for i in range(parallel)
+    ]
+    workers.append(Janitor(config_provider))
     for worker in workers:
         worker.start()
     return workers

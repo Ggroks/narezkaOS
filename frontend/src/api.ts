@@ -478,7 +478,7 @@ export const api = {
   video: (id: string) => request<VideoDetail>(`/api/videos/${id}`),
   transcript: (id: string) => request<Transcript>(`/api/videos/${id}/transcript`),
   shorts: (id: string) => request<ShortsIndex>(`/api/videos/${id}/shorts`),
-  addVideo: (payload: { url?: string; file?: string; title?: string }) =>
+  addVideo: (payload: { url?: string; file?: string; title?: string; rights?: string }) =>
     request<{ video_id: string; created: boolean; title: string; placement: string }>("/api/videos", {
       method: "POST",
       body: JSON.stringify(payload),
@@ -496,6 +496,19 @@ export const api = {
       },
     ),
   mediaUrl: (id: string) => `/api/videos/${id}/media`,
+  /**
+   * Момент отдельным куском — для обзора вместо целой записи.
+   *
+   * Замер объяснил, зачем: пятнадцать секунд просмотра на записи в 4.58 ч
+   * вытянули 26.7 ГБ, вчетверо больше самого файла. Браузер на каждой
+   * перемотке просит новый кусок и бросает предыдущий, а раздаёт их сервер
+   * по-настоящему.
+   *
+   * Границы в адресе не ради сервера, а ради браузера: после правки границ
+   * кусок другой, и без них показался бы прежний, из кэша.
+   */
+  reviewMediaUrl: (id: string, index: number, start: number, end: number) =>
+    `/api/videos/${id}/review/${index}/media?v=${start.toFixed(1)}-${end.toFixed(1)}`,
   review: (id: string) => request<Review>(`/api/videos/${id}/review`),
   publish: (id: string) => request<PublishTexts>(`/api/videos/${id}/publish`),
   models: () => request<ModelsInfo>("/api/settings/models"),
@@ -603,10 +616,12 @@ export function uploadVideo(
   file: File,
   title: string | undefined,
   onProgress: (share: number) => void,
+  rights?: string,
 ): Promise<{ video_id: string; title: string }> {
   return new Promise((resolve, reject) => {
     const query = new URLSearchParams({ name: file.name });
     if (title) query.set("title", title);
+    if (rights) query.set("rights", rights);
 
     const request = new XMLHttpRequest();
     request.open("POST", `/api/videos/upload?${query}`);

@@ -308,6 +308,55 @@ def timeline(video_id: str, buckets: int = Query(600, ge=60, le=2000)) -> dict[s
     return {"duration": duration, "buckets": buckets, "chat": chat, "moments": moments}
 
 
+@app.get("/api/videos/{video_id}/compilations")
+def compilations(video_id: str, project: str = "default") -> dict[str, Any]:
+    """Собранные длинные нарезки с описанием, из чего они сделаны."""
+    ctx = _context(video_id, project, None)
+    plan = Artifact(ctx.paths.analysis / "compilation.json")
+    if not plan.exists():
+        return {"files": [], "reason": "длинные нарезки ещё не собирались"}
+    try:
+        results = plan.read_json().get("results", [])
+    except ValueError:
+        return {"files": [], "reason": "план нарезок не читается"}
+
+    files = []
+    for item in results:
+        path = ctx.paths.base / item.get("file", "")
+        if not path.is_file():
+            continue
+        episode = item.get("episode") or {}
+        files.append({
+            "file": item["file"],
+            "kind": "story" if episode else "best",
+            "title": episode.get("title") or "Подборка лучших моментов",
+            "summary": episode.get("summary", ""),
+            "duration": item.get("duration", 0.0),
+            "pieces": len(item.get("pieces", [])),
+            "size_bytes": path.stat().st_size,
+        })
+    return {"files": files}
+
+
+@app.get("/api/videos/{video_id}/compilations/{name}/media")
+def compilation_media(
+    video_id: str,
+    name: str,
+    project: str = "default",
+    range_header: Annotated[str | None, Header(alias="range")] = None,
+):
+    """Отдаёт файл длинной нарезки.
+
+    Имя сверяется со списком собранных, а не подставляется в путь как есть:
+    иначе через него можно было бы дотянуться до любого файла на диске (§66).
+    """
+    ctx = _context(video_id, project, None)
+    known = {item["file"] for item in compilations(video_id, project).get("files", [])}
+    if name not in known:
+        raise HTTPException(status_code=404, detail=f"нет нарезки {name}")
+    return serve_file(ctx.paths.base / name, range_header)
+
+
 @app.get("/api/videos/{video_id}/episodes")
 def episodes(video_id: str) -> dict[str, Any]:
     """Найденные эпизоды — чтобы человек выбрал, из каких делать ролики."""

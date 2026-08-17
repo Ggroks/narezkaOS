@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, formatDuration, type EpisodesInfo } from "../api";
+import { api, formatDuration, type CompilationsInfo, type EpisodesInfo } from "../api";
 
 /**
  * Выбор того, что собрать в длинную нарезку.
@@ -17,6 +17,7 @@ export function EpisodesPanel({ videoId }: Props) {
   const [picked, setPicked] = useState<Set<number>>(new Set());
   const [story, setStory] = useState(true);
   const [best, setBest] = useState(false);
+  const [made, setMade] = useState<CompilationsInfo | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -30,6 +31,10 @@ export function EpisodesPanel({ videoId }: Props) {
         setPicked(new Set(data.selected ?? []));
       })
       .catch(() => setInfo(null));
+    api
+      .compilations(videoId)
+      .then((data) => alive && setMade(data))
+      .catch(() => setMade(null));
     return () => {
       alive = false;
     };
@@ -52,6 +57,30 @@ export function EpisodesPanel({ videoId }: Props) {
   return (
     <section className="card">
       <h2>Длинная нарезка</h2>
+
+      {made && made.files.length > 0 && (
+        <div className="made">
+          {/* Готовые нарезки идут первыми: человек пришёл смотреть
+              результат, а не настраивать следующий прогон. */}
+          {made.files.map((item) => (
+            <figure key={item.file} className="made-item">
+              <video controls preload="metadata" src={api.compilationUrl(videoId, item.file)} />
+              <figcaption>
+                <b>{item.title}</b>
+                {item.summary && <span className="small dim">{item.summary}</span>}
+                <span className="small dim tnum">
+                  {item.kind === "best" ? "подборка" : "эпизод"} ·{" "}
+                  {Math.round(item.duration / 60)} мин · {item.pieces} кусков ·{" "}
+                  {(item.size_bytes / 1024 ** 2).toFixed(0)} МБ
+                </span>
+                <a href={api.compilationUrl(videoId, item.file)} download>
+                  скачать
+                </a>
+              </figcaption>
+            </figure>
+          ))}
+        </div>
+      )}
 
       <label className="toggle">
         <input type="checkbox" checked={best} onChange={(e) => setBest(e.target.checked)} />

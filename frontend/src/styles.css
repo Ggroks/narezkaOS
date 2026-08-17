@@ -1149,3 +1149,26 @@ details.section .section-body > .card > h2 { display: none; }
 
 .episode-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .episode-title { font-weight: 600; line-height: 1.35; }
+
+/* Готовые длинные нарезки. Горизонтальные, поэтому в столбец, а не сеткой:
+   ролик 16:9 в узкой колонке нечитаем. */
+.made { display: flex; flex-direction: column; gap: 14px; margin-bottom: 18px; }
+
+.made-item {
+  margin: 0;
+  padding: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-inner);
+}
+.made-item video {
+  width: 100%;
+  border-radius: var(--radius-small);
+  background: #000;
+}
+.made-item figcaption {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 8px;
+}

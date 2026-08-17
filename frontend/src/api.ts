@@ -315,6 +315,19 @@ export type EncodersInfo = { selected: string; encoders: EncoderOption[] };
 
 export type DetectorsInfo = { selected: string; backends: DetectorOption[] };
 
+export type CompilationFile = {
+  file: string;
+  /** story — связный эпизод; best — подборка лучших моментов. */
+  kind: "story" | "best";
+  title: string;
+  summary: string;
+  duration: number;
+  pieces: number;
+  size_bytes: number;
+};
+
+export type CompilationsInfo = { files: CompilationFile[]; reason?: string };
+
 export type EpisodeInfo = {
   start: number;
   end: number;
@@ -381,6 +394,9 @@ export const api = {
   models: () => request<ModelsInfo>("/api/settings/models"),
   detectors: () => request<DetectorsInfo>("/api/settings/detectors"),
   episodes: (id: string) => request<EpisodesInfo>(`/api/videos/${id}/episodes`),
+  compilations: (id: string) => request<CompilationsInfo>(`/api/videos/${id}/compilations`),
+  compilationUrl: (id: string, file: string) =>
+    `/api/videos/${id}/compilations/${encodeURIComponent(file)}/media`,
   encoders: () => request<EncodersInfo>("/api/settings/encoders"),
   performance: (id: string) => request<Performance>(`/api/videos/${id}/performance`),
   markPublished: (id: string, payload: { index: number; platform: string; url?: string }) =>

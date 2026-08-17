@@ -10,16 +10,17 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from fastapi import FastAPI, Header, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from narezka.api import jobs
+from narezka.api import auth, jobs
 from narezka.api.media import serve_file
 from narezka.core import env
 from narezka.core.clips import load_clips
@@ -35,7 +36,7 @@ from narezka.core.framing import (
     preview_presets,
 )
 from narezka.core.media import MediaError, find_source, run_tool
-from narezka.core import db, detectors, feedback, llm, publish, registry, review, settings
+from narezka.core import accounts, db, detectors, feedback, llm, publish, registry, review, settings
 from narezka.core.paths import list_videos, video_paths
 from narezka.core.runner import run_pipeline, run_stage
 from narezka.core.stage import StageContext
@@ -60,8 +61,46 @@ def _config(profile: str | None = None):
     return load_config(profile_override=profile, has_accelerator=device.is_accelerator), device
 
 
+#: Кто выполняет текущий запрос. Переменная контекста, а не параметр тридцати
+#: ручек: подстановку в одном месте нельзя забыть, а проверку в тридцати —
+#: можно, и цена забывчивости здесь — чужие записи на экране.
+CURRENT_USER: ContextVar[accounts.User | None] = ContextVar("narezka_user", default=None)
+
+
+def _workspace(asked: str | None) -> str:
+    """Пространство хранения запроса.
+
+    При включённом входе — только своё, что бы ни просил клиент: параметр
+    `project` тогда игнорируется, а не проверяется.
+    """
+    config, _ = _config()
+    if config.auth.enabled:
+        return (CURRENT_USER.get() or accounts.LOCAL_USER).workspace
+    return asked or config.default_project
+
+
+@app.middleware("http")
+async def guard(request, call_next):
+    """Запрет по умолчанию: доступ открыт списком, а не закрыт им."""
+    if auth.is_public(request.url.path):
+        return await call_next(request)
+
+    config, _ = _config()
+    user = auth.current_user(request, config)
+    if user is None:
+        return JSONResponse({"detail": "нужен вход"}, status_code=401)
+
+    request.state.user = user
+    token = CURRENT_USER.set(user)
+    try:
+        return await call_next(request)
+    finally:
+        CURRENT_USER.reset(token)
+
+
 def _paths(video_id: str, project: str):
     config, _ = _config()
+    project = _workspace(project)
     paths = video_paths(config.storage_root, project, video_id)
     if not paths.exists():
         raise HTTPException(status_code=404, detail=f"видео {video_id} не найдено")
@@ -70,6 +109,7 @@ def _paths(video_id: str, project: str):
 
 def _context(video_id: str, project: str, profile: str | None = None) -> StageContext:
     config, device = _config(profile)
+    project = _workspace(project)
     paths = video_paths(config.storage_root, project, video_id)
     if not paths.exists():
         raise HTTPException(status_code=404, detail=f"видео {video_id} не найдено")
@@ -124,6 +164,90 @@ def health() -> dict[str, Any]:
         "device": {"kind": device.kind, "name": device.name},
         "checks": [{"name": c.name, "ok": c.ok, "detail": c.detail, "critical": c.critical} for c in checks],
     }
+
+
+# --- вход -------------------------------------------------------------------
+
+
+class Credentials(BaseModel):
+    login: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=1, max_length=256)
+
+
+def _set_session(response: JSONResponse, token: str, config) -> None:
+    """Ключ сессии в куке: httponly, чтобы его не достал сторонний скрипт,
+    samesite=lax — чтобы он не уходил по чужим ссылкам."""
+    response.set_cookie(
+        auth.COOKIE,
+        token,
+        httponly=True,
+        samesite="lax",
+        secure=config.auth.secure_cookie,
+        max_age=accounts.SESSION_DAYS * 86400,
+        path="/",
+    )
+
+
+@app.get("/api/auth/me")
+def whoami(request: Request) -> dict[str, Any]:
+    """Кто вошёл и нужен ли вход вообще.
+
+    Отвечает всегда, а не 401: интерфейс по этому ответу решает, показать
+    ему форму входа или рабочий экран.
+    """
+    config, _ = _config()
+    return auth.describe(auth.current_user(request, config), config)
+
+
+@app.post("/api/auth/login")
+def login(payload: Credentials) -> JSONResponse:
+    config, _ = _config()
+    if not config.auth.enabled:
+        return JSONResponse(auth.describe(accounts.LOCAL_USER, config))
+
+    with db.connect(config.storage_root) as connection:
+        user = accounts.verify(connection, login=payload.login, password=payload.password)
+        if user is None:
+            # Один ответ на «нет такого логина» и «неверный пароль»: разница
+            # между ними — готовый список зарегистрированных.
+            raise HTTPException(status_code=401, detail="неверный логин или пароль")
+        token = accounts.open_session(connection, user)
+
+    log.info("вход: %s", user.login)
+    response = JSONResponse(auth.describe(user, config))
+    _set_session(response, token, config)
+    return response
+
+
+@app.post("/api/auth/signup")
+def signup(payload: Credentials) -> JSONResponse:
+    config, _ = _config()
+    if not config.auth.enabled or not config.auth.allow_signup:
+        raise HTTPException(status_code=403, detail="регистрация закрыта")
+
+    with db.connect(config.storage_root) as connection:
+        try:
+            user = accounts.create(connection, login=payload.login, password=payload.password)
+        except accounts.AccountError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        token = accounts.open_session(connection, user)
+
+    log.info("заведена учётка %s, пространство %s", user.login, user.workspace)
+    response = JSONResponse(auth.describe(user, config))
+    _set_session(response, token, config)
+    return response
+
+
+@app.post("/api/auth/logout")
+def logout(request: Request) -> JSONResponse:
+    config, _ = _config()
+    token = request.cookies.get(auth.COOKIE)
+    if token and config.auth.enabled:
+        with db.connect(config.storage_root) as connection:
+            accounts.close_session(connection, token)
+    response = JSONResponse({"ok": True})
+    response.delete_cookie(auth.COOKIE, path="/")
+    return response
 
 
 @app.get("/api/groups")
@@ -186,7 +310,7 @@ def _summary(config, project: str, video_id: str) -> dict[str, Any]:
         except ValueError:
             shorts_count = 0
 
-    job = jobs.manager.get(video_id)
+    job = jobs.manager.get(video_id, project)
     if job is not None and job.is_active:
         state = "processing"
     elif job is not None and job.status == "failed":
@@ -261,7 +385,8 @@ def _poster_at(paths, metadata: dict[str, Any]) -> float | None:
 @app.get("/api/videos")
 def videos(project: str = "default") -> list[dict[str, Any]]:
     config, _ = _config()
-    return [_summary(config, project, vid) for vid in list_videos(config.storage_root, project)]
+    space = _workspace(project)
+    return [_summary(config, space, vid) for vid in list_videos(config.storage_root, space)]
 
 
 @app.post("/api/videos")
@@ -270,7 +395,7 @@ def add_video(payload: AddVideo) -> dict[str, Any]:
     try:
         result = registry.register(
             storage_root=config.storage_root,
-            project=payload.project,
+            project=_workspace(payload.project),
             url=payload.url,
             file=Path(payload.file) if payload.file else None,
             title=payload.title,
@@ -297,7 +422,7 @@ def rename_video(video_id: str, payload: RenameVideo, project: str = "default") 
         registry.rename(paths, payload.title)
     except registry.RegistrationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return _summary(config, project, video_id)
+    return _summary(config, _workspace(project), video_id)
 
 
 @app.get("/api/videos/{video_id}")
@@ -305,7 +430,7 @@ def video_detail(video_id: str, project: str = "default") -> dict[str, Any]:
     paths, _ = _paths(video_id, project)
     meta = Artifact(paths.metadata)
     cost = Artifact(paths.cost)
-    job = jobs.manager.get(video_id)
+    job = jobs.manager.get(video_id, _workspace(project))
     return {
         "video_id": video_id,
         "project": project,
@@ -321,7 +446,7 @@ def delete_video(video_id: str, project: str = "default") -> dict[str, str]:
     import shutil  # noqa: PLC0415
 
     paths, _ = _paths(video_id, project)
-    job = jobs.manager.get(video_id)
+    job = jobs.manager.get(video_id, _workspace(project))
     if job and job.is_active:
         raise HTTPException(status_code=409, detail="видео обрабатывается — дождитесь завершения")
     shutil.rmtree(paths.base)
@@ -362,10 +487,10 @@ def run(video_id: str, payload: RunRequest) -> dict[str, Any]:
         else:
             run_pipeline(
                 planned, ctx, force=payload.force, observer=observer,
-                should_stop=lambda: jobs.manager.get(video_id).stop_requested,
+                should_stop=lambda: jobs.manager.get(video_id, ctx.project_id).stop_requested,
             )
 
-    job, created = jobs.manager.start(video_id, payload.project, work)
+    job, created = jobs.manager.start(video_id, ctx.project_id, work)
     return {"started": created, "status": job.status}
 
 
@@ -590,22 +715,27 @@ def encoders_info() -> dict[str, Any]:
 
 
 @app.post("/api/videos/{video_id}/stop")
-def stop(video_id: str) -> dict[str, Any]:
+def stop(video_id: str, project: str = "default") -> dict[str, Any]:
     """Останавливает обработку после текущей стадии, не трогая сервер."""
-    if not jobs.manager.stop(video_id):
+    if not jobs.manager.stop(video_id, _workspace(project)):
         raise HTTPException(status_code=409, detail="обработка не идёт — останавливать нечего")
     return {"stopping": True}
 
 
 @app.get("/api/videos/{video_id}/events")
-async def events(video_id: str, since: int = Query(0)) -> StreamingResponse:
+async def events(
+    video_id: str, since: int = Query(0), project: str = "default"
+) -> StreamingResponse:
     """Поток событий обработки (§69: прогресс в реальном времени)."""
+    # Пространство берётся до потока: внутри генератора запрос уже завершён,
+    # и переменная контекста там пуста.
+    workspace = _workspace(project)
 
     async def stream():
         cursor = since
         idle_ticks = 0
         while True:
-            job = jobs.manager.get(video_id)
+            job = jobs.manager.get(video_id, workspace)
             if job is None:
                 yield f"data: {json.dumps({'event': 'no_job'})}\n\n"
                 return

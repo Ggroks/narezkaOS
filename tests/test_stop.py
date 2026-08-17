@@ -23,14 +23,28 @@ def test_stop_marks_job_and_reports():
     job, created = manager.start("v1", "default", work)
     assert created and started.wait(timeout=5)
 
-    assert manager.stop("v1") is True
+    assert manager.stop("v1", "default") is True
     assert job.stop_requested
     release.set()
 
 
+def test_two_people_with_one_url_get_separate_jobs():
+    """Идентификатор записи выводится из ссылки: у двоих он совпадёт.
+
+    Разойтись задачи обязаны владельцем, иначе события одного текут
+    в журнал другому, а остановка одного останавливает работу обоим.
+    """
+    manager = jobs.JobManager()
+    first, _ = manager.start("одна-и-та-же", "ivan", lambda emit: None)
+    second, _ = manager.start("одна-и-та-же", "petr", lambda emit: None)
+    assert first is not second
+    assert manager.get("одна-и-та-же", "ivan") is first
+    assert manager.get("одна-и-та-же", "petr") is second
+
+
 def test_stop_without_running_job():
     """Останавливать нечего — это не ошибка, а честный ответ."""
-    assert jobs.JobManager().stop("нет-такого") is False
+    assert jobs.JobManager().stop("нет-такого", "default") is False
 
 
 def test_pipeline_stops_between_stages():

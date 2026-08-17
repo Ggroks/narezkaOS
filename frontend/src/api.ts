@@ -394,6 +394,18 @@ export type EpisodesInfo = {
   reason?: string;
 };
 
+/**
+ * Кто вошёл и нужен ли вход.
+ *
+ * `auth_required: false` — местная работа на своей машине: вход выключен,
+ * и интерфейс ведёт себя ровно как раньше.
+ */
+export type Whoami = {
+  auth_required: boolean;
+  allow_signup: boolean;
+  user: { login: string; workspace: string; is_admin: boolean; local: boolean } | null;
+};
+
 export type HealthCheck = { name: string; ok: boolean; detail: string; critical: boolean };
 export type Health = {
   ok: boolean;
@@ -422,6 +434,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   health: () => request<Health>("/api/health"),
+  me: () => request<Whoami>("/api/auth/me"),
+  login: (login: string, password: string) =>
+    request<Whoami>("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ login, password }),
+    }),
+  signup: (login: string, password: string) =>
+    request<Whoami>("/api/auth/signup", {
+      method: "POST",
+      body: JSON.stringify({ login, password }),
+    }),
+  logout: () => request<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
   videos: () => request<VideoSummary[]>("/api/videos"),
   video: (id: string) => request<VideoDetail>(`/api/videos/${id}`),
   transcript: (id: string) => request<Transcript>(`/api/videos/${id}/transcript`),

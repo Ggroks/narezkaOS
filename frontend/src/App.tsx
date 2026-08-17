@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type Health, type VideoSummary } from "./api";
+import { api, type Health, type VideoSummary, type Whoami } from "./api";
 import { ThemePicker } from "./components/ThemePicker";
+import { LoginScreen } from "./components/LoginScreen";
 import { ProjectCatalog } from "./components/ProjectCatalog";
 import { VideoDetail } from "./components/VideoDetail";
 
@@ -34,6 +35,7 @@ export function App() {
   const [videoId, navigate] = useHashRoute();
   const [videos, setVideos] = useState<VideoSummary[]>([]);
   const [health, setHealth] = useState<Health | null>(null);
+  const [who, setWho] = useState<Whoami | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -49,10 +51,37 @@ export function App() {
     }
   }, []);
 
+  // Сначала «кто я», потом всё остальное: при включённом входе список
+  // записей всё равно ответит 401, и незачем показывать ошибку вместо
+  // формы входа.
   useEffect(() => {
-    void refresh();
-    api.health().then(setHealth).catch(() => setHealth(null));
+    api
+      .me()
+      .then((state) => {
+        setWho(state);
+        if (!state.auth_required || state.user) {
+          void refresh();
+          api.health().then(setHealth).catch(() => setHealth(null));
+        }
+      })
+      .catch(() => setWho({ auth_required: false, allow_signup: false, user: null }));
   }, [refresh]);
+
+  const entered = useCallback(
+    (state: Whoami) => {
+      setWho(state);
+      void refresh();
+      api.health().then(setHealth).catch(() => setHealth(null));
+    },
+    [refresh],
+  );
+
+  async function leave() {
+    await api.logout().catch(() => undefined);
+    setWho((current) => (current ? { ...current, user: null } : current));
+    setVideos([]);
+    navigate(null);
+  }
 
   /**
    * Живой ход работы в каталоге — опросом, а не потоком событий.
@@ -86,6 +115,24 @@ export function App() {
     return () => document.removeEventListener("visibilitychange", onVisible);
   }, [videoId]);
 
+  // Пока неизвестно, нужен ли вход, не показываем ничего: мелькнувший на
+  // мгновение чужой экран хуже, чем пустой.
+  if (who === null) return <div className="app" />;
+
+  if (who.auth_required && !who.user) {
+    return (
+      <div className="app">
+        <header className="top">
+          <h1>Narezka OS</h1>
+          <ThemePicker />
+        </header>
+        <main id="content">
+          <LoginScreen state={who} onEntered={entered} />
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div className="app">
       <a href="#content" className="sr-only">
@@ -97,6 +144,14 @@ export function App() {
         {health && (
           <span className="env small dim">
             профиль {health.profile} · {health.device.kind} · {health.device.name}
+          </span>
+        )}
+        {who.user && !who.user.local && (
+          <span className="account small">
+            <span className="dim">{who.user.login}</span>
+            <button className="ghost" onClick={() => void leave()}>
+              Выйти
+            </button>
           </span>
         )}
       </header>

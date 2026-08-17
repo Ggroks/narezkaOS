@@ -129,24 +129,34 @@ class Job:
 
 
 class JobManager:
-    """Одна активная задача на видео. Повторный запуск возвращает текущую."""
+    """Одна активная задача на запись. Повторный запуск возвращает текущую.
+
+    **Ключ — пара «владелец и запись», а не одна запись.** Идентификатор
+    записи выводится из ссылки, поэтому двое, добавивших один и тот же VOD,
+    получали одну задачу на двоих: события одного текли в журнал другому,
+    а остановка одного останавливала работу обоим.
+    """
 
     def __init__(self) -> None:
-        self._jobs: dict[str, Job] = {}
+        self._jobs: dict[tuple[str, str], Job] = {}
         self._lock = threading.Lock()
 
-    def stop(self, video_id: str) -> bool:
+    @staticmethod
+    def _key(video_id: str, project_id: str) -> tuple[str, str]:
+        return (project_id, video_id)
+
+    def stop(self, video_id: str, project_id: str) -> bool:
         """Просит задачу остановиться. False — останавливать нечего."""
-        job = self.get(video_id)
+        job = self.get(video_id, project_id)
         if job is None or not job.is_active:
             return False
         job.request_stop()
         job.add_event("*", "stop_requested", {})
         return True
 
-    def get(self, video_id: str) -> Job | None:
+    def get(self, video_id: str, project_id: str) -> Job | None:
         with self._lock:
-            return self._jobs.get(video_id)
+            return self._jobs.get(self._key(video_id, project_id))
 
     def all(self) -> dict[str, Job]:
         with self._lock:
@@ -158,11 +168,12 @@ class JobManager:
         `work` принимает функцию-наблюдателя и выполняет обработку.
         """
         with self._lock:
-            existing = self._jobs.get(video_id)
+            key = self._key(video_id, project_id)
+            existing = self._jobs.get(key)
             if existing is not None and existing.is_active:
                 return existing, False
             job = Job(video_id=video_id, project_id=project_id)
-            self._jobs[video_id] = job
+            self._jobs[key] = job
 
         def runner() -> None:
             job.status = "running"

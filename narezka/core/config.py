@@ -303,12 +303,32 @@ class CompilationConfig(BaseModel):
 
 
 
+class AuthConfig(BaseModel):
+    """Вход в программу (§9A).
+
+    Выключен по умолчанию: на своей машине это тот же местный инструмент,
+    что был, и пароль там ни к чему. Включается для сервера, и только тогда
+    появляется разделение по владельцам — один переключатель вместо двух
+    веток поведения.
+    """
+
+    enabled: bool = False
+    #: Открыта ли самостоятельная регистрация. Даже при включённом входе
+    #: сервис может начинаться с закрытого круга: учётки заводит владелец
+    #: командой `narezka user add`.
+    allow_signup: bool = False
+    #: Кук уходит только по HTTPS. На своей машине по адресу localhost это
+    #: сломало бы вход, поэтому настройка, а не константа.
+    secure_cookie: bool = True
+
+
 class Config(BaseModel):
     profile: Profile = "auto"
     device: DeviceSetting = "auto"
     degrade_gracefully: bool = True
     storage_root: Path = Path("storage")
     default_project: str = "default"
+    auth: AuthConfig = AuthConfig()
 
     download: DownloadConfig = Field(default_factory=DownloadConfig)
     audio: AudioConfig = Field(default_factory=AudioConfig)

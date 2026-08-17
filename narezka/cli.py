@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 from rich.console import Console
 from rich.table import Table
 
-from narezka.core import env, registry, settings
+from narezka.core import accounts, db, env, registry, settings
 from narezka.core.artifacts import Artifact, cleanup_partials
 from narezka.core.config import load_config
 from narezka.core.logging import get_logger, setup_logging
@@ -145,6 +145,62 @@ def rename(
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(1) from exc
     console.print(f"[green]Теперь[/green] «{current}»")
+
+
+user_app = typer.Typer(help="Учётные записи сервиса (§9A)")
+app.add_typer(user_app, name="user")
+
+
+@user_app.command("add")
+def user_add(
+    login: Annotated[str, typer.Option("--login", "-l", help="Имя для входа")],
+    password: Annotated[str, typer.Option("--password", "-p", prompt=True, hide_input=True)],
+    admin: Annotated[bool, typer.Option("--admin", help="Может заводить других")] = False,
+    config_path: Annotated[Path | None, typer.Option("--config")] = None,
+) -> None:
+    """Завести учётку. Пространство хранения выдаётся по логину.
+
+    Работает и при выключенном входе: учётки можно завести заранее,
+    а включить `auth.enabled` в конфиге потом.
+    """
+    config = load_config(config_path)
+    with db.connect(config.storage_root) as connection:
+        try:
+            user = accounts.create(
+                connection, login=login, password=password, is_admin=admin
+            )
+        except accounts.AccountError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(1) from exc
+
+    console.print(f"[green]Заведена[/green] «{user.login}», пространство [bold]{user.workspace}[/bold]")
+    if not config.auth.enabled:
+        console.print("[yellow]Вход выключен: включите auth.enabled в config.yaml.[/yellow]")
+
+
+@user_app.command("list")
+def user_list(
+    config_path: Annotated[Path | None, typer.Option("--config")] = None,
+) -> None:
+    """Кто заведён в сервисе."""
+    config = load_config(config_path)
+    with db.connect(config.storage_root) as connection:
+        users = accounts.listing(connection)
+
+    if not users:
+        console.print("Учёток нет. Местная работа идёт от хозяина машины.")
+        return
+    table = Table(title=f"Учётки (вход {'включён' if config.auth.enabled else 'выключен'})")
+    table.add_column("#")
+    table.add_column("Логин", style="bold")
+    table.add_column("Пространство")
+    table.add_column("Права")
+    for user in users:
+        table.add_row(
+            str(user.user_id), user.login, user.workspace,
+            "хозяин" if user.is_admin else "",
+        )
+    console.print(table)
 
 
 @app.command()

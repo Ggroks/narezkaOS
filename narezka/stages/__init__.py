@@ -15,6 +15,7 @@ from narezka.stages.facecam import FacecamStage
 from narezka.stages.llm_select import LlmSelectStage
 from narezka.stages.metadata import MetadataStage
 from narezka.stages.audiotags import AudioTagsStage
+from narezka.stages.episodes import EpisodesStage
 from narezka.stages.timeline import TimelineStage
 from narezka.stages.probe import ProbeStage
 from narezka.stages.render import RenderStage
@@ -38,6 +39,10 @@ PIPELINE: list[Stage] = [
     TimelineStage(),
     CandidatesStage(),
     LlmSelectStage(),
+    # Эпизоды ищутся по расшифровке и не зависят от отбора моментов, но
+    # стоят запросов к модели — поэтому после него, чтобы отказ провайдера
+    # не оставил пайплайн без главного.
+    EpisodesStage(),
     # После отбора: вебка ищется по тем отрезкам, что пойдут в ролики (§61).
     FacecamStage(),
     SubtitlesStage(),

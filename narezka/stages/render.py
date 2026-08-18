@@ -18,7 +18,7 @@ from typing import Any
 from narezka.core.cuts import clip_cuts
 from narezka.core.tracking import crop_expression
 from narezka.core.edl import Edl
-from narezka.core.encoders import video_args
+from narezka.core.encoders import available as encoder_refusal, video_args
 from narezka.core.artifacts import Artifact
 from narezka.core.fonts import escape_for_filter, fonts_dir
 from narezka.core.framing import (
@@ -133,6 +133,14 @@ class RenderStage(Stage):
 
         framing = load_framing(ctx)
         options = load_options(ctx)
+
+        # Выбор видеокарты на машине без неё молча превращается в процессор:
+        # медленный ролик лучше, чем никакого. Но человек выбирал другое,
+        # и узнать об этом он должен здесь, а не по времени сборки.
+        refusal = encoder_refusal(out.encoder)
+        if refusal is not None:
+            ctx.log.warning("сжатие на видеокарте недоступно (%s) — идём процессором", refusal)
+
         src_w, src_h = source_size(metadata)
         plan = plan_frame(src_w, src_h, short.width, short.height, framing)
 

@@ -182,3 +182,56 @@ def test_cached_run_costs_nothing(tmp_path: Path, monkeypatch) -> None:
 
     with db.connect(tmp_path) as connection:
         assert credits.balance(connection, "ivan") == 100.0
+
+
+def test_single_clip_rebuild_refreshes_its_subtitles(task_and_config, monkeypatch) -> None:
+    """Пересборка одного ролика идёт по свежим субтитрам.
+
+    Рендер читает готовые файлы субтитров с диска. Пока пересборка звала
+    только рендер, правка оформления до ролика не доходила вовсе: человек
+    менял шрифт, нажимал «пересобрать» и получал прежние подписи —
+    кадрирование при этом менялось, отчего выглядело это как «субтитры
+    сломаны».
+    """
+    from dataclasses import replace
+
+    task, config, device = task_and_config
+    task = replace(task, clip_index=3, work_group="shorts")
+
+    ran: list[str] = []
+    rendered: list[int] = []
+    monkeypatch.setattr(
+        worker, "run_stage",
+        lambda stage, ctx, **kw: (ran.append(stage.name), StageResult(stage.name, Outcome.DONE))[1],
+    )
+    monkeypatch.setattr(worker, "render_one", lambda ctx, index: rendered.append(index))
+
+    status, error, _, executed = worker.execute(task, config, device)
+
+    assert ran == ["subtitles"], "субтитры не пересобираются перед сборкой ролика"
+    assert rendered == [3]
+    assert status == "finished" and error is None
+    # Доводка одного ролика из тридцати — не новая работа: цена целой
+    # группы за неё была бы платой за нашу же недоделку.
+    assert executed == set()
+
+
+def test_single_clip_rebuild_stops_if_subtitles_fail(task_and_config, monkeypatch) -> None:
+    """Собрать ролик по несобравшимся субтитрам значит выдать его молча
+    со старыми подписями — лучше честная ошибка."""
+    from dataclasses import replace
+
+    task, config, device = task_and_config
+    task = replace(task, clip_index=0, work_group="shorts")
+
+    rendered: list[int] = []
+    monkeypatch.setattr(
+        worker, "run_stage",
+        lambda stage, ctx, **kw: StageResult(stage.name, Outcome.FAILED, reason="нет транскрипта"),
+    )
+    monkeypatch.setattr(worker, "render_one", lambda ctx, index: rendered.append(index))
+
+    status, error, _, _ = worker.execute(task, config, device)
+
+    assert rendered == [], "ролик собран по старым субтитрам"
+    assert status == "failed" and "нет транскрипта" in error

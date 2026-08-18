@@ -68,13 +68,26 @@ def execute(task: queue.Task, config, device) -> tuple[str, str | None, float, s
     def work(emit) -> None:
         observer = lambda name, event, data: emit(name, event, data)  # noqa: E731
         if task.clip_index is not None:
-            # Пересборка одного ролика: событиями она выглядит как обычная
-            # стадия, чтобы интерфейс показывал ход работы тем же способом.
+            # Субтитры собираются заново перед сборкой ролика. Рендер читает
+            # готовые файлы субтитров с диска, поэтому без этого шага правка
+            # оформления до ролика не доходила вовсе: кадрирование менялось,
+            # а подписи оставались прежними. Не трогали оформление — шаг
+            # берётся из кэша и ничего не стоит.
+            subtitles = run_stage(get_stage("subtitles"), ctx, observer=observer)
+            if not subtitles.ok:
+                trouble.append(f"{subtitles.stage}: {subtitles.reason or 'ошибка'}")
+                return
+            # Дальше пересборка выглядит обычной стадией, чтобы интерфейс
+            # показывал ход работы тем же способом.
             emit("render", "started", {})
             render_one(replace(ctx, on_progress=None), task.clip_index)
             emit("render", "finished", {"outcome": "done", "duration": 0})
-            results = []
-        elif task.stage:
+            # Пересборка одного ролика не тарифицируется: это доводка уже
+            # оплаченной работы, а не новая работа. Цена группы за один
+            # ролик из тридцати была бы платой за нашу же недоделку.
+            return
+
+        if task.stage:
             results = [run_stage(get_stage(task.stage), ctx, force=task.force, observer=observer)]
         else:
             planned = stages_for(task.work_group) if task.work_group else list(PIPELINE)

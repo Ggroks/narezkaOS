@@ -354,6 +354,39 @@ def test_framing_reset_returns_to_config(client, video) -> None:
     assert body["custom"] is False
 
 
+def test_framing_keeps_subtitles_and_compilation(client, video) -> None:
+    """Настройки всех вкладок лежат в одном файле, и вкладка правит только своё.
+
+    Кадрирование писало файл целиком: человек менял рамку — и терял шрифт
+    субтитров вместе с выбранными эпизодами, ничего об этом не узнав.
+    """
+    client.put(f"/api/videos/{VIDEO}/subtitles", json={"preset": "loud", "font": "Oswald"})
+    client.put(f"/api/videos/{VIDEO}/compilation", json={"best": True, "target_minutes": 25})
+
+    client.put(f"/api/videos/{VIDEO}/framing", json={"preset": "focus"})
+
+    subtitles = client.get(f"/api/videos/{VIDEO}/subtitles").json()
+    assert subtitles["style"]["font"] == "Oswald"
+    assert subtitles["preset"] == "loud"
+    assert client.get(f"/api/videos/{VIDEO}/episodes").json()["target_minutes"] == 25
+
+    # И сброс кадрирования — тоже только своё.
+    client.delete(f"/api/videos/{VIDEO}/framing")
+    assert client.get(f"/api/videos/{VIDEO}/subtitles").json()["style"]["font"] == "Oswald"
+
+
+def test_per_video_model_reaches_the_stage(client, video) -> None:
+    """Правка, сохранённая по API, доходит до конфига, с которым идёт работа."""
+    client.put(f"/api/videos/{VIDEO}/framing", json={"llm_model": "другой/поставщик"})
+
+    from narezka.api.app import _context  # noqa: PLC0415
+
+    assert _context(VIDEO, "default").config.llm.model == "другой/поставщик"
+    assert client.get(f"/api/videos/{VIDEO}/framing").json()["current"]["llm_model"] == (
+        "другой/поставщик"
+    )
+
+
 def test_split_is_offered_only_with_a_webcam(client, video) -> None:
     """Предлагать раскладку, для которой нет данных, значит обещать несбыточное."""
     assert client.get(f"/api/videos/{VIDEO}/framing").json()["split_available"] is False

@@ -62,23 +62,10 @@ class CandidatesStage(Stage):
         return [Artifact(ctx.paths.analysis / CANDIDATES_NAME)]
 
     @staticmethod
-    def _overrides(ctx: StageContext) -> dict:
-        """Правки настроек, заданные для этого видео из интерфейса."""
-        artifact = Artifact(ctx.paths.framing)
-        if not artifact.exists():
-            return {}
-        try:
-            stored = artifact.read_json()
-        except ValueError:
-            return {}
-        return stored if isinstance(stored, dict) else {}
-
-    def _ignore_start(self, ctx: StageContext) -> float:
+    def _ignore_start(ctx: StageContext) -> float:
         """Сколько секунд в начале записи не доверять чату. Ноль — доверять."""
         cfg = ctx.config.candidates
-        override = self._overrides(ctx).get("chat_ignore_start")
-        enabled = override if isinstance(override, bool) else cfg.chat_ignore_start
-        return cfg.chat_ignore_start_seconds if enabled else 0.0
+        return cfg.chat_ignore_start_seconds if cfg.chat_ignore_start else 0.0
 
     def config_slice(self, ctx: StageContext) -> dict:
         return {

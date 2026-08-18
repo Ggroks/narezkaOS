@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -159,7 +160,10 @@ def test_changed_settings_invalidate_the_cache(context) -> None:
     run(RenderStage(), context)
 
     Artifact(context.paths.framing).write_json({"preset": "fill"})
-    assert run(RenderStage(), context).outcome is Outcome.DONE
+    # Контекст пересобирается: правки для записи применяются при его сборке,
+    # и воркер с API строят его заново на каждый запуск. Проверять на старом
+    # значит проверять то, чего в жизни не бывает.
+    assert run(RenderStage(), replace(context)).outcome is Outcome.DONE
 
 
 def test_render_without_subtitles(context) -> None:
@@ -255,3 +259,31 @@ def test_rejected_moment_is_not_rendered(context) -> None:
 
     after = Artifact(context.paths.shorts / "index.json").read_json()["files"]
     assert [f["index"] for f in after] == [1]
+
+
+def test_subtitle_style_change_reaches_the_video(context) -> None:
+    """Правка оформления субтитров обязана дойти до готового ролика.
+
+    Проверка связки, а не части: субтитры пересобираются по своему ключу,
+    а рендер смотрит на указатель субтитров. Если указатель после правки
+    цвета остаётся байт в байт прежним, рендер берётся из кэша, и ролик
+    остаётся со старыми субтитрами — настройка «не работает» молча.
+    """
+    from narezka.core import settings
+
+    run(ProbeStage(), context)
+    run(ExtractAudioStage(), context)
+    fake_transcript(context.paths)
+    run(CandidatesStage(), context)
+    run(SubtitlesStage(), context)
+    run(RenderStage(), context)
+
+    settings.update(
+        context.paths,
+        {settings.SUBTITLES_KEY: {"preset": "classic", "style": {"highlight": "&H000000FF"}}},
+    )
+
+    assert run(SubtitlesStage(), context).outcome is Outcome.DONE, "субтитры не пересобрались"
+    assert run(RenderStage(), context).outcome is Outcome.DONE, (
+        "ролик взят из кэша — правка цвета до него не дошла"
+    )

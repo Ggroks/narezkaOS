@@ -20,7 +20,6 @@ from narezka.core.tracking import crop_expression
 from narezka.core.edl import Edl
 from narezka.core.encoders import video_args
 from narezka.core.artifacts import Artifact
-from narezka.core.config import FramingConfig
 from narezka.core.fonts import escape_for_filter, fonts_dir
 from narezka.core.framing import (
     build_pip_filter,
@@ -34,7 +33,7 @@ from narezka.core.framing import (
 )
 from narezka.core.media import find_source, run_tool
 from narezka.core.stage import Device, Stage, StageContext, StageSkipped
-from narezka.core.clips import SELECTION_NAME, clip_inputs, describe_source, load_clips
+from narezka.core.clips import clip_inputs, describe_source, load_clips
 from narezka.stages.subtitles import INDEX_NAME
 
 SHORTS_INDEX = "index.json"
@@ -45,52 +44,23 @@ FALLBACK_SIZE = (1920, 1080)
 
 
 def load_options(ctx: StageContext) -> dict[str, bool]:
-    """Что вшивать в ролик: конфиг, поверх него — правка для этого видео."""
+    """Что вшивать в ролик. Правки для записи уже учтены в конфиге контекста."""
     out = ctx.config.output
-    options = {
+    return {
         "subtitles_enabled": out.subtitles_enabled,
         "loudnorm_enabled": out.loudnorm_enabled,
     }
-    override = Artifact(ctx.paths.framing)
-    if override.exists():
-        try:
-            stored = override.read_json()
-        except ValueError:
-            return options
-        if isinstance(stored, dict):
-            for key in options:
-                if isinstance(stored.get(key), bool):
-                    options[key] = stored[key]
-    return options
 
 
 def load_framing(ctx: StageContext) -> Framing:
-    """Настройки кадрирования: конфиг, поверх него — ручная правка для видео.
+    """Настройки кадрирования для этой записи.
 
-    Правка хранится отдельным файлом, а не в общем конфиге, потому что
-    подходящее кадрирование зависит от конкретной записи: у стрима с вебкой
-    в углу и у записи экрана оно разное.
+    Кадрирование задаётся на запись, а не глобально, потому что подходящее
+    зависит от материала: у стрима с вебкой в углу и у записи экрана оно
+    разное. Правка накладывается на конфиг при сборке контекста
+    (`settings.effective`), здесь остаётся только перевод в рабочий вид.
     """
-    data = ctx.config.output.framing.model_dump()
-
-    override = Artifact(ctx.paths.framing)
-    if override.exists():
-        try:
-            stored = override.read_json()
-        except ValueError:
-            stored = {}
-        if isinstance(stored, dict):
-            # None означает «не задано вручную», а не «поставить пусто»:
-            # интерфейс присылает его для полей, которых человек не трогал,
-            # и без отсева он затирал бы значение из конфига.
-            data.update({
-                key: value for key, value in stored.items()
-                if key in data and value is not None
-            })
-
-    # Через pydantic — чтобы правка, пришедшая из файла или по API, проходила
-    # ту же проверку диапазонов, что и конфиг.
-    return Framing(**FramingConfig(**data).model_dump())
+    return Framing(**ctx.config.output.framing.model_dump())
 
 
 def source_size(metadata: dict[str, Any]) -> tuple[int, int]:
@@ -133,7 +103,11 @@ class RenderStage(Stage):
             **ctx.config.output.model_dump(),
             "framing": load_framing(ctx).__dict__,
             **load_options(ctx),
-            "subtitle_style": ctx.config.subtitles.style,
+            # Оформление субтитров сюда не входит намеренно: оно приезжает
+            # отпечатком указателя субтитров, который лежит во входах.
+            # Две записи об одном разъезжаются — здесь стояло имя набора
+            # из общего конфига, а рендер брал файлы, собранные по правкам
+            # для записи.
         }
 
     def _prepare(self, ctx: StageContext) -> dict[str, Any]:

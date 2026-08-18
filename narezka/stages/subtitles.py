@@ -101,8 +101,18 @@ class SubtitlesStage(Stage):
         if not files:
             raise StageSkipped("ни у одного кандидата не нашлось слов в границах")
 
+        # Стиль целиком, а не одно имя набора. Раньше здесь лежало только
+        # имя, и правка цвета не меняла указатель ни на байт: рендер видел
+        # прежний отпечаток входа и брал ролик из кэша — настройка молча
+        # не доходила до видео. Артефакт обязан описывать, чем он собран.
         Artifact(directory / INDEX_NAME).write_json(
-            {"style": style.name, "width": short.width, "height": short.height, "files": files}
+            {
+                "style": style.name,
+                "style_fields": style.__dict__,
+                "width": short.width,
+                "height": short.height,
+                "files": files,
+            }
         )
         ctx.log.info(
             "субтитры для %d кандидатов, стиль %s, слов всего %d",

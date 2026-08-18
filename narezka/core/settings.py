@@ -30,6 +30,26 @@ COMPILATION_KEY = "compilation"
 #: Оформление субтитров: имя пресета и правки поверх него.
 SUBTITLES_KEY = "subtitles"
 
+#: Ключ правки → поле конфига, по разделам. Имена местами расходятся: в общем
+#: списке правок `tag_music` понятнее, чем просто `music`, а `llm_model` — чем
+#: `model`. Раздел кадрирования вложен в `output`, поэтому идёт отдельно.
+SECTIONS: dict[str, dict[str, str]] = {
+    "candidates": {
+        key: key
+        for key in (
+            "use_loudness",
+            "use_speech_rate",
+            "use_chat",
+            "use_chat_reactions",
+            "chat_ignore_start",
+        )
+    },
+    "audiotags": {f"tag_{tag}": tag for tag in ("laughter", "music", "shout", "applause", "crowd")},
+    "llm": {"llm_model": "model"},
+    "detector": {"detector_backend": "backend"},
+    "output": {key: key for key in ("encoder", "subtitles_enabled", "loudnorm_enabled")},
+}
+
 
 def load(paths: VideoPaths) -> dict[str, Any]:
     """Правки для этой записи. Пустой словарь — ничего не задано вручную."""
@@ -53,6 +73,69 @@ def update(paths: VideoPaths, patch: dict[str, Any]) -> dict[str, Any]:
     return stored
 
 
+def reset(paths: VideoPaths, keys: set[str]) -> dict[str, Any]:
+    """Снимает перечисленные правки, не трогая остальные.
+
+    Сброс кадрирования не должен уносить с собой субтитры и длинную нарезку:
+    файл один на запись, а настройки в нём — от разных вкладок.
+    """
+    stored = {key: value for key, value in load(paths).items() if key not in keys}
+    if stored:
+        Artifact(paths.framing).write_json(stored)
+    else:
+        paths.framing.unlink(missing_ok=True)
+    return stored
+
+
+def _merged(defaults: dict[str, Any], stored: dict[str, Any], mapping: dict[str, str]) -> None:
+    """Накладывает правки на значения раздела, на месте.
+
+    None означает «не задано вручную», а не «поставить пусто»: интерфейс шлёт
+    его для полей, которых человек не трогал.
+    """
+    for key, field in mapping.items():
+        value = stored.get(key)
+        if value is not None and field in defaults:
+            defaults[field] = value
+
+
+def effective(config: Config, paths: VideoPaths) -> Config:
+    """Конфиг с учётом правок, сделанных для этой записи.
+
+    Применяется один раз при создании контекста стадии, поэтому стадия просто
+    читает `ctx.config` и не может забыть про правку. До этого файл настроек
+    читали три разных места, каждое знало свой набор ключей — и пять
+    переключателей интерфейса сохранялись, показывались сохранёнными, но ни
+    на что не влияли.
+    """
+    return apply(config, load(paths))
+
+
+def apply(config: Config, stored: dict[str, Any]) -> Config:
+    """Накладывает правки на конфиг. Отдельно от чтения — чтобы проверять их
+    при сохранении, до записи на диск.
+
+    Негодное значение здесь именно падает, а не откатывается к умолчанию:
+    настройка, которая молча не сработала, врёт человеку дважды — на экране
+    она выглядит применённой.
+    """
+    if not stored:
+        return config
+
+    data = config.model_dump()
+    for section, mapping in SECTIONS.items():
+        _merged(data[section], stored, mapping)
+
+    framing = data["output"]["framing"]
+    _merged(framing, stored, {key: key for key in framing})
+
+    nested = stored.get(COMPILATION_KEY)
+    if isinstance(nested, dict):
+        _merged(data["compilation"], nested, {key: key for key in data["compilation"]})
+
+    return Config(**data)
+
+
 def compilation(config: Config, paths: VideoPaths) -> CompilationConfig:
     """Настройки длинной нарезки с учётом правок для этой записи.
 
@@ -62,10 +145,7 @@ def compilation(config: Config, paths: VideoPaths) -> CompilationConfig:
     data = config.compilation.model_dump()
     stored = load(paths).get(COMPILATION_KEY)
     if isinstance(stored, dict):
-        data.update({
-            key: value for key, value in stored.items()
-            if key in data and value is not None
-        })
+        _merged(data, stored, {key: key for key in data})
     return CompilationConfig(**data)
 
 

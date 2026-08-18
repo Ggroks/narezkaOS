@@ -20,7 +20,7 @@ from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from narezka.api import auth, jobs, worker
 from narezka.api.media import serve_file
@@ -48,7 +48,6 @@ from narezka.core import (
     settings,
 )
 from narezka.core.paths import list_videos, video_paths
-from narezka.core.runner import run_pipeline, run_stage
 from narezka.core.stage import StageContext
 from narezka.stages import GROUPS, PIPELINE, get_stage, stages_for
 from narezka.stages.titles import STAGE_TITLES
@@ -1313,6 +1312,13 @@ class FramingPayload(FramingConfig):
     track_dead_zone: float | None = None
 
 
+#: Списки берутся из описания правок, а не переписываются здесь: набор
+#: переключателей на экране и набор, который доходит до стадий, обязаны
+#: совпадать — иначе снова появится настройка, которая ничего не делает.
+SIGNAL_FLAGS = tuple(key for key in settings.SECTIONS["candidates"] if key.startswith("use_"))
+AUDIO_TAGS = tuple(settings.SECTIONS["audiotags"].values())
+
+
 def _framing_state(video_id: str, project: str) -> tuple[Any, Any, Framing, int, int]:
     paths, _ = _paths(video_id, project)
     ctx = _context(video_id, project)
@@ -1342,34 +1348,24 @@ def framing(video_id: str, project: str = "default") -> dict[str, Any]:
         except ValueError:
             split_available = False
 
-    options = load_options(ctx)
-    stored = {}
-    if Artifact(paths.framing).exists():
-        try:
-            stored = Artifact(paths.framing).read_json()
-        except ValueError:
-            stored = {}
-    options["llm_model"] = stored.get("llm_model") or ctx.config.llm.model
-    options["detector_backend"] = stored.get("detector_backend") or ctx.config.detector.backend
-    options["encoder"] = stored.get("encoder") or ctx.config.output.encoder
-    for flag in ("use_loudness", "use_speech_rate", "use_chat", "use_chat_reactions"):
-        value = stored.get(flag)
-        options[flag] = getattr(ctx.config.candidates, flag) if value is None else value
-    for tag in ("laughter", "music", "shout", "applause", "crowd"):
-        value = stored.get(f"tag_{tag}")
-        options[f"tag_{tag}"] = getattr(ctx.config.audiotags, tag) if value is None else value
-    for knob in ("track_smoothing", "track_dead_zone"):
-        value = stored.get(knob)
-        options[knob] = getattr(ctx.config.output.framing, knob) if value is None else value
-    options["chat_ignore_start"] = (
-        stored.get("chat_ignore_start")
-        if isinstance(stored.get("chat_ignore_start"), bool)
-        else ctx.config.candidates.chat_ignore_start
-    )
+    # Значения берутся из конфига контекста: правки для записи в нём уже
+    # учтены. Отдельного слияния здесь нет намеренно — пока оно было своим,
+    # экран показывал применённой настройку, до которой стадии не доходили.
+    options = {
+        **load_options(ctx),
+        "llm_model": ctx.config.llm.model,
+        "detector_backend": ctx.config.detector.backend,
+        "encoder": ctx.config.output.encoder,
+        "chat_ignore_start": ctx.config.candidates.chat_ignore_start,
+        **{flag: getattr(ctx.config.candidates, flag) for flag in SIGNAL_FLAGS},
+        **{f"tag_{tag}": getattr(ctx.config.audiotags, tag) for tag in AUDIO_TAGS},
+        **{knob: getattr(ctx.config.output.framing, knob) for knob in ("track_smoothing", "track_dead_zone")},
+    }
+    stored = settings.load(paths)
     return {
         "current": {**current.__dict__, **options},
         "split_available": split_available,
-        "custom": Artifact(paths.framing).exists(),
+        "custom": bool(set(stored) - {settings.COMPILATION_KEY, settings.SUBTITLES_KEY}),
         "source": {"width": src_w, "height": src_h},
         "output": {"width": short.width, "height": short.height},
         "plan": {
@@ -1384,8 +1380,17 @@ def framing(video_id: str, project: str = "default") -> dict[str, Any]:
 
 @app.put("/api/videos/{video_id}/framing")
 def set_framing(video_id: str, payload: FramingPayload, project: str = "default") -> dict[str, Any]:
-    paths, _ = _paths(video_id, project)
-    Artifact(paths.framing).write_json(payload.model_dump())
+    paths, config = _paths(video_id, project)
+    patch = payload.model_dump()
+    try:
+        # Проверка при сохранении, а не при чтении: негодное значение иначе
+        # ляжет на диск и сломает запись позже — в момент запуска работы.
+        settings.apply(config, {**settings.load(paths), **patch})
+    except ValidationError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    # Настройки записи лежат в одном файле — кадрирование, субтитры, длинная
+    # нарезка. Запись целиком уносила чужие: правится только своё.
+    settings.update(paths, patch)
     # Кадрирование входит в ключ кэша стадии render, поэтому отдельно ничего
     # сбрасывать не нужно: следующий запуск увидит другой ключ и перерендерит.
     log.info("видео %s: кадрирование «%s»", video_id, payload.preset)
@@ -1395,7 +1400,7 @@ def set_framing(video_id: str, payload: FramingPayload, project: str = "default"
 @app.delete("/api/videos/{video_id}/framing")
 def reset_framing(video_id: str, project: str = "default") -> dict[str, Any]:
     paths, _ = _paths(video_id, project)
-    paths.framing.unlink(missing_ok=True)
+    settings.reset(paths, set(FramingPayload.model_fields))
     return framing(video_id, project)
 
 

@@ -22,7 +22,7 @@ from narezka.core.logging import get_logger, setup_logging
 from narezka.core.paths import list_videos, video_paths
 from narezka.core.runner import Outcome, run_pipeline, run_stage
 from narezka.core.stage import StageContext
-from narezka.stages import GROUPS, PIPELINE, REGISTRY, get_stage, stages_for
+from narezka.stages import GROUPS, PIPELINE, get_stage, stages_for
 
 app = typer.Typer(add_completion=False, help="Narezka OS — AI-монтажёр длинных видео")
 console = Console()
@@ -587,7 +587,10 @@ def framing(
     ctx = _build_context(video_id, project, None, config_path)
 
     if reset:
-        ctx.paths.framing.unlink(missing_ok=True)
+        # Сбрасывается только кадрирование: в том же файле лежат субтитры и
+        # длинная нарезка, и уносить их с собой команда не должна.
+        settings.reset(ctx.paths, set(FramingConfig.model_fields))
+        ctx = _build_context(video_id, project, None, config_path)
         console.print("[green]Настройки кадрирования сброшены к конфигу.[/green]")
 
     changes = {
@@ -608,7 +611,10 @@ def framing(
         except ValueError as exc:
             console.print(f"[red]{exc}[/red]")
             raise typer.Exit(1) from None
-        Artifact(ctx.paths.framing).write_json(updated.model_dump())
+        settings.update(ctx.paths, updated.model_dump())
+        # Контекст держит конфиг с уже применёнными правками, поэтому после
+        # записи его пересобираем — иначе ниже покажется прежнее значение.
+        ctx = _build_context(video_id, project, None, config_path)
         console.print("[green]Сохранено. Ролики перерендерятся при следующем запуске render.[/green]")
 
     current = load_framing(ctx)

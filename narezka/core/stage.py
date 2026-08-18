@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, ClassVar
 
+from narezka.core import settings
 from narezka.core.artifacts import Artifact
 from narezka.core.config import Config
 from narezka.core.device import DeviceInfo
@@ -39,6 +40,12 @@ class StageContext:
     #: отбор молчал 43 минуты, и понять, идёт ли работа, было нечем.
     #: None — запуск без наблюдателя (CLI без задачи), вызов ничего не стоит.
     on_progress: Callable[[int, int, str], None] | None = None
+
+    def __post_init__(self) -> None:
+        # Правки, сделанные для записи, применяются здесь и один раз: стадия
+        # получает конфиг, в котором они уже учтены. Пока каждая стадия должна
+        # была вспомнить про них сама, пять настроек интерфейса не работали.
+        self.config = settings.effective(self.config, self.paths)
 
     def progress(self, done: int, total: int, note: str = "") -> None:
         """Отметить продвижение. Безопасно вызывать всегда."""

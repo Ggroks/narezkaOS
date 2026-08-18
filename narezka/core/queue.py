@@ -158,6 +158,19 @@ def active_for(connection: sqlite3.Connection, *, workspace: str, video_id: str)
     return _task(row) if row else None
 
 
+def active_pairs(connection: sqlite3.Connection) -> set[tuple[str, str]]:
+    """Пространство и запись каждой живой задачи.
+
+    Нужно тем, кто трогает файлы записи со стороны: убирать исходник у
+    работы, которая прямо сейчас идёт, нельзя.
+    """
+    ensure_schema(connection)
+    rows = connection.execute(
+        "SELECT workspace, video_id FROM tasks WHERE status IN ('queued','running')"
+    ).fetchall()
+    return {(row["workspace"], row["video_id"]) for row in rows}
+
+
 def claim(connection: sqlite3.Connection, *, parallel: int = DEFAULT_PARALLEL) -> Task | None:
     """Берёт следующую задачу в работу или возвращает None.
 

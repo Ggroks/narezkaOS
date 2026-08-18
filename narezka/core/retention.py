@@ -14,6 +14,7 @@ BAZA.md §65. Исходное видео — единственный круп�
 from __future__ import annotations
 
 from dataclasses import dataclass
+import sqlite3
 import time
 from pathlib import Path
 from typing import Any
@@ -165,6 +166,22 @@ def _age_days(path: Path) -> float:
     return (time.time() - newest) / 86400
 
 
+def _busy(storage_root: Path) -> set[tuple[str, str]] | None:
+    """Записи, по которым есть живая задача. None — узнать не удалось.
+
+    Уборка идёт отдельным потоком и раз в несколько часов, а работа может
+    начаться в любую секунду. Без этой проверки исходник исчезал бы прямо
+    во время сборки — по инструкции для сервера уборка включена.
+    """
+    from narezka.core import db, queue  # noqa: PLC0415
+
+    try:
+        with db.connect(storage_root) as connection:
+            return queue.active_pairs(connection)
+    except sqlite3.Error:
+        return None
+
+
 def sweep(storage_root: Path, config, *, apply: bool = False) -> dict[str, Any]:
     """Обходит хранилище и убирает отлежавшееся.
 
@@ -183,8 +200,20 @@ def sweep(storage_root: Path, config, *, apply: bool = False) -> dict[str, Any]:
     if not projects_dir.is_dir():
         return report
 
+    busy = _busy(storage_root)
+    if busy is None:
+        # Не знаем, что сейчас в работе. Молча удалять вслепую нельзя:
+        # потерять исходник хуже, чем не освободить место.
+        report["skipped"] = "не удалось прочитать очередь — уборка отложена"
+        return report
+
     for project in sorted(p.name for p in projects_dir.iterdir() if p.is_dir()):
         for video_id in list_videos(storage_root, project):
+            if (project, video_id) in busy:
+                # Запись отлежалась, но по ней прямо сейчас идёт работа:
+                # человек открыл старый проект и нажал «собрать». Убрать из
+                # под неё исходник значит уронить работу на середине.
+                continue
             paths = video_paths(storage_root, project, video_id)
             for candidate in inspect(paths, video_id):
                 if candidate.kind not in AUTO_KINDS:

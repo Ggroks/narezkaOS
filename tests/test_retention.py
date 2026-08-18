@@ -136,3 +136,73 @@ def test_summary_groups_by_kind(paths) -> None:
     assert summary["count"] == 2
     assert summary["bytes"] == 5_000
     assert set(summary["by_kind"]) == {"audio", "clips"}
+
+
+# --- уборка на живом сервере -----------------------------------------------
+
+
+def sweepable(tmp_path: Path, days_old: float = 30.0):
+    """Запись, которую уборка вправе почистить: всё сделано, исходник отлежался."""
+    import os
+    import time
+
+    paths = video_paths(tmp_path, "default", "vid")
+    paths.ensure()
+    put(paths.source, "source.mp4")
+    set_origin(paths, "url")
+    mark_done(paths, "probe", "extract_audio", "render")
+
+    old = time.time() - days_old * 86400
+    for item in paths.source.rglob("*"):
+        os.utime(item, (old, old))
+    return paths
+
+
+def config_with(days: int):
+    from narezka.core.config import load_config
+
+    config = load_config()
+    return config.model_copy(
+        update={"retention": config.retention.model_copy(update={"source_days": days})}
+    )
+
+
+def test_sweep_frees_what_has_lain_long_enough(tmp_path: Path) -> None:
+    paths = sweepable(tmp_path)
+
+    report = retention.sweep(tmp_path, config_with(14), apply=True)
+
+    assert [item["kind"] for item in report["items"]] == ["source"]
+    assert not list(paths.source.iterdir())
+
+
+def test_sweep_spares_a_record_that_is_being_worked_on(tmp_path: Path) -> None:
+    """Человек открыл старый проект и нажал «собрать».
+
+    Уборщик просыпается раз в несколько часов и не знает, что происходит
+    прямо сейчас. Убрать исходник из-под идущей работы значит уронить её
+    на середине — и списать за это кредиты.
+    """
+    from narezka.core import db, queue
+
+    paths = sweepable(tmp_path)
+    with db.connect(tmp_path) as connection:
+        queue.enqueue(connection, workspace="default", video_id="vid", work_group="shorts")
+
+    report = retention.sweep(tmp_path, config_with(14), apply=True)
+
+    assert report["items"] == []
+    assert (paths.source / "source.mp4").exists(), "исходник удалён во время работы"
+
+
+def test_sweep_does_nothing_when_the_queue_is_unreadable(tmp_path: Path, monkeypatch) -> None:
+    """Не знаем, что в работе, — не трогаем ничего и говорим об этом.
+
+    Потерять исходник хуже, чем не освободить место.
+    """
+    paths = sweepable(tmp_path)
+    monkeypatch.setattr(retention, "_busy", lambda root: None)
+    report = retention.sweep(tmp_path, config_with(14), apply=True)
+
+    assert report["items"] == [] and "skipped" in report
+    assert (paths.source / "source.mp4").exists()

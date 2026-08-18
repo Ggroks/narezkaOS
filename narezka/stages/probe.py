@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from narezka.core.artifacts import Artifact
-from narezka.core.media import ffprobe, find_source, summarize
+from narezka.core.media import MediaError, ffprobe, find_source, summarize
 from narezka.core.stage import Device, Stage, StageContext
 
 
@@ -22,10 +22,12 @@ class ProbeStage(Stage):
     def inputs(self, ctx: StageContext) -> list[Artifact]:
         # Исходник кладётся командой add или стадией download; в момент
         # объявления входов его может ещё не быть — тогда список пуст,
-        # и runner сообщит понятную ошибку при попытке запуска.
+        # а точную причину назовёт запуск: он зовёт find_source сам.
+        # Ловится только ошибка поиска: отказ диска или прав — это не
+        # «исходника ещё нет», и прятать его под тем же ответом нельзя.
         try:
             return [Artifact(find_source(ctx.paths.source))]
-        except Exception:  # noqa: BLE001
+        except MediaError:
             return []
 
     def outputs(self, ctx: StageContext) -> list[Artifact]:

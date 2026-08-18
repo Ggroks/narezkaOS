@@ -58,6 +58,16 @@ def test_everything_is_closed_without_login(guarded) -> None:
     assert guarded.post("/api/videos", json={"url": "https://twitch.tv/videos/1"}).status_code == 401
 
 
+def test_api_schema_is_closed_too(guarded) -> None:
+    """Схема лежит вне /api и попадала под правило «это интерфейс».
+
+    Постороннему, зашедшему по адресу туннеля, она выдавала список всех
+    ручек с параметрами — до всякого входа.
+    """
+    for path in ("/docs", "/redoc", "/openapi.json"):
+        assert guarded.get(path).status_code == 401, path
+
+
 def test_only_four_things_are_open(guarded) -> None:
     """Проверка живости и вход — иначе на страницу входа не попасть."""
     assert guarded.get("/api/health").status_code == 200

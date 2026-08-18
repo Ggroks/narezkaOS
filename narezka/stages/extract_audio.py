@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from narezka.core.artifacts import Artifact
-from narezka.core.media import find_source, run_tool
+from narezka.core.media import MediaError, find_source, run_tool
 from narezka.core.stage import Device, Stage, StageContext
 
 #: 8 часов 16 кГц моно PCM это около 0.9 ГБ — приемлемо (§65).
@@ -24,9 +24,11 @@ class ExtractAudioStage(Stage):
     description = "Звуковая дорожка 16 кГц моно для распознавания"
 
     def inputs(self, ctx: StageContext) -> list[Artifact]:
+        # Только ошибка поиска исходника: отказ диска или прав — не то же
+        # самое, что «файла ещё нет», и одним ответом их путать нельзя.
         try:
             return [Artifact(find_source(ctx.paths.source))]
-        except Exception:  # noqa: BLE001
+        except MediaError:
             return []
 
     def outputs(self, ctx: StageContext) -> list[Artifact]:

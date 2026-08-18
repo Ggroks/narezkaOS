@@ -194,10 +194,6 @@ class JobManager:
         with self._lock:
             return self._jobs.get(self._key(video_id, project_id))
 
-    def all(self) -> dict[tuple[str, str], Job]:
-        with self._lock:
-            return dict(self._jobs)
-
     def reserve(self, video_id: str, project_id: str) -> tuple[Job, bool]:
         """Заводит задачу в состоянии «в очереди», не запуская работу.
 

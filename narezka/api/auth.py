@@ -61,19 +61,6 @@ def current_user(request: Request, config) -> User | None:
         return accounts.user_for_token(connection, token)
 
 
-def workspace_for(request: Request, config, asked: str | None = None) -> str:
-    """Пространство хранения для этого запроса.
-
-    При включённом входе — только своё, что бы ни просил клиент. При
-    выключенном — то, что попросили: у консоли есть `--project`, и это
-    полезное разделение на своей машине.
-    """
-    user = getattr(request.state, "user", None)
-    if config.auth.enabled:
-        return (user or LOCAL_USER).workspace
-    return asked or config.default_project
-
-
 def describe(user: User | None, config) -> dict[str, Any]:
     """Ответ на вопрос «кто я» — то, по чему интерфейс решает, показывать
     ли форму входа."""

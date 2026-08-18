@@ -296,6 +296,21 @@ def test_upload_needs_login(guarded) -> None:
     assert guarded.post("/api/videos/upload?name=x.mp4", content=b"\x00").status_code == 401
 
 
+def test_upload_is_refused_when_the_disk_is_full(guarded, monkeypatch) -> None:
+    """Отказ до приёма, а не после.
+
+    Запись на несколько гигабайт идёт через туннель десятки минут, и узнать
+    в конце, что места не было с самого начала, — потерянный вечер.
+    """
+    enter(guarded, "ivan", "parol-ivana")
+    monkeypatch.setattr(api_app.env, "free_gb", lambda path: 0.5)
+
+    refused = guarded.post("/api/videos/upload?name=stream.mp4&rights=own", content=b"\x00" * 4096)
+
+    assert refused.status_code == 507
+    assert "свободно" in refused.json()["detail"]
+
+
 def test_server_refuses_a_path_when_login_is_on(guarded) -> None:
     """Главное отличие сервера от своей машины: путь читать нельзя."""
     enter(guarded, "ivan", "parol-ivana")

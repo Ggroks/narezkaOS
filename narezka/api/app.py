@@ -550,6 +550,11 @@ def rename_video(video_id: str, payload: RenameVideo, project: str = "default") 
     return _summary(config, _workspace(project), video_id)
 
 
+#: Запас сверх самого файла: звук, кадры для разметки и готовые ролики
+#: занимают ещё примерно столько же, а диск на домашнем сервере общий.
+UPLOAD_RESERVE_BYTES = 5 * 1024**3
+
+
 @app.post("/api/videos/upload")
 async def upload(
     request: Request,
@@ -580,6 +585,23 @@ async def upload(
     space = _workspace(project)
     incoming = config.storage_root / "uploads" / space
     incoming.mkdir(parents=True, exist_ok=True)
+
+    # Место проверяется до приёма, а не в момент, когда оно кончится. Запись
+    # на несколько гигабайт идёт через туннель десятки минут, и узнать об
+    # отказе в конце — значит потратить их впустую. Запас нужен потому, что
+    # на записи потом ещё работать: звук, кадры, готовые ролики.
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit():
+        need = int(declared) + UPLOAD_RESERVE_BYTES
+        free = env.free_gb(config.storage_root) * 1024**3
+        if need > free:
+            raise HTTPException(
+                status_code=507,
+                detail=(
+                    f"на диске свободно {free / 1024**3:.1f} ГБ, "
+                    f"а нужно {need / 1024**3:.1f} ГБ вместе с запасом на обработку"
+                ),
+            )
 
     target = incoming / f"{uuid.uuid4().hex}{suffix}"
     written = 0

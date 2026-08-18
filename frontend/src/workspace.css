@@ -402,3 +402,22 @@ button.ghost:hover:not(:disabled) { color: var(--text); background: var(--surfac
   border-radius: var(--radius-small);
   cursor: pointer;
 }
+
+/* Действия под роликом: скачать и пересобрать в одну строку. По отдельности
+   каждое выглядит важнее, чем есть. */
+.short-actions { display: flex; align-items: baseline; gap: var(--gap); }
+
+/* Кнопка, притворяющаяся ссылкой: действие второстепенное, а рамка вокруг
+   него спорит с главной кнопкой вкладки. Остаётся кнопкой в разметке —
+   это действие, а не переход. */
+button.linkish {
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+button.linkish:hover:not(:disabled) { text-decoration: underline; background: none; }
+button.linkish:active:not(:disabled) { scale: 1; }
+button.linkish:disabled { color: var(--text-faint); }

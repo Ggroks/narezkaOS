@@ -51,6 +51,7 @@ from narezka.core.paths import list_videos, video_paths
 from narezka.core.runner import run_pipeline, run_stage
 from narezka.core.stage import StageContext
 from narezka.stages import GROUPS, PIPELINE, get_stage, stages_for
+from narezka.stages.titles import STAGE_TITLES
 from narezka.stages.render import load_framing, load_options, source_size
 
 log = get_logger("api")
@@ -346,6 +347,7 @@ def stages() -> list[dict[str, Any]]:
             "device": s.device.value,
             "optional": s.optional,
             "group": s.group,
+            "title": STAGE_TITLES.get(s.name, s.name),
         }
         for s in PIPELINE
     ]
@@ -717,6 +719,8 @@ def run(video_id: str, payload: RunRequest) -> dict[str, Any]:
             stage=payload.stage,
             force=payload.force,
         )
+        if not created:
+            _refuse_if_busy(task, work_group=payload.group, stage=payload.stage)
         place = queue.position(connection, task.task_id)
 
     job, _ = jobs.manager.reserve(video_id, ctx.project_id)
@@ -730,6 +734,37 @@ def run(video_id: str, payload: RunRequest) -> dict[str, Any]:
         # ничего. Списание никогда не превышает названного.
         "estimate": quote.credits if quote.known else None,
     }
+
+
+def _describe_task(task) -> str:
+    """Чем занята запись — словами, а не полями."""
+    if task.clip_index is not None:
+        return f"пересборка ролика {task.clip_index + 1}"
+    if task.stage:
+        return f"шаг «{STAGE_TITLES.get(task.stage, task.stage)}»"
+    return {"analysis": "разбор записи", "shorts": "сборка роликов",
+            "long": "длинная нарезка"}.get(task.work_group, "обработка")
+
+
+def _refuse_if_busy(task, *, work_group=None, stage=None, clip_index=None) -> None:
+    """Отказ, когда записью уже занята другая работа.
+
+    Очередь намеренно не плодит задачи на одну запись: двойной клик не должен
+    ставить две сборки. Но раньше она так же молча возвращала **чужую**
+    задачу — нажатие «пересобрать ролик» во время разбора не делало ничего,
+    а интерфейс показывал «в очереди». Совпадающая работа по-прежнему
+    возвращается как есть, несовпадающая честно отказывает.
+    """
+    same = (
+        task.work_group == work_group
+        and task.stage == stage
+        and task.clip_index == clip_index
+    )
+    if not same:
+        raise HTTPException(
+            status_code=409,
+            detail=f"запись уже в очереди: {_describe_task(task)}. Дождитесь или остановите",
+        )
 
 
 def _quote(config, ctx, payload) -> credits.Quote:
@@ -1196,6 +1231,36 @@ def shorts(video_id: str, project: str = "default") -> dict[str, Any]:
     if not artifact.exists():
         raise HTTPException(status_code=404, detail="ролики ещё не отрендерены")
     return artifact.read_json()
+
+
+@app.post("/api/videos/{video_id}/shorts/{index}/render")
+def rerender_short(video_id: str, index: int, project: str = "default") -> dict[str, Any]:
+    """Пересобирает один готовый ролик, не трогая остальные.
+
+    Полная пересборка тридцати роликов — десятки минут, а поправить обычно
+    надо один: у него не сработала детекция лица или подвинуты границы.
+    Идёт через ту же очередь, что и остальная работа: две дороги к ffmpeg
+    означали бы два запуска кодирования разом на машине, где память
+    кончалась трижды.
+    """
+    ctx = _context(video_id, project, None)
+    config, _ = _config()
+
+    with db.connect(config.storage_root) as connection:
+        task, created = queue.enqueue(
+            connection,
+            workspace=ctx.project_id,
+            video_id=video_id,
+            stage="render",
+            clip_index=index,
+        )
+        if not created:
+            _refuse_if_busy(task, stage="render", clip_index=index)
+        place = queue.position(connection, task.task_id)
+
+    job, _ = jobs.manager.reserve(video_id, ctx.project_id)
+    log.info("в очередь: пересборка ролика %d записи %s", index, video_id)
+    return {"started": created, "status": job.status, "position": place}
 
 
 @app.get("/api/videos/{video_id}/shorts/{index}/media")

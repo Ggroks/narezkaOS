@@ -136,7 +136,13 @@ class RenderStage(Stage):
             "subtitle_style": ctx.config.subtitles.style,
         }
 
-    def run(self, ctx: StageContext) -> None:
+    def _prepare(self, ctx: StageContext) -> dict[str, Any]:
+        """Всё, что одинаково для всех роликов записи.
+
+        Вынесено, потому что сборка одного ролика идёт тем же путём, что
+        и сборка всех: две отдельные дороги к ffmpeg однажды разойдутся,
+        и человек будет настраивать по одной картинке, а получать другую.
+        """
         out = ctx.config.output
         short = out.short
 
@@ -176,78 +182,103 @@ class RenderStage(Stage):
         if not edl.is_identity:
             ctx.log.info("правки оси времени применяются: отрезков %d", len(edl.spans))
 
+        return {
+            "out": out, "short": short, "clips": clips, "clip_source": clip_source,
+            "subtitle_files": subtitle_files, "subtitles_dir": subtitles_dir,
+            "source": source, "has_video": has_video, "framing": framing,
+            "options": options, "plan": plan, "cams": cams, "edl": edl,
+            "src_w": src_w, "src_h": src_h,
+        }
+
+    def _render_clip(self, ctx: StageContext, prep: dict[str, Any], clip: dict[str, Any]):
+        """Собирает один ролик. None — собирать нечего.
+
+        Единственное место, где вызывается ffmpeg для шортса: и полный
+        прогон, и пересборка одного ролика идут сюда.
+        """
+        out, short = prep["out"], prep["short"]
+        options, framing, edl = prep["options"], prep["framing"], prep["edl"]
+
+        index = clip["index"]
+        name = prep["subtitle_files"].get(index) if options["subtitles_enabled"] else None
+        if options["subtitles_enabled"] and name is None:
+            return None
+
+        # Клип берётся в исходном времени: ffmpeg перематывает по нему,
+        # а вырезки применяет уже внутри отрезка. Границы в клипе после
+        # стадии timeline хранятся в выходном времени, поэтому нужен
+        # обратный пересчёт — иначе рендерился бы не тот кусок.
+        source_start = clip.get("source_start", clip["start"])
+        source_end = clip.get("source_end", clip["end"])
+        cut_video, cut_audio, duration = clip_cuts(edl, source_start, source_end)
+        if duration <= 0:
+            ctx.log.warning("клип %d вырезан целиком — пропущен", index)
+            return None
+
+        target = Artifact(ctx.paths.shorts / f"{index:02d}.mp4")
+        ctx.log.info("рендер %d: %.1f с", index, duration)
+
+        split = self._split_for(clip, prep["cams"], framing, prep["src_w"], prep["src_h"], short)
+        track = self._track_for(clip, prep["cams"], framing, prep["src_w"], prep["src_h"], short)
+        pip = self._pip_for(clip, prep["cams"], framing)
+
+        with target.reserve() as tmp:
+            run_tool(
+                self._command(
+                    split=split,
+                    track=track,
+                    pip=pip,
+                    source=prep["source"],
+                    start=source_start,
+                    duration=duration,
+                    cut_video=cut_video,
+                    cut_audio=cut_audio,
+                    subtitle_name=name,
+                    loudnorm=options["loudnorm_enabled"],
+                    output=tmp,
+                    has_video=prep["has_video"],
+                    framing=framing,
+                    plan=prep["plan"],
+                    width=short.width,
+                    height=short.height,
+                    crf=out.crf,
+                    fps=out.fps,
+                    encoder=out.encoder,
+                    pix_fmt=out.pix_fmt,
+                    faststart=out.faststart,
+                    lufs=out.loudness_target_lufs,
+                ),
+                # Минута ролика на CPU — это единицы минут кодирования.
+                timeout=1800,
+                cwd=prep["subtitles_dir"],
+            )
+
+        return {
+            "index": index,
+            "file": target.path.name,
+            "start": clip["start"],
+            "end": clip["end"],
+            "duration": round(duration, 2),
+            "size_bytes": target.path.stat().st_size,
+            # Оценка и объяснение доезжают до интерфейса вместе
+            # с роликом — иначе непонятно, почему он здесь.
+            "interest_score": clip.get("interest_score"),
+            "rank": clip.get("rank"),
+            "explanation": clip.get("explanation"),
+        }
+
+    def run(self, ctx: StageContext) -> None:
+        prep = self._prepare(ctx)
+        clips, short = prep["clips"], prep["short"]
+        framing, plan = prep["framing"], prep["plan"]
+        has_video, clip_source = prep["has_video"], prep["clip_source"]
+
         rendered: list[dict[str, Any]] = []
         for clip in clips:
-            index = clip["index"]
-            name = subtitle_files.get(index) if options["subtitles_enabled"] else None
-            if options["subtitles_enabled"] and name is None:
-                continue
-
-            # Клип берётся в исходном времени: ffmpeg перематывает по нему,
-            # а вырезки применяет уже внутри отрезка. Границы в клипе после
-            # стадии timeline хранятся в выходном времени, поэтому нужен
-            # обратный пересчёт — иначе рендерился бы не тот кусок.
-            source_start = clip.get("source_start", clip["start"])
-            source_end = clip.get("source_end", clip["end"])
-            cut_video, cut_audio, duration = clip_cuts(edl, source_start, source_end)
-            if duration <= 0:
-                ctx.log.warning("клип %d вырезан целиком — пропущен", index)
-                continue
-
-            target = Artifact(ctx.paths.shorts / f"{index:02d}.mp4")
-            ctx.log.info("рендер %d: %.1f с", index, duration)
             ctx.progress(len(rendered) + 1, len(clips), "рендер")
-
-            split = self._split_for(clip, cams, framing, src_w, src_h, short)
-            track = self._track_for(clip, cams, framing, src_w, src_h, short)
-            pip = self._pip_for(clip, cams, framing)
-
-            with target.reserve() as tmp:
-                run_tool(
-                    self._command(
-                        split=split,
-                        track=track,
-                        pip=pip,
-                        source=source,
-                        start=source_start,
-                        duration=duration,
-                        cut_video=cut_video,
-                        cut_audio=cut_audio,
-                        subtitle_name=name,
-                        loudnorm=options["loudnorm_enabled"],
-                        output=tmp,
-                        has_video=has_video,
-                        framing=framing,
-                        plan=plan,
-                        width=short.width,
-                        height=short.height,
-                        crf=out.crf,
-                        fps=out.fps,
-                        encoder=out.encoder,
-                        pix_fmt=out.pix_fmt,
-                        faststart=out.faststart,
-                        lufs=out.loudness_target_lufs,
-                    ),
-                    # Минута ролика на CPU — это единицы минут кодирования.
-                    timeout=1800,
-                    cwd=subtitles_dir,
-                )
-
-            rendered.append(
-                {
-                    "index": index,
-                    "file": target.path.name,
-                    "start": clip["start"],
-                    "end": clip["end"],
-                    "duration": round(duration, 2),
-                    "size_bytes": target.path.stat().st_size,
-                    # Оценка и объяснение доезжают до интерфейса вместе
-                    # с роликом — иначе непонятно, почему он здесь.
-                    "interest_score": clip.get("interest_score"),
-                    "rank": clip.get("rank"),
-                    "explanation": clip.get("explanation"),
-                }
-            )
+            entry = self._render_clip(ctx, prep, clip)
+            if entry is not None:
+                rendered.append(entry)
 
         if not rendered:
             raise StageSkipped("ни один кандидат не отрендерен")
@@ -493,3 +524,42 @@ def _prepend_cut(chain: str, cut: str) -> str:
     for label in labels:
         chain = chain.replace("[0:v]", label, 1)
     return head + chain
+
+
+def render_one(ctx: StageContext, index: int) -> dict[str, Any]:
+    """Пересобирает один готовый ролик, не трогая остальные.
+
+    Идёт тем же путём, что и полный прогон: та же подготовка, та же команда
+    ffmpeg. Разница только в том, что клип один и запись в указателе
+    правится точечно.
+
+    **След в кэше стадии стирается.** После пересборки одного ролика
+    записанный ключ перестаёт описывать то, что лежит на диске: остальные
+    ролики собраны по прежним настройкам. Оставить его значило бы, что
+    следующая «пересобрать всё» ничего не сделает и разнобой останется
+    навсегда.
+    """
+    stage = RenderStage()
+    prep = stage._prepare(ctx)  # noqa: SLF001 — тот же модуль, свой же класс
+
+    clip = next((item for item in prep["clips"] if item["index"] == index), None)
+    if clip is None:
+        raise StageSkipped(f"момента {index} нет среди отобранных")
+
+    entry = stage._render_clip(ctx, prep, clip)  # noqa: SLF001
+    if entry is None:
+        raise StageSkipped(f"момент {index} собирать нечем")
+
+    catalogue = Artifact(ctx.paths.shorts / SHORTS_INDEX)
+    data = catalogue.read_json() if catalogue.exists() else {"files": []}
+    files = [item for item in data.get("files", []) if item.get("index") != index]
+    files.append(entry)
+    # Порядок по времени, а не по времени сборки: ролики идут так же,
+    # как шли в записи.
+    files.sort(key=lambda item: item.get("start", 0))
+    data["files"] = files
+    catalogue.write_json(data)
+
+    (ctx.paths.stage_state / f"{RenderStage.name}.json").unlink(missing_ok=True)
+    ctx.log.info("ролик %d пересобран, %.1f МБ", index, entry["size_bytes"] / 1024**2)
+    return entry

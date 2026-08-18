@@ -10,6 +10,8 @@ export type StageState = {
   optional: boolean;
   /** К какой кнопке относится стадия: разбор, ролики или длинная нарезка. */
   group: StageGroup;
+  /** Человеческое название — то же, что в сообщениях сервера. */
+  title?: string;
   status: "pending" | "done";
   finished_at?: string;
   duration?: number;
@@ -562,6 +564,12 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(payload),
     }),
+  /** Пересобрать один готовый ролик, не трогая остальные. */
+  rerenderShort: (id: string, index: number) =>
+    request<{ started: boolean; status: string; position: number }>(
+      `/api/videos/${id}/shorts/${index}/render`,
+      { method: "POST" },
+    ),
   stop: (id: string) => request<{ stopping: boolean }>(`/api/videos/${id}/stop`, { method: "POST" }),
   compilations: (id: string) => request<CompilationsInfo>(`/api/videos/${id}/compilations`),
   compilationUrl: (id: string, file: string) =>

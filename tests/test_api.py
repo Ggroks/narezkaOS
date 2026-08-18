@@ -460,3 +460,48 @@ def test_subtitle_settings_land_in_the_cache_key(client, video) -> None:
     before = SubtitlesStage().config_slice(ctx)
     client.put(f"/api/videos/{VIDEO}/subtitles", json={"preset": "one_word"})
     assert SubtitlesStage().config_slice(ctx) != before
+
+
+def test_single_short_can_be_rerendered(client, video) -> None:
+    """Полная пересборка тридцати роликов — десятки минут, а поправить
+    обычно надо один."""
+    from narezka.core import queue
+
+    write(video, "analysis/candidates.json", CANDIDATES)
+    body = client.post(f"/api/videos/{VIDEO}/shorts/1/render").json()
+    assert body["started"] is True
+
+    config, _ = api_app._config()
+    with api_app.db.connect(config.storage_root) as connection:
+        task = queue.active_for(connection, workspace="default", video_id=VIDEO)
+    assert task.stage == "render" and task.clip_index == 1
+
+
+def test_rerender_goes_through_the_same_queue(client, video) -> None:
+    """Две дороги к ffmpeg означали бы два кодирования разом на машине,
+    где память кончалась трижды. Второй ролик при занятой записи ждёт
+    своей очереди, а не собирается параллельно."""
+    assert client.post(f"/api/videos/{VIDEO}/shorts/0/render").status_code == 200
+    assert client.post(f"/api/videos/{VIDEO}/shorts/1/render").status_code == 409
+
+
+def test_busy_record_refuses_a_different_job(client, video) -> None:
+    """Очередь не плодит задачи на одну запись — но и не подменяет одну
+    работу другой молча: раньше «пересобрать ролик» во время разбора
+    не делало ничего, а интерфейс показывал «в очереди»."""
+    client.post(f"/api/videos/{VIDEO}/run", json={"group": "analysis"})
+
+    refused = client.post(f"/api/videos/{VIDEO}/shorts/1/render")
+    assert refused.status_code == 409
+    assert "разбор записи" in refused.json()["detail"]
+
+    other = client.post(f"/api/videos/{VIDEO}/run", json={"group": "long"})
+    assert other.status_code == 409
+
+
+def test_same_job_pressed_twice_is_not_an_error(client, video) -> None:
+    """Двойной клик по той же кнопке — обычное дело, а не ошибка."""
+    first = client.post(f"/api/videos/{VIDEO}/run", json={"group": "analysis"})
+    second = client.post(f"/api/videos/{VIDEO}/run", json={"group": "analysis"})
+    assert first.status_code == second.status_code == 200
+    assert second.json()["started"] is False

@@ -521,7 +521,14 @@ export function VideoDetail({ videoId, onBack }: Props) {
             </div>
           </details>
 
-          {shorts && shorts.files.length > 0 && <ShortsView videoId={videoId} shorts={shorts} />}
+          {shorts && shorts.files.length > 0 && (
+            <ShortsView
+              videoId={videoId}
+              shorts={shorts}
+              busy={running}
+              onQueued={() => void load()}
+            />
+          )}
         </>
       )}
 

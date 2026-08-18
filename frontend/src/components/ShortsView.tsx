@@ -2,7 +2,14 @@ import { useEffect, useState } from "react";
 import { Hint } from "./Hint";
 import { api, formatDuration, type PublishEntry, type ShortsIndex } from "../api";
 
-type Props = { videoId: string; shorts: ShortsIndex };
+type Props = {
+  videoId: string;
+  shorts: ShortsIndex;
+  /** Идёт обработка — пересобирать сейчас нечего, машина занята. */
+  busy?: boolean;
+  /** Пересборка встала в очередь: наверху пора показать ход работы. */
+  onQueued?: () => void;
+};
 
 const BACKGROUND_LABEL: Record<string, string> = {
   blur: "размытый кадр",
@@ -18,7 +25,32 @@ const BACKGROUND_LABEL: Record<string, string> = {
  * показываются в реальной пропорции 9:16 — так же, как их увидит зритель,
  * включая то, не залезли ли субтитры в зону интерфейса платформы (§60).
  */
-export function ShortsView({ videoId, shorts }: Props) {
+export function ShortsView({ videoId, shorts, busy, onQueued }: Props) {
+  /**
+   * Пересборка одного ролика.
+   *
+   * Полная пересборка тридцати роликов — десятки минут, а поправить обычно
+   * надо один: у него не сработала детекция лица или подвинуты границы.
+   * Остальные при этом остаются прежними — об этом сказано в подсказке,
+   * потому что молчаливый разнобой хуже долгого ожидания.
+   */
+  const [queued, setQueued] = useState<number | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
+
+  async function rerender(index: number) {
+    setFailed(null);
+    try {
+      await api.rerenderShort(videoId, index);
+      setQueued(index);
+      onQueued?.();
+    } catch (exc) {
+      // Сюда приходит и отказ «запись уже в очереди»: причина написана
+      // словами, и показать её честнее, чем притвориться, что поставили.
+      setFailed(exc instanceof Error ? exc.message : String(exc));
+      setQueued(null);
+    }
+  }
+
   // Заголовок показывается на самом ролике, а не только в отдельном разделе:
   // ролик и его название — одно и то же, разносить их по экрану незачем.
   // Тексты держатся целиком, а не одними заголовками: они принадлежат
@@ -43,6 +75,11 @@ export function ShortsView({ videoId, shorts }: Props) {
   return (
     <section className="card" aria-labelledby="shorts-heading">
       <h2 id="shorts-heading">Готовые ролики ({shorts.files.length})</h2>
+      {failed && (
+        <div className="error" role="alert">
+          {failed}
+        </div>
+      )}
       <div className="row wrap small dim" style={{ marginBottom: 12, gap: 14 }}>
         <span className="tnum">
           {shorts.width}×{shorts.height}
@@ -100,13 +137,25 @@ export function ShortsView({ videoId, shorts }: Props) {
                   )}
                 </Hint>
               </span>
-              <a
-                href={`/api/videos/${videoId}/shorts/${file.index}/media`}
-                download
-                aria-label={`Скачать ролик ${file.index + 1}`}
-              >
-                скачать
-              </a>
+              {/* Два действия в одну строку: по отдельности каждое
+                  выглядит важнее, чем есть. */}
+              <span className="short-actions small">
+                <a
+                  href={`/api/videos/${videoId}/shorts/${file.index}/media`}
+                  download
+                  aria-label={`Скачать ролик ${file.index + 1}`}
+                >
+                  скачать
+                </a>
+                <button
+                  className="linkish"
+                  disabled={busy || queued === file.index}
+                  title="Собрать заново только этот ролик с нынешними настройками. Остальные останутся прежними"
+                  onClick={() => void rerender(file.index)}
+                >
+                  {queued === file.index ? "в очереди…" : "пересобрать"}
+                </button>
+              </span>
 
               {texts[file.index] && (
                 /* Свёрнуто по умолчанию: описание с хэштегами занимает больше

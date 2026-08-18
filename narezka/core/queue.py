@@ -73,6 +73,8 @@ class Task:
     force: bool
     status: str
     created_at: str
+    #: Номер ролика, если пересобирается он один. None — обычная задача.
+    clip_index: int | None = None
 
     @property
     def is_active(self) -> bool:
@@ -85,6 +87,12 @@ def _now() -> str:
 
 def ensure_schema(connection: sqlite3.Connection) -> None:
     connection.executescript(SCHEMA)
+    # Столбец появился позже таблицы, а `CREATE TABLE IF NOT EXISTS` старую
+    # не трогает: у тех, кто уже пользуется сервисом, его иначе не будет.
+    columns = {row["name"] for row in connection.execute("PRAGMA table_info(tasks)")}
+    if "clip_index" not in columns:
+        connection.execute("ALTER TABLE tasks ADD COLUMN clip_index INTEGER")
+        connection.commit()
 
 
 def _task(row: Any) -> Task:
@@ -95,6 +103,7 @@ def _task(row: Any) -> Task:
         work_group=row["work_group"],
         stage=row["stage"],
         force=bool(row["force"]),
+        clip_index=row["clip_index"] if "clip_index" in row.keys() else None,
         status=row["status"],
         created_at=row["created_at"],
     )
@@ -108,6 +117,7 @@ def enqueue(
     work_group: str | None = None,
     stage: str | None = None,
     force: bool = False,
+    clip_index: int | None = None,
 ) -> tuple[Task, bool]:
     """Ставит задачу в очередь. Второе значение — была ли она создана.
 
@@ -123,8 +133,8 @@ def enqueue(
     task_id = uuid.uuid4().hex
     connection.execute(
         "INSERT INTO tasks (task_id, workspace, video_id, work_group, stage, force,"
-        " status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'queued', ?)",
-        (task_id, workspace, video_id, work_group, stage, int(force), _now()),
+        " status, created_at, clip_index) VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?)",
+        (task_id, workspace, video_id, work_group, stage, int(force), _now(), clip_index),
     )
     connection.commit()
     return _fetch(connection, task_id), True

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import threading
 import time
+from dataclasses import replace
 from typing import Any
 
 from narezka.api import jobs
@@ -24,6 +25,7 @@ from narezka.core.logging import get_logger
 from narezka.core.paths import video_paths
 from narezka.core.runner import Outcome, run_pipeline, run_stage
 from narezka.core.stage import StageContext
+from narezka.stages.render import render_one
 from narezka.stages import PIPELINE, REGISTRY, get_stage, stages_for
 
 log = get_logger("worker")
@@ -65,7 +67,14 @@ def execute(task: queue.Task, config, device) -> tuple[str, str | None, float, s
 
     def work(emit) -> None:
         observer = lambda name, event, data: emit(name, event, data)  # noqa: E731
-        if task.stage:
+        if task.clip_index is not None:
+            # Пересборка одного ролика: событиями она выглядит как обычная
+            # стадия, чтобы интерфейс показывал ход работы тем же способом.
+            emit("render", "started", {})
+            render_one(replace(ctx, on_progress=None), task.clip_index)
+            emit("render", "finished", {"outcome": "done", "duration": 0})
+            results = []
+        elif task.stage:
             results = [run_stage(get_stage(task.stage), ctx, force=task.force, observer=observer)]
         else:
             planned = stages_for(task.work_group) if task.work_group else list(PIPELINE)

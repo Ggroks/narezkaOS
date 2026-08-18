@@ -52,7 +52,11 @@ def test_ass_names_a_vendored_family() -> None:
     """В самом файле субтитров должно стоять имя из поставки."""
     words = [{"word": "привет", "start": 0.0, "end": 0.4, "probability": 0.9}]
     ass = build_ass(words, style=STYLES["STYLE_1"], width=1080, height=1920)
-    assert f",{fonts.FALLBACK_FAMILY}," in ass
+    # Проверяется суть, а не конкретное имя: в стиле обязано стоять
+    # семейство из поставки. Какое именно — решает набор оформления,
+    # и оно менялось, когда в поставку добавили популярные шрифты.
+    named = next(line for line in ass.splitlines() if line.startswith("Style:")).split(",")[1]
+    assert fonts.is_vendored(named), named
 
 
 # --- путь внутри строки фильтра -------------------------------------------
@@ -92,3 +96,66 @@ def test_preview_chain_needs_no_fonts() -> None:
         fonts_dir="/opt/fonts",
     )
     assert "fontsdir" not in chain
+
+
+# --- популярные шрифты в поставке -------------------------------------------
+
+
+def test_popular_families_are_vendored():
+    """Шрифты лежат в репозитории, а не берутся с машины рендера (§60):
+    иначе на другом компьютере ролик выйдет другим."""
+    from narezka.core import fonts
+
+    for family in ("Montserrat", "Oswald", "Inter", "Roboto", "Open Sans", "Golos Text"):
+        assert fonts.is_vendored(family), family
+        assert fonts.FONT_NOTES.get(family), f"нет пояснения для {family}"
+
+
+def test_every_vendored_family_covers_russian():
+    """Главная проверка, а не «шрифт популярный»: читается таблица символов
+    самого файла. Подстановка вместо буквы даёт пустой прямоугольник,
+    и заметно это только на готовом ролике."""
+    import struct
+
+    from narezka.core import fonts
+
+    def codepoints(path):
+        data = path.read_bytes()
+        count = struct.unpack(">H", data[4:6])[0]
+        tables = {}
+        for i in range(count):
+            off = 12 + i * 16
+            tag = data[off:off + 4].decode("latin-1")
+            start = struct.unpack(">I", data[off + 8:off + 12])[0]
+            tables[tag] = start
+        base = tables["cmap"]
+        found = set()
+        for i in range(struct.unpack(">H", data[base + 2:base + 4])[0]):
+            rec = base + 4 + i * 8
+            sub = base + struct.unpack(">I", data[rec + 4:rec + 8])[0]
+            if struct.unpack(">H", data[sub:sub + 2])[0] != 4:
+                continue
+            seg_x2 = struct.unpack(">H", data[sub + 6:sub + 8])[0]
+            segs = seg_x2 // 2
+            ends = struct.unpack(f">{segs}H", data[sub + 14:sub + 14 + seg_x2])
+            at = sub + 16 + seg_x2
+            starts = struct.unpack(f">{segs}H", data[at:at + seg_x2])
+            for first, last in zip(starts, ends):
+                if first != 0xFFFF:
+                    found.update(range(first, min(last, first + 2000) + 1))
+        return found
+
+    russian = "АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдеёжзийклмнопрстуфхцчшщъыьэюя"
+    for family, files in fonts.FONT_FILES.items():
+        points = codepoints(fonts.FONTS_DIR / files[0])
+        missing = [ch for ch in russian if ord(ch) not in points]
+        assert not missing, f"{family}: нет букв {''.join(missing[:6])}"
+
+
+def test_licences_lie_next_to_the_fonts():
+    """OFL требует прикладывать текст лицензии к каждой копии."""
+    from narezka.core import fonts
+
+    licences = fonts.FONTS_DIR / "licenses"
+    names = {p.name for p in licences.glob("*.txt")}
+    assert {"Montserrat-OFL.txt", "Roboto-OFL.txt", "GolosText-OFL.txt"} <= names

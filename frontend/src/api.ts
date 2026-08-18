@@ -466,7 +466,7 @@ export type SubtitlePreset = {
 
 export type SubtitleOptions = {
   presets: SubtitlePreset[];
-  fonts: string[];
+  fonts: { name: string; note: string }[];
   positions: { name: string; title: string }[];
   /** Готовые степени приближения лица в сплите. */
   face_zoom: { name: string; title: string; note: string; zoom: number }[];

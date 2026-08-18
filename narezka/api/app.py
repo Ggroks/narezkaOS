@@ -984,7 +984,13 @@ def subtitle_presets() -> dict[str, Any]:
             }
             for preset in subs.describe_presets()
         ],
-        "fonts": sorted(fonts.FONT_FILES),
+        # Порядок как в поставке, а не по алфавиту: сверху то, чем режут
+        # чаще всего, и рядом строка о том, чем шрифт отличается.
+        "fonts": [
+            {"name": name, "note": fonts.FONT_NOTES.get(name, "")}
+            for name in fonts.FONT_FILES
+            if fonts.is_vendored(name)
+        ],
         "positions": [
             {"name": "bottom", "title": "Снизу"},
             {"name": "middle", "title": "По центру"},

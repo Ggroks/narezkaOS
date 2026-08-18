@@ -258,8 +258,9 @@ export function SubtitlesPanel({ videoId, disabled }: Props) {
               onChange={(e) => void save({ font: e.target.value })}
             >
               {options.fonts.map((font) => (
-                <option key={font} value={font}>
-                  {font}
+                <option key={font.name} value={font.name}>
+                  {font.name}
+                  {font.note ? ` — ${font.note}` : ""}
                 </option>
               ))}
             </select>

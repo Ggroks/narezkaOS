@@ -242,7 +242,7 @@ def test_old_style_names_still_work():
     from narezka.core.subtitles import preset_style
 
     assert preset_style("STYLE_1").name == "classic"
-    assert preset_style("STYLE_3").font == "DejaVu Serif"
+    assert preset_style("STYLE_3").name == "calm"
 
 
 def test_colour_must_be_hexadecimal():

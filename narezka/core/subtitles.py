@@ -71,7 +71,7 @@ class SubtitleStyle:
     """
 
     name: str
-    font: str = "DejaVu Sans"
+    font: str = "Montserrat"
     font_size: int = 64
     #: Цвет обычного текста и цвет текущего слова, в формате &HBBGGRR.
     primary: str = "&H00FFFFFF"
@@ -108,12 +108,13 @@ PRESETS: dict[str, dict[str, Any]] = {
     "classic": {
         "title": "Классические",
         "note": "Белые с жёлтой подсветкой, снизу. Подходит почти всему",
-        "style": {},
+        "style": {"font": "Montserrat"},
     },
     "loud": {
         "title": "Крупные",
         "note": "Больше и жирнее, по два-три слова в строке — для динамичных нарезок",
         "style": {
+            "font": "Montserrat",
             "font_size": 78,
             "outline": 4.5,
             "highlight": "&H004CFF4C",
@@ -125,7 +126,7 @@ PRESETS: dict[str, dict[str, Any]] = {
         "title": "Спокойные",
         "note": "Тонкая обводка, засечки, без выделения цветом — для разговорных",
         "style": {
-            "font": "DejaVu Serif",
+            "font": "Golos Text",
             "font_size": 58,
             "primary": "&H00C8C8C8",
             "highlight": "&H00FFFFFF",
@@ -139,6 +140,7 @@ PRESETS: dict[str, dict[str, Any]] = {
         "title": "По центру кадра",
         "note": "Крупные посреди экрана — когда внизу происходит главное",
         "style": {
+            "font": "Inter",
             "font_size": 72,
             "position": "middle",
             "max_words_per_line": 3,
@@ -149,6 +151,7 @@ PRESETS: dict[str, dict[str, Any]] = {
         "title": "По одному слову",
         "note": "Слово за словом крупно — удерживает внимание, но читается тяжелее",
         "style": {
+            "font": "Oswald",
             "font_size": 92,
             "outline": 5.0,
             "max_words_per_line": 1,

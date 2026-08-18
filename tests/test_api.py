@@ -557,3 +557,67 @@ def test_model_catalogue_is_not_fetched_on_every_open(client, monkeypatch) -> No
     assert client.get("/api/settings/models").status_code == 200
 
     assert len(calls) == 1, "каталог запрашивается заново на каждое открытие"
+
+
+def test_preview_shows_the_chosen_layout(client, video) -> None:
+    """Предпросмотр обязан показывать выбранную раскладку.
+
+    Он строился отдельно от сборки и показывал обычный кадр, что бы человек
+    ни выбрал: настраивать по картинке, которой не будет в ролике, хуже,
+    чем не показывать её вовсе.
+    """
+    from narezka.api.app import _preview_layout
+    from narezka.core.framing import Framing, build_layout_filter, plan_frame
+
+    write(video, "analysis/facecam.json", {
+        "clips": {"0": {
+            "x": 768, "y": 336, "width": 512, "height": 384,
+            "face": {"x": 1059, "y": 336, "width": 110, "height": 110},
+        }},
+    })
+    paths, _ = api_app._paths(VIDEO, "default")
+
+    class Short:
+        width, height = 1080, 1920
+
+    chains = {}
+    for layout in ("single", "split", "camera", "pip", "track"):
+        current = Framing(layout=layout)
+        plan = plan_frame(1280, 720, 1080, 1920, current)
+        chains[layout] = build_layout_filter(
+            current, plan, 1080, 1920,
+            **_preview_layout(paths, current, 1280, 720, Short()),
+        )
+
+    assert len(set(chains.values())) == 5, f"раскладки дали одинаковые кадры: {chains}"
+    assert "vstack" in chains["split"], "сплит без двух полос"
+    assert "overlay=" in chains["pip"], "врезка без наложения"
+    assert "overlay=" not in chains["camera"] and "vstack" not in chains["camera"], (
+        "«только вебка» — это один вырез"
+    )
+
+
+def test_camera_layouts_are_offered_only_with_a_webcam(client, video) -> None:
+    """Раскладку, для которой нет данных, предлагать нельзя."""
+    assert client.get(f"/api/videos/{VIDEO}/framing").json()["split_available"] is False
+
+    write(video, "analysis/facecam.json", {"clips": {"0": {"x": 1, "y": 1, "width": 2, "height": 2}}})
+    assert client.get(f"/api/videos/{VIDEO}/framing").json()["split_available"] is True
+
+
+def test_new_framing_settings_round_trip(client, video) -> None:
+    """Настройки врезки и слежения сохраняются и возвращаются."""
+    saved = client.put(
+        f"/api/videos/{VIDEO}/framing",
+        json={"layout": "pip", "pip_share": 0.45, "pip_corner": "bottom_right",
+              "pip_margin": 0.2, "follow_face": True},
+    )
+    assert saved.status_code == 200, saved.text
+    current = saved.json()["current"]
+    assert current["layout"] == "pip"
+    assert current["pip_share"] == 0.45
+    assert current["pip_corner"] == "bottom_right"
+    assert current["follow_face"] is True
+
+    # И доходят до конфига, с которым работает стадия.
+    assert api_app._context(VIDEO, "default").config.output.framing.pip_corner == "bottom_right"

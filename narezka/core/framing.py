@@ -17,11 +17,24 @@ from typing import Any, Literal
 
 Anchor = Literal["center", "left", "right"]
 #: single — исходник на подложке; split — вебка сверху и контент снизу;
-#: track — узкий кроп, ведомый за лицом (§17).
-#: single — исходник на подложке; split — вебка сверху и контент снизу;
-#: track — узкий кроп, ведомый за лицом; pip — лицо врезкой поверх контента.
-Layout = Literal["single", "split", "track", "pip"]
+#: track — узкий кроп, ведомый за лицом (§17); pip — лицо врезкой поверх
+#: контента; camera — только вебка во весь кадр.
+Layout = Literal["single", "split", "track", "pip", "camera"]
 Background = Literal["blur", "color"]
+
+#: Раскладки, которым нужна найденная вебка. Без неё они неприменимы, и
+#: интерфейс их не предлагает: обещать раскладку, для которой нет данных,
+#: значит обещать несбыточное.
+CAMERA_LAYOUTS = ("split", "pip", "camera")
+
+#: Углы для врезки. Значения — смещение по осям в долях свободного места:
+#: (0,0) — левый верхний, (1,1) — правый нижний.
+PIP_CORNERS: dict[str, tuple[int, int]] = {
+    "top_left": (0, 0),
+    "top_right": (1, 0),
+    "bottom_left": (0, 1),
+    "bottom_right": (1, 1),
+}
 
 #: Готовые варианты обрезки по бокам. Значения — доля ширины, которая
 #: отрезается суммарно с двух сторон.
@@ -75,6 +88,15 @@ FACE_ZOOM_MAX = 4.0
 #: в кадр входят плечи, а не пустота над головой.
 FACE_VERTICAL_ANCHOR = 0.45
 
+#: Доля ширины кадра, которую занимает врезка с лицом. Треть: меньше —
+#: лицо нечитаемо на телефоне, больше — врезка спорит с содержимым за
+#: внимание, а она вспомогательная.
+PIP_WIDTH_SHARE = 0.33
+
+#: Отступ врезки от края, в долях её ширины. Впритык к краю она выглядит
+#: приклеенной, а слишком далеко — теряет связь с углом.
+PIP_MARGIN_SHARE = 0.12
+
 #: Готовые степени приближения. Названы тем, что видно в кадре, а не
 #: числами: «2.0» не говорит ничего, пока не увидишь.
 FACE_PRESETS: dict[str, dict[str, Any]] = {
@@ -116,6 +138,12 @@ class Framing:
     split_top_share: float = SPLIT_TOP_SHARE
     face_zoom: float = FACE_ZOOM_OUT
     face_vertical: float = FACE_VERTICAL_ANCHOR
+    #: Вести ли кадр за головой там, где показана вебка.
+    follow_face: bool = False
+    #: Врезка: размер, отступ и угол.
+    pip_share: float = PIP_WIDTH_SHARE
+    pip_margin: float = PIP_MARGIN_SHARE
+    pip_corner: str = "top_left"
     background: Background = "blur"
     blur_sigma: float = 28.0
     color: str = "0x14171c"
@@ -240,6 +268,69 @@ def build_track_filter(
         f"[0:v]{decimate}crop={crop_w}:{crop_h}:'{crop_x}':0,"
         f"scale={out_w}:{out_h}"
     )
+    if subtitle_name:
+        fonts = f":fontsdir={fonts_dir}" if fonts_dir else ""
+        chain += f",subtitles={subtitle_name}{fonts}"
+    return chain + "[v]"
+
+
+def plan_camera(
+    source_w: int,
+    source_h: int,
+    out_w: int,
+    out_h: int,
+    cam: tuple[int, int, int, int],
+    *,
+    face: tuple[int, int, int, int] | None = None,
+    zoom: float = FACE_ZOOM_OUT,
+    vertical: float = FACE_VERTICAL_ANCHOR,
+) -> tuple[int, int, int, int] | None:
+    """Что вырезать для раскладки «только вебка».
+
+    Весь кадр отдан стримеру: содержимого не видно вовсе. Нужно там, где
+    ролик держится на реакции, а не на том, что происходит на экране —
+    рассказ, ответ на вопрос, эмоция. Сплит в таком случае отдаёт две трети
+    кадра картинке, которая ничего не добавляет.
+
+    Кадрируется по лицу, если оно найдено: окно вебки ищется грубо и
+    захватывает рамку оверлея, а лицо в нём обычно не по центру.
+    """
+    cam_x, cam_y, cam_w, cam_h = cam
+    if cam_w <= 0 or cam_h <= 0 or out_h <= 0:
+        return None
+
+    ratio = out_w / out_h
+    if face is not None:
+        crop = _frame_face(face, ratio, source_w, source_h, zoom=zoom, vertical=vertical)
+    else:
+        fitted_w, fitted_h = _fit_ratio(cam_w, cam_h, ratio)
+        crop = (
+            _even(cam_x + (cam_w - fitted_w) / 2),
+            _even(cam_y + (cam_h - fitted_h) / 2),
+            _even(fitted_w),
+            _even(fitted_h),
+        )
+    return _clamp_crop(crop, source_w, source_h)
+
+
+def build_camera_filter(
+    crop: tuple[int, int, int, int],
+    out_w: int,
+    out_h: int,
+    subtitle_name: str | None = None,
+    fonts_dir: str | None = None,
+    fps: int | None = None,
+    crop_x: str | None = None,
+) -> str:
+    """Цепочка для раскладки «только вебка»: один вырез на весь кадр.
+
+    `crop_x` — выражение от времени, если кадр ведётся за головой. Иначе
+    вырез стоит на месте, взятый по одному кадру клипа.
+    """
+    decimate = f"fps={fps}," if fps else ""
+    x, y, w, h = crop
+    left = f"'{crop_x}'" if crop_x else str(x)
+    chain = f"[0:v]{decimate}crop={w}:{h}:{left}:{y},scale={out_w}:{out_h}"
     if subtitle_name:
         fonts = f":fontsdir={fonts_dir}" if fonts_dir else ""
         chain += f",subtitles={subtitle_name}{fonts}"
@@ -447,15 +538,6 @@ def _fit_ratio(width: int, height: int, ratio: float) -> tuple[int, int]:
     return width, int(width / ratio)
 
 
-#: Доля ширины кадра, которую занимает врезка с лицом. Треть: меньше —
-#: лицо нечитаемо на телефоне, больше — врезка спорит с содержимым за
-#: внимание, а она вспомогательная.
-PIP_WIDTH_SHARE = 0.33
-
-#: Отступ врезки от края, в долях её ширины. Впритык к краю она выглядит
-#: приклеенной, а слишком далеко — теряет связь с углом.
-PIP_MARGIN_SHARE = 0.12
-
 
 def build_pip_filter(
     cam: tuple[int, int, int, int],
@@ -474,15 +556,23 @@ def build_pip_filter(
     Врезка уместнее, когда важно именно содержимое — карта, таблица,
     текст, — и терять его половину ради лица не хочется.
 
-    Врезка ставится в **левый верхний** угол: правый нижний на всех
-    площадках перекрывают кнопками, а верхний левый остаётся свободным.
+    Размер, отступ и угол задаются настройкой. По умолчанию — левый верхний:
+    правый нижний на всех площадках перекрывают кнопками, а верхний левый
+    остаётся свободным. Но у площадок это меняется, а поверх содержимого
+    бывает и своя важная область, поэтому угол выбирается.
     """
     decimate = f"fps={fps}," if fps else ""
     cx, cy, cw, ch = cam
 
-    pip_w = int(out_w * PIP_WIDTH_SHARE) & ~1
+    pip_w = max(2, int(out_w * framing.pip_share)) & ~1
     pip_h = max(2, int(pip_w * ch / cw)) & ~1
-    margin = int(pip_w * PIP_MARGIN_SHARE)
+    margin = int(pip_w * framing.pip_margin)
+
+    # Смещение считается от свободного места, поэтому врезка не выходит за
+    # кадр ни в одном углу, каким бы большой её ни сделали.
+    right, bottom = PIP_CORNERS.get(framing.pip_corner, (0, 0))
+    pip_x = max(0, out_w - pip_w - margin) if right else margin
+    pip_y = max(0, out_h - pip_h - margin) if bottom else margin
 
     background = (
         f"[0:v]{decimate}crop={plan.crop_w}:{plan.crop_h}:{plan.crop_x}:{plan.crop_y},"
@@ -490,7 +580,7 @@ def build_pip_filter(
         f"pad={out_w}:{out_h}:0:{plan.offset_y}:{framing.color}[bg]"
     )
     face = f"[0:v]{decimate}crop={cw}:{ch}:{cx}:{cy},scale={pip_w}:{pip_h}[pip]"
-    chain = f"{background};{face};[bg][pip]overlay={margin}:{margin}"
+    chain = f"{background};{face};[bg][pip]overlay={pip_x}:{pip_y}"
 
     if subtitle_name:
         fonts = f":fontsdir={fonts_dir}" if fonts_dir else ""
@@ -504,14 +594,25 @@ def build_split_filter(
     subtitle_name: str | None = None,
     fonts_dir: str | None = None,
     fps: int | None = None,
+    cam_x: str | None = None,
 ) -> str:
-    """Цепочка фильтров для сплита: две полосы одна над другой."""
+    """Цепочка фильтров для сплита: две полосы одна над другой.
+
+    `cam_x` — выражение от времени для левой границы верхней полосы, когда
+    кадр ведётся за головой. Стример за минуту уходит из статичной рамки:
+    она берётся по одному кадру клипа, а он двигается — и к середине ролика
+    в полосе оказывается плечо или пустой угол комнаты.
+
+    Двигается только верхняя полоса. Нижняя — содержимое, и её дрожание
+    вслед за головой читалось бы как тряска камеры.
+    """
     # Как и в одиночной раскладке — прореживание до кропа и масштабирования.
     decimate = f"fps={fps}," if fps else ""
     cx, cy, cw, ch = plan.cam_crop
     mx, my, mw, mh = plan.main_crop
+    cam_left = f"'{cam_x}'" if cam_x else str(cx)
     base = (
-        f"[0:v]{decimate}crop={cw}:{ch}:{cx}:{cy},scale={out_w}:{plan.cam_height}[cam];"
+        f"[0:v]{decimate}crop={cw}:{ch}:{cam_left}:{cy},scale={out_w}:{plan.cam_height}[cam];"
         f"[0:v]{decimate}crop={mw}:{mh}:{mx}:{my},scale={out_w}:{plan.main_height}[main];"
         f"[cam][main]vstack=inputs=2"
     )
@@ -521,6 +622,103 @@ def build_split_filter(
     if fonts_dir:
         subtitles += f":fontsdir={fonts_dir}"
     return f"{base}[base];[base]{subtitles}[v]"
+
+
+def plan_pip(
+    source_w: int,
+    source_h: int,
+    cam: tuple[int, int, int, int],
+    *,
+    face: tuple[int, int, int, int] | None = None,
+    zoom: float = FACE_ZOOM_OUT,
+    vertical: float = FACE_VERTICAL_ANCHOR,
+) -> tuple[int, int, int, int] | None:
+    """Что вырезать под врезку.
+
+    По лицу, если оно найдено: окно вебки ищется по углам кадра и прихватывает
+    рамку оверлея с подписями, а во врезке размером в треть экрана каждый
+    лишний процент площади — это лицо мельче.
+    """
+    cam_x, cam_y, cam_w, cam_h = cam
+    if cam_w <= 0 or cam_h <= 0:
+        return None
+    if face is None:
+        return _clamp_crop((cam_x, cam_y, cam_w, cam_h), source_w, source_h)
+    crop = _frame_face(
+        face, cam_w / cam_h, source_w, source_h, zoom=zoom, vertical=vertical
+    )
+    return _clamp_crop(crop, source_w, source_h)
+
+
+def plan_track_still(
+    source_w: int,
+    source_h: int,
+    out_w: int,
+    out_h: int,
+    face: tuple[int, int, int, int] | None = None,
+) -> tuple[int, int, int, int]:
+    """Вырез слежения, застывший на одном кадре.
+
+    Слежение — это движение, и на неподвижной картинке его не показать.
+    Но показать, **что видно в кадре**, можно: рамка той же ширины, что
+    в ролике, стоящая там, где сейчас голова. Предпросмотр обычной
+    раскладки вместо неё врал бы сильнее.
+    """
+    crop_h = source_h
+    crop_w = _even(min(crop_h * out_w / out_h, source_w))
+    centre = face[0] + face[2] / 2 if face else source_w / 2
+    x = min(max(centre - crop_w / 2, 0), max(0, source_w - crop_w))
+    return _clamp_crop((_even(x), 0, crop_w, crop_h), source_w, source_h)
+
+
+def build_layout_filter(
+    framing: Framing,
+    plan: FramePlan,
+    out_w: int,
+    out_h: int,
+    *,
+    split: SplitPlan | None = None,
+    split_x: str | None = None,
+    track: dict[str, Any] | None = None,
+    pip: tuple[int, int, int, int] | None = None,
+    camera: tuple[int, int, int, int] | None = None,
+    camera_x: str | None = None,
+    subtitle_name: str | None = None,
+    fonts_dir: str | None = None,
+    fps: int | None = None,
+) -> str:
+    """Цепочка фильтров для выбранной раскладки.
+
+    Одна на всех: и сборка ролика, и предпросмотр зовут её. Раньше выбор
+    раскладки был записан дважды — в рендере и в предпросмотре, — и они уже
+    разошлись: предпросмотр кадрирования показывал обычную раскладку, что бы
+    человек ни выбрал. Настраивать по картинке, которой не будет в ролике,
+    хуже, чем не показывать картинку вовсе.
+
+    Раскладка, для которой не нашлось данных (нет вебки, не посчитана
+    траектория), сюда приходит пустой — и кадр строится обычным способом.
+    Сообщить об этом должен тот, кто данные собирал: здесь уже неизвестно,
+    просили ли раскладку вообще.
+    """
+    if pip is not None:
+        return build_pip_filter(
+            pip, plan, framing, out_w, out_h, subtitle_name, fonts_dir=fonts_dir, fps=fps
+        )
+    if camera is not None:
+        return build_camera_filter(
+            camera, out_w, out_h, subtitle_name,
+            fonts_dir=fonts_dir, fps=fps, crop_x=camera_x,
+        )
+    if track is not None:
+        return build_track_filter(
+            track["x"], track["w"], track["h"], out_w, out_h, subtitle_name,
+            fonts_dir=fonts_dir, fps=fps,
+        )
+    if split is not None:
+        return build_split_filter(
+            split, out_w, subtitle_name, fonts_dir=fonts_dir, fps=fps, cam_x=split_x
+        )
+    return build_filter(plan, framing, out_w, out_h, subtitle_name, fonts_dir=fonts_dir, fps=fps)
 
 
 def preview_presets(source_w: int, source_h: int, out_w: int, out_h: int) -> list[dict[str, Any]]:

@@ -25,6 +25,34 @@ type Common = {
   disabled?: boolean;
 };
 
+/**
+ * Раскладки кадра. Названы тем, что человек увидит в ролике, а не тем, как
+ * это устроено внутри: «сплит» и «pip» ничего не говорят, пока не увидишь.
+ *
+ * `needsCamera` — раскладке нужна найденная вебка. Предлагать её на записи,
+ * где вебки нет, значит обещать несбыточное.
+ */
+const LAYOUTS: {
+  name: Framing["layout"];
+  title: string;
+  note: string;
+  needsCamera?: boolean;
+}[] = [
+  { name: "single", title: "Обычно", note: "Кадр целиком на подложке" },
+  { name: "split", title: "Вебка сверху", note: "Лицо над содержимым", needsCamera: true },
+  { name: "camera", title: "Только вебка", note: "Стример во весь кадр", needsCamera: true },
+  { name: "pip", title: "Лицо врезкой", note: "Окошко поверх содержимого", needsCamera: true },
+  { name: "track", title: "Кадр за лицом", note: "Узкий кадр едет за головой" },
+];
+
+/** Углы для врезки — в том же порядке, в каком они стоят в кадре. */
+const PIP_CORNERS: { name: string; title: string }[] = [
+  { name: "top_left", title: "◤" },
+  { name: "top_right", title: "◥" },
+  { name: "bottom_left", title: "◣" },
+  { name: "bottom_right", title: "◢" },
+];
+
 export function AnalysisSettings({
   value, onChange, disabled, models,
 }: Common & { models?: ModelsInfo | null }) {
@@ -173,36 +201,30 @@ export function ShortSettings({
       />
 
       <h4 className="group-title">Как показать кадр</h4>
-      <Toggle
-        label="Вебка сверху"
-        hint={splitAvailable ? "Лицо стримера над контентом" : "Вебка не найдена в этом видео"}
-        checked={value.layout === "split"}
-        disabled={disabled || !splitAvailable}
-        onChange={(on) => onChange({ layout: on ? "split" : "single" })}
-      />
-
-      {/* Слежение — третья раскладка наравне со сплитом и подложкой.
-          Взаимоисключающие: кадр может быть либо разрезан надвое, либо
-          узким и ведомым за головой. */}
-      <Toggle
-        label="Следить за лицом"
-        hint="Узкий кадр едет за головой — она всегда в центре"
-        checked={value.layout === "track"}
-        disabled={disabled}
-        onChange={(on) => onChange({ layout: on ? "track" : "single" })}
-      />
-
-      <Toggle
-        label="Лицо врезкой"
-        hint={
-          splitAvailable
-            ? "Содержимое во весь экран, лицо окошком в углу"
-            : "Вебка не найдена в этом видео"
-        }
-        checked={value.layout === "pip"}
-        disabled={disabled || !splitAvailable}
-        onChange={(on) => onChange({ layout: on ? "pip" : "single" })}
-      />
+      {/* Один выбор, а не три переключателя: раскладки взаимоисключающие —
+          кадр не может быть одновременно разрезан надвое и вести за головой.
+          Тремя тумблерами это выражалось окольно, а с пятой раскладкой стало
+          бы просто путаницей. */}
+      <div className="choice">
+        <div className="layouts">
+          {LAYOUTS.map((item) => {
+            const locked = item.needsCamera && !splitAvailable;
+            return (
+              <button
+                key={item.name}
+                type="button"
+                className={value.layout === item.name ? "current" : ""}
+                disabled={disabled || locked}
+                title={locked ? "Вебка не найдена в этом видео" : item.note}
+                onClick={() => onChange({ layout: item.name })}
+              >
+                <span className="layout-title">{item.title}</span>
+                <span className="layout-note">{locked ? "вебка не найдена" : item.note}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
 
       <Toggle
         label="Размытый фон"
@@ -214,9 +236,10 @@ export function ShortSettings({
         }
       />
 
-      {value.layout === "split" && (
-        /* Настройки сплита показываются только когда он выбран: две полосы
-           и приближение лица не значат ничего в других раскладках. */
+      {(value.layout === "split" || value.layout === "camera") && (
+        /* Настройки показываются только при своей раскладке: приближение лица
+           и высота полосы не значат ничего в остальных. Приближение общее для
+           сплита и «только вебки» — в обеих кадр строится вокруг головы. */
         <div className="choice">
           <span className="choice-label">Насколько крупно лицо</span>
           <div className="segmented">
@@ -252,20 +275,22 @@ export function ShortSettings({
             но при движении головы лицо чаще уходит за край.
           </span>
 
-          <label className="slider">
-            <span className="small dim">
-              Высота полосы с лицом: {Math.round((value.split_top_share ?? 0.34) * 100)}% кадра
-            </span>
-            <input
-              type="range"
-              min={0.2}
-              max={0.5}
-              step={0.02}
-              value={value.split_top_share ?? 0.34}
-              disabled={disabled}
-              onChange={(e) => onChange({ split_top_share: Number(e.target.value) })}
-            />
-          </label>
+          {value.layout === "split" && (
+            <label className="slider">
+              <span className="small dim">
+                Высота полосы с лицом: {Math.round((value.split_top_share ?? 0.34) * 100)}% кадра
+              </span>
+              <input
+                type="range"
+                min={0.2}
+                max={0.5}
+                step={0.02}
+                value={value.split_top_share ?? 0.34}
+                disabled={disabled}
+                onChange={(e) => onChange({ split_top_share: Number(e.target.value) })}
+              />
+            </label>
+          )}
 
           <label className="slider">
             <span className="small dim">
@@ -284,6 +309,94 @@ export function ShortSettings({
           <span className="choice-hint">
             Чуть выше середины — в кадр входят плечи, а не пустота над головой.
           </span>
+
+          <Toggle
+            label="Следить за головой"
+            hint="Рамка едет за стримером, а не стоит на месте"
+            checked={value.follow_face ?? false}
+            disabled={disabled}
+            onChange={(follow_face) => onChange({ follow_face })}
+          />
+          <span className="choice-hint">
+            Без слежения рамка берётся по одному кадру клипа: стример за минуту
+            успевает из неё выйти. Со слежением поиск лица идёт по всему клипу —
+            это дольше, и после включения запись нужно собрать заново.
+          </span>
+        </div>
+      )}
+
+      {value.layout === "pip" && (
+        /* Врезка: размер и угол. По умолчанию левый верхний — правый нижний
+           площадки перекрывают кнопками, — но у площадок это меняется, а
+           поверх содержимого бывает и своя важная область. */
+        <div className="choice">
+          <span className="choice-label">Где стоит окошко</span>
+          <div className="segmented corners">
+            {PIP_CORNERS.map((corner) => (
+              <button
+                key={corner.name}
+                type="button"
+                className={value.pip_corner === corner.name ? "current" : ""}
+                disabled={disabled}
+                onClick={() => onChange({ pip_corner: corner.name })}
+              >
+                {corner.title}
+              </button>
+            ))}
+          </div>
+
+          <label className="slider">
+            <span className="small dim">
+              Размер окошка: {Math.round((value.pip_share ?? 0.33) * 100)}% ширины кадра
+            </span>
+            <input
+              type="range"
+              min={0.15}
+              max={0.6}
+              step={0.01}
+              value={value.pip_share ?? 0.33}
+              disabled={disabled}
+              onChange={(e) => onChange({ pip_share: Number(e.target.value) })}
+            />
+          </label>
+          <span className="choice-hint">
+            Врезка вспомогательная: чем она больше, тем сильнее спорит
+            с содержимым за внимание.
+          </span>
+
+          <label className="slider">
+            <span className="small dim">
+              Отступ от края: {Math.round((value.pip_margin ?? 0.12) * 100)}% ширины окошка
+            </span>
+            <input
+              type="range"
+              min={0}
+              max={0.5}
+              step={0.02}
+              value={value.pip_margin ?? 0.12}
+              disabled={disabled}
+              onChange={(e) => onChange({ pip_margin: Number(e.target.value) })}
+            />
+          </label>
+          <span className="choice-hint">
+            Ноль — впритык к краю; на площадках край кадра обычно перекрыт
+            подписью или кнопками.
+          </span>
+
+          <label className="slider">
+            <span className="small dim">
+              Насколько крупно лицо в окошке: {(value.face_zoom ?? 2.6).toFixed(1)}
+            </span>
+            <input
+              type="range"
+              min={1.5}
+              max={4}
+              step={0.1}
+              value={value.face_zoom ?? 2.6}
+              disabled={disabled}
+              onChange={(e) => onChange({ face_zoom: Number(e.target.value) })}
+            />
+          </label>
         </div>
       )}
 

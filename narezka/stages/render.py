@@ -22,13 +22,13 @@ from narezka.core.encoders import available as encoder_refusal, video_args
 from narezka.core.artifacts import Artifact
 from narezka.core.fonts import escape_for_filter, fonts_dir
 from narezka.core.framing import (
-    build_pip_filter,
-    build_track_filter,
+    CAMERA_LAYOUTS,
     Framing,
-    build_filter,
-    build_split_filter,
+    build_layout_filter,
     describe,
+    plan_camera,
     plan_frame,
+    plan_pip,
     plan_split,
 )
 from narezka.core.media import find_source, run_tool
@@ -200,16 +200,40 @@ class RenderStage(Stage):
         target = Artifact(ctx.paths.shorts / f"{index:02d}.mp4")
         ctx.log.info("рендер %d: %.1f с", index, duration)
 
-        split = self._split_for(clip, prep["cams"], framing, prep["src_w"], prep["src_h"], short)
-        track = self._track_for(clip, prep["cams"], framing, prep["src_w"], prep["src_h"], short)
-        pip = self._pip_for(clip, prep["cams"], framing)
+        src_w, src_h = prep["src_w"], prep["src_h"]
+        split = self._split_for(clip, prep["cams"], framing, src_w, src_h, short)
+        track = self._track_for(clip, prep["cams"], framing, src_w, src_h, short)
+        pip = self._pip_for(clip, prep["cams"], framing, src_w, src_h)
+        camera = self._camera_for(clip, prep["cams"], framing, src_w, src_h, short)
+
+        # Выбранная раскладка бывает неприменима к клипу: вебки в нём нет
+        # или она во весь экран. Кадр тогда строится обычным способом —
+        # это лучше, чем пустая полоса, — но молчать об этом нельзя:
+        # человек выбрал раскладку и вправе знать, что её не вышло.
+        if framing.layout in CAMERA_LAYOUTS and split is None and pip is None and camera is None:
+            ctx.log.warning(
+                "клип %d: раскладка «%s» не применена — вебка не найдена, кадр обычный",
+                index, framing.layout,
+            )
+
+        follow_crop = camera or (split.cam_crop if split is not None else None)
+        follow_x = self._follow_x(clip, prep["cams"], framing, follow_crop, src_w)
+        if framing.follow_face and follow_crop is not None and follow_x is None:
+            ctx.log.warning(
+                "клип %d: слежение за головой не применено — траектория не посчитана. "
+                "Разберите запись заново, чтобы она появилась",
+                index,
+            )
 
         with target.reserve() as tmp:
             run_tool(
                 self._command(
                     split=split,
+                    split_x=follow_x if camera is None else None,
                     track=track,
                     pip=pip,
+                    camera=camera,
+                    camera_x=follow_x if camera is not None else None,
                     source=prep["source"],
                     start=source_start,
                     duration=duration,
@@ -287,7 +311,6 @@ class RenderStage(Stage):
         ctx.log.info("готово роликов %d, суммарно %.1f МБ", len(rendered), total_mb)
 
     @staticmethod
-    @staticmethod
     def _facecams(ctx: StageContext) -> dict[str, Any]:
         artifact = Artifact(ctx.paths.analysis / "facecam.json")
         if not artifact.exists():
@@ -298,18 +321,77 @@ class RenderStage(Stage):
             return {}
 
     @staticmethod
-    def _pip_for(clip, cams, framing):
-        """Прямоугольник вебки для врезки — если раскладка выбрана и он есть."""
-        if framing.layout != "pip":
-            return None
+    def _cam_entry(clip, cams):
+        """Найденная вебка клипа. None — её нет или она во весь экран."""
         entry = (cams or {}).get(str(clip["index"])) or (cams or {}).get(clip["index"])
         if not isinstance(entry, dict) or entry.get("full_frame"):
-            # Камера во весь экран: врезать её саму в себя бессмысленно.
+            return None
+        if not all(key in entry for key in ("x", "y", "width", "height")):
+            return None
+        return entry
+
+    @staticmethod
+    def _rect(entry, key: str):
+        """Прямоугольник из записи facecam — лицо или область содержимого."""
+        found = (entry or {}).get(key) or {}
+        if not found:
             return None
         try:
-            return (entry["x"], entry["y"], entry["width"], entry["height"])
+            return (found["x"], found["y"], found["width"], found["height"])
         except KeyError:
             return None
+
+    @classmethod
+    def _pip_for(cls, clip, cams, framing, src_w: int, src_h: int):
+        """Вырез под врезку — если раскладка выбрана и вебка найдена.
+
+        Камера во весь экран врезки не требует: врезать её саму в себя
+        бессмысленно.
+        """
+        if framing.layout != "pip":
+            return None
+        entry = cls._cam_entry(clip, cams)
+        if entry is None:
+            return None
+        return plan_pip(
+            src_w, src_h,
+            (entry["x"], entry["y"], entry["width"], entry["height"]),
+            face=cls._rect(entry, "face"),
+            zoom=framing.face_zoom,
+            vertical=framing.face_vertical,
+        )
+
+    @classmethod
+    def _camera_for(cls, clip, cams, framing, src_w: int, src_h: int, short):
+        """Вырез под раскладку «только вебка»."""
+        if framing.layout != "camera":
+            return None
+        entry = cls._cam_entry(clip, cams)
+        if entry is None:
+            return None
+        return plan_camera(
+            src_w, src_h, short.width, short.height,
+            (entry["x"], entry["y"], entry["width"], entry["height"]),
+            face=cls._rect(entry, "face"),
+            zoom=framing.face_zoom,
+            vertical=framing.face_vertical,
+        )
+
+    @classmethod
+    def _follow_x(cls, clip, cams, framing, crop, src_w: int):
+        """Выражение для левой границы выреза, ведомой за головой.
+
+        None — слежение не просили или траектория не посчитана. Второе
+        не ошибка: траектория считается стадией facecam только тогда, когда
+        раскладка её просит, а на старых записях её может не быть.
+        """
+        if not framing.follow_face or crop is None:
+            return None
+        entry = cls._cam_entry(clip, cams) or {}
+        points = (entry.get("track") or {}).get("points") if isinstance(entry.get("track"), dict) else None
+        if not points:
+            return None
+        return crop_expression([(float(t), float(x)) for t, x in points], crop[2], src_w)
 
     @staticmethod
     def _track_for(clip, cams, framing, src_w: int, src_h: int, short):
@@ -353,19 +435,14 @@ class RenderStage(Stage):
         """
         if framing.layout != "split":
             return None
-        cam = cams.get(str(clip["index"]))
-        if not cam or cam.get("full_frame"):
+        cam = RenderStage._cam_entry(clip, cams)
+        if cam is None:
             return None
-        face = cam.get("face") or {}
-        content = cam.get("content") or {}
         return plan_split(
             src_w, src_h, short.width, short.height,
             (cam["x"], cam["y"], cam["width"], cam["height"]),
-            face=(face["x"], face["y"], face["width"], face["height"]) if face else None,
-            content=(
-                (content["x"], content["y"], content["width"], content["height"])
-                if content else None
-            ),
+            face=RenderStage._rect(cam, "face"),
+            content=RenderStage._rect(cam, "content"),
             anchor=framing.anchor,
             top_share=framing.split_top_share,
             face_zoom=framing.face_zoom,
@@ -401,8 +478,11 @@ class RenderStage(Stage):
         fps: int | None = None,
         cut_video: str = "",
         cut_audio: str = "",
+        split_x=None,
         track=None,
         pip=None,
+        camera=None,
+        camera_x=None,
         encoder: str = "cpu",
         pix_fmt: str,
         faststart: bool,
@@ -426,26 +506,16 @@ class RenderStage(Stage):
 
         if has_video:
             args += ["-ss", f"{start:.3f}", "-i", str(source), "-t", f"{duration:.3f}"]
-            if pip is not None:
-                video_filter = build_pip_filter(
-                    pip, plan, framing, width, height, subtitle_name,
-                    fonts_dir=escape_for_filter(fonts_dir()), fps=fps,
-                )
-            elif track is not None:
-                video_filter = build_track_filter(
-                    track["x"], track["w"], track["h"], width, height,
-                    subtitle_name, fonts_dir=escape_for_filter(fonts_dir()), fps=fps,
-                )
-            elif split is not None:
-                video_filter = build_split_filter(
-                    split, width, subtitle_name,
-                    fonts_dir=escape_for_filter(fonts_dir()), fps=fps,
-                )
-            else:
-                video_filter = build_filter(
-                    plan, framing, width, height, subtitle_name,
-                    fonts_dir=escape_for_filter(fonts_dir()), fps=fps,
-                )
+            video_filter = build_layout_filter(
+                framing, plan, width, height,
+                split=split, split_x=split_x,
+                track=track,
+                pip=pip,
+                camera=camera, camera_x=camera_x,
+                subtitle_name=subtitle_name,
+                fonts_dir=escape_for_filter(fonts_dir()),
+                fps=fps,
+            )
             if hw_tail:
                 # Хвост вставляется перед меткой выхода: [v] должна остаться
                 # последней, иначе ffmpeg не найдёт, что кодировать.

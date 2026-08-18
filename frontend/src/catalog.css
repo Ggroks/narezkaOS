@@ -287,6 +287,39 @@
 .segmented button:hover:not(.current) { color: var(--text); background: var(--surface-3); }
 .segmented button.current { color: var(--text); background: var(--surface-3); }
 
+/* Выбор раскладки кадра. Плитками, а не строкой сегментов: у каждой есть
+   пояснение, и без него названия вроде «Только вебка» и «Кадр за лицом»
+   различаются хуже, чем кажется автору. */
+.layouts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--gap-xs);
+}
+.layouts button {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 9px 12px;
+  text-align: start;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-inner);
+}
+.layouts button:hover:not(:disabled):not(.current) { color: var(--text); background: var(--surface-3); }
+.layouts button.current {
+  color: var(--text);
+  background: var(--surface-3);
+  border-color: var(--accent);
+}
+.layouts button:disabled { opacity: 0.45; }
+.layout-title { font-size: 14px; font-weight: 500; }
+.layout-note { font-size: 12px; color: var(--text-dim); }
+
+/* Углы врезки: квадратные кнопки со значком угла — подпись словами тут
+   длиннее самого выбора. */
+.segmented.corners button { flex: 0 0 auto; min-width: 44px; font-size: 16px; }
+
 .sheet-actions {
   display: flex;
   justify-content: flex-end;

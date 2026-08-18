@@ -176,8 +176,35 @@ class FacecamStage(Stage):
     def outputs(self, ctx: StageContext) -> list[Artifact]:
         return [Artifact(ctx.paths.analysis / FACECAM_NAME)]
 
+    @staticmethod
+    def _wants_track(ctx: StageContext) -> bool:
+        """Нужна ли траектория головы при нынешних настройках.
+
+        Считать её всегда — это лишний проход детектора по каждому клипу,
+        самая дорогая часть стадии. Считать никогда — раскладки со слежением
+        молча не работают.
+        """
+        cfg = ctx.config.output.framing
+        return cfg.layout == "track" or (cfg.follow_face and cfg.layout in ("split", "camera"))
+
     def config_slice(self, ctx: StageContext) -> dict[str, Any]:
-        return {"backend": ctx.config.detector.backend, "samples": SAMPLES_PER_CLIP}
+        cfg = ctx.config.output.framing
+        slice_ = {"backend": ctx.config.detector.backend, "samples": SAMPLES_PER_CLIP}
+        # Просьба о слежении входит в ключ: без неё выбор раскладки со
+        # слежением на уже разобранной записи ничего не менял — стадия
+        # бралась из кэша, траектории в ней не было, и рендер молча
+        # собирал обычный кадр.
+        slice_["track"] = (
+            {
+                "samples_per_second": cfg.track_samples_per_second,
+                "smoothing": cfg.track_smoothing,
+                "dead_zone": cfg.track_dead_zone,
+                "max_speed": cfg.track_max_speed,
+            }
+            if self._wants_track(ctx)
+            else None
+        )
+        return slice_
 
     def check_available(self, ctx: StageContext) -> str | None:
         metadata = Artifact(ctx.paths.metadata)
@@ -215,7 +242,7 @@ class FacecamStage(Stage):
             # Траектория головы для раскладки «слежение». Считается здесь же:
             # кадры уже прочитаны, а читать их второй раз — самая дорогая
             # часть стадии.
-            if ctx.config.output.framing.layout == "track":
+            if self._wants_track(ctx):
                 entry["track"] = self._track(ctx, detector, source, clip)
             if not result.full_frame:
                 # Область контента нужна нижней полосе сплита: без неё она

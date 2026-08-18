@@ -33,9 +33,11 @@ from narezka.core.device import detect_device
 from narezka.core.logging import get_logger
 from narezka.core.framing import (
     Framing,
-    build_filter,
-    build_split_filter,
+    build_layout_filter,
+    plan_camera,
+    plan_pip,
     plan_split,
+    plan_track_still,
     describe,
     plan_frame,
     preview_presets,
@@ -1488,7 +1490,10 @@ def framing_preview(
     # Предпросмотр смотрят в браузере на небольшой карточке — полный размер
     # 1080x1920 тут не нужен. Уменьшение встраивается в саму цепочку: -vf
     # нельзя применить к потоку, который уже пришёл из -filter_complex.
-    chain = build_filter(plan, requested, short.width, short.height)
+    chain = build_layout_filter(
+        requested, plan, short.width, short.height,
+        **_preview_layout(paths, requested, src_w, src_h, short, at=position),
+    )
     chain = chain.removesuffix("[v]") + f",scale=-2:{PREVIEW_HEIGHT}[v]"
 
     if not target.exists():
@@ -1644,12 +1649,12 @@ def _preview_chain(paths, ctx, current, src_w, src_h, ass_file, at: float | None
     fonts_arg = fonts.escape_for_filter(fonts.fonts_dir())
     name = fonts.escape_for_filter(ass_file)
 
-    split = _preview_split(paths, current, src_w, src_h, short, at=at)
-    if split is not None:
-        chain = build_split_filter(split, short.width, name, fonts_dir=fonts_arg)
-    else:
-        plan = plan_frame(src_w, src_h, short.width, short.height, current)
-        chain = build_filter(plan, current, short.width, short.height, name, fonts_dir=fonts_arg)
+    plan = plan_frame(src_w, src_h, short.width, short.height, current)
+    chain = build_layout_filter(
+        current, plan, short.width, short.height,
+        **_preview_layout(paths, current, src_w, src_h, short, at=at),
+        subtitle_name=name, fonts_dir=fonts_arg,
+    )
     return chain.removesuffix("[v]") + f",scale=-2:{PREVIEW_HEIGHT}[v]"
 
 
@@ -1688,46 +1693,86 @@ def _split_moment(paths) -> float | None:
     return None
 
 
-def _preview_split(paths, current, src_w, src_h, short, at: float | None = None):
-    """Раскладка сплита для предпросмотра, если она применима к записи."""
-    if current.layout != "split":
-        return None
-    clips = _facecam_clips(paths)
+def _preview_cam(paths, at: float | None = None):
+    """Найденная вебка для показываемого кадра.
+
+    Окно вебки ищется **по клипу**, а не раз на запись: стрим переключается
+    между полноэкранной камерой и демонстрацией экрана. Рамка не из того
+    клипа даёт в полосе не лицо, а случайный угол — ровно это и вышло
+    на первой проверке.
+    """
     overlays = {
-        index: item for index, item in clips.items()
+        index: item for index, item in _facecam_clips(paths).items()
         if item and not item.get("full_frame")
     }
     if not overlays:
         return None
-
-    cam = None
     if at is not None:
-        # Берём рамку того клипа, в который попадает показываемый кадр.
         try:
             found, _ = load_clips(paths, apply_review=False)
         except (FileNotFoundError, ValueError):
             found = []
         for clip in found:
             if clip["start"] <= at <= clip["end"] and str(clip.get("index")) in overlays:
-                cam = overlays[str(clip["index"])]
-                break
+                return overlays[str(clip["index"])]
+    return next(iter(overlays.values()))
+
+
+def _rect(entry, key: str):
+    found = (entry or {}).get(key) or {}
+    try:
+        return (found["x"], found["y"], found["width"], found["height"])
+    except KeyError:
+        return None
+
+
+def _preview_layout(paths, current, src_w, src_h, short, at: float | None = None) -> dict[str, Any]:
+    """Данные раскладки для предпросмотра — те же, что рендер считает клипу.
+
+    Возвращается набором для `build_layout_filter`, поэтому предпросмотр и
+    сборка идут одной дорогой. Пустой набор — раскладка к записи неприменима,
+    и кадр строится обычным способом.
+    """
+    if current.layout == "single":
+        return {}
+
+    cam = _preview_cam(paths, at)
+    if current.layout == "track":
+        # Слежение — движение, и на одном кадре его не показать. Показывается
+        # то, что попадает в рамку: её ширина и положение головы.
+        return {
+            "camera": plan_track_still(
+                src_w, src_h, short.width, short.height, _rect(cam, "face")
+            )
+        }
     if cam is None:
-        cam = next(iter(overlays.values()))
-    face = cam.get("face") or {}
-    content = cam.get("content") or {}
-    return plan_split(
-        src_w, src_h, short.width, short.height,
-        (cam["x"], cam["y"], cam["width"], cam["height"]),
-        face=(face["x"], face["y"], face["width"], face["height"]) if face else None,
-        content=(
-            (content["x"], content["y"], content["width"], content["height"])
-            if content else None
-        ),
-        anchor=current.anchor,
-        top_share=current.split_top_share,
-        face_zoom=current.face_zoom,
-        face_vertical=current.face_vertical,
+        return {}
+
+    window = (cam["x"], cam["y"], cam["width"], cam["height"])
+    face = _rect(cam, "face")
+    if current.layout == "split":
+        plan = plan_split(
+            src_w, src_h, short.width, short.height, window,
+            face=face,
+            content=_rect(cam, "content"),
+            anchor=current.anchor,
+            top_share=current.split_top_share,
+            face_zoom=current.face_zoom,
+            face_vertical=current.face_vertical,
+        )
+        return {"split": plan} if plan is not None else {}
+    if current.layout == "camera":
+        crop = plan_camera(
+            src_w, src_h, short.width, short.height, window,
+            face=face, zoom=current.face_zoom, vertical=current.face_vertical,
+        )
+        return {"camera": crop} if crop is not None else {}
+
+    crop = plan_pip(
+        src_w, src_h, window,
+        face=face, zoom=current.face_zoom, vertical=current.face_vertical,
     )
+    return {"pip": crop} if crop is not None else {}
 
 
 #: Сколько картинок предпросмотра держать на видео. Они служат кэшем — при

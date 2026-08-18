@@ -157,8 +157,12 @@ export type ShortsIndex = {
 export type FramingPreset = "full" | "balanced" | "focus" | "fill" | "custom";
 
 export type Framing = {
-  /** single — исходник на подложке; split — вебка сверху, контент снизу. */
-  layout: "single" | "split" | "track" | "pip";
+  /**
+   * Как показан кадр. single — исходник на подложке; split — вебка сверху,
+   * содержимое снизу; camera — только вебка во весь кадр; pip — лицо окошком
+   * поверх содержимого; track — узкий кадр, ведомый за головой.
+   */
+  layout: "single" | "split" | "camera" | "track" | "pip";
   /** Что вшивать в готовый ролик. Каждый пункт отключается отдельно. */
   subtitles_enabled: boolean;
   loudnorm_enabled: boolean;
@@ -187,6 +191,12 @@ export type Framing = {
   split_top_share: number;
   face_zoom: number;
   face_vertical: number;
+  /** Вести ли рамку за головой там, где показана вебка. */
+  follow_face: boolean;
+  /** Врезка: доля ширины кадра, отступ в долях окошка и угол. */
+  pip_share: number;
+  pip_margin: number;
+  pip_corner: string;
   preset: FramingPreset;
   side_crop: number;
   anchor: "center" | "left" | "right";

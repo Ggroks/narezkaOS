@@ -89,17 +89,65 @@
 
 /* ── Раскладка работы и стадий ─────────────────────────────────────────── */
 
+/* Три колонки: предпросмотр — работа — ход обработки. Свёрнутый ход
+   оставляет от себя узкую полосу со стрелкой, поэтому ширина колонки задана
+   переменной, а не двумя правилами. */
 .workspace-body {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: var(--preview-col) minmax(0, 1fr) var(--stages-col);
   gap: var(--gap-lg);
   align-items: start;
+  --preview-col: auto;
+  --stages-col: 44px;
 }
-.workspace.with-stages .workspace-body {
-  grid-template-columns: minmax(0, 1fr) 300px;
+/* Полосе нечего показывать — она не занимает место. Столбцов тогда два, а не
+   три: скрытая полоса перестаёт быть элементом сетки, и без этого правила
+   остальные колонки съезжают на её место. На вкладке исходника предпросмотра
+   нет вовсе, и пустой прямоугольник в треть экрана был бы там просто дырой. */
+.workspace-body:has(.preview-frame:empty) {
+  grid-template-columns: minmax(0, 1fr) var(--stages-col);
 }
+.workspace-body:has(.preview-frame:empty) .workspace-preview { display: none; }
+.workspace.with-stages .workspace-body { --stages-col: 300px; }
 
 .workspace-main { display: flex; flex-direction: column; gap: var(--gap-lg); min-width: 0; }
+
+/* ── Полоса предпросмотра ──────────────────────────────────────────────── */
+
+.workspace-preview {
+  position: sticky;
+  top: var(--gap-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-xs);
+  inline-size: clamp(230px, 22vw, 300px);
+}
+.preview-head {
+  padding-inline: 2px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+/* Пропорция ролика: 9:16. Полоса держит её всегда — и когда внутри кадр,
+   и когда пусто, — иначе колонка дёргается при каждой смене предпросмотра. */
+.preview-frame {
+  position: relative;
+  aspect-ratio: 9 / 16;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+}
+/* Всё, что попадает в полосу, вписывается в неё целиком: и кадр
+   предпросмотра, и плеер момента, и готовый ролик. */
+.preview-frame > * { max-width: 100%; max-height: 100%; margin: 0; }
+.preview-frame img,
+.preview-frame video { display: block; width: 100%; height: 100%; object-fit: contain; }
+
+/* ── Ход работы ────────────────────────────────────────────────────────── */
 
 .workspace-stages {
   position: sticky;
@@ -109,10 +157,74 @@
   border: 1px solid var(--border-soft);
   border-radius: var(--radius);
 }
+.workspace-stages.collapsed {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--gap-sm);
+  padding: var(--gap-sm) 0;
+}
+.stages-body { min-width: 0; }
 
-@media (max-width: 1100px) {
+/* Стрелка вынесена на край полосы: она управляет именно ей, и место у
+   названия записи ей ни к чему. */
+.stages-handle {
+  position: absolute;
+  inset-block-start: 10px;
+  inset-inline-start: -13px;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
+  border-radius: 50%;
+}
+.stages-handle:hover { color: var(--text); background: var(--surface-3); }
+
+.stages-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--gap-sm);
+  margin-block-start: 34px;
+}
+.rail-label {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--text-dim);
+  writing-mode: vertical-rl;
+}
+.rail-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--border);
+}
+.rail-dot.run { background: var(--accent); }
+@media (prefers-reduced-motion: no-preference) {
+  .rail-dot.run { animation: rail-pulse 1.6s ease-in-out infinite; }
+}
+@keyframes rail-pulse {
+  50% { opacity: 0.35; }
+}
+
+/* Узкий экран: колонки складываются в одну, полосы перестают липнуть.
+   Предпросмотр уходит наверх — он важнее списка стадий. */
+@media (max-width: 1240px) {
+  .workspace-body,
   .workspace.with-stages .workspace-body { grid-template-columns: minmax(0, 1fr); }
+  .workspace-preview,
   .workspace-stages { position: static; }
+  .workspace-preview { max-width: 300px; }
+  .stages-handle { position: static; margin-block-end: var(--gap-sm); }
+  .stages-rail { margin-block-start: 0; }
+  .rail-label { writing-mode: horizontal-tb; }
 }
 
 /* ── Значок пояснения ──────────────────────────────────────────────────── */
@@ -334,26 +446,12 @@ button.ghost:hover:not(:disabled) { color: var(--text); background: var(--surfac
 
 /* ── Оформление субтитров ──────────────────────────────────────────────── */
 
-/* Кадр слева, ручки справа: настройку правят, глядя на результат.
-   На узком экране кадр уходит наверх — иначе он сжимается до нечитаемого. */
-.subs-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 260px) minmax(0, 1fr);
-  gap: var(--gap-lg);
-  align-items: start;
-}
-@media (max-width: 900px) {
-  .subs-layout { grid-template-columns: minmax(0, 1fr); }
-}
+/* Кадр показывается в полосе слева — здесь остаются только ручки.
+   Пока кадр жил внутри панели, он делил её ширину с настройками и на
+   вертикальном ролике выходил маленьким. */
+.subs-layout { display: grid; gap: var(--gap-lg); align-items: start; }
 
-.subs-preview { margin: 0; position: sticky; top: var(--gap-lg); }
-.subs-preview img {
-  inline-size: 100%;
-  border-radius: var(--radius-inner);
-  background: var(--bg);
-  display: block;
-}
-.subs-preview figcaption { margin-block-start: 6px; text-align: center; }
+.subs-preview { position: relative; inline-size: 100%; block-size: 100%; }
 
 .subs-controls { display: flex; flex-direction: column; min-width: 0; }
 

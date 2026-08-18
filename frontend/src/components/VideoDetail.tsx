@@ -46,6 +46,28 @@ const OUTCOME_LABEL: Record<string, string> = {
   failed: "ошибка",
 };
 
+/**
+ * Что показывает полоса предпросмотра на каждой вкладке. Полоса одна, и
+ * содержимое в неё кладёт та панель, которая сейчас открыта.
+ */
+type PreviewOwner = "framing" | "subtitles" | "shorts";
+
+/** Подпись над полосой: что именно в ней сейчас. */
+const PREVIEW_TITLES: Record<TabId, string> = {
+  source: "Кадр записи",
+  moments: "Момент",
+  shorts: "Готовый ролик",
+  long: "Длинная нарезка",
+  results: "Готовый ролик",
+};
+
+/** На вкладке роликов полосу занимает то, с чем человек работает. */
+const OWNER_TITLES: Record<PreviewOwner, string> = {
+  framing: "Кадр ролика",
+  subtitles: "Субтитры",
+  shorts: "Готовый ролик",
+};
+
 export function VideoDetail({ videoId, onBack }: Props) {
   const [detail, setDetail] = useState<Detail | null>(null);
   const [transcript, setTranscript] = useState<Transcript | null>(null);
@@ -77,6 +99,10 @@ export function VideoDetail({ videoId, onBack }: Props) {
   }, [tab]);
 
   const [error, setError] = useState<string | null>(null);
+  // Кто занимает полосу предпросмотра на вкладке роликов. По умолчанию —
+  // готовый ролик: на эту вкладку приходят смотреть. Стоит тронуть настройки,
+  // и полоса показывает их.
+  const [previewOwner, setPreviewOwner] = useState<PreviewOwner>("shorts");
   const [currentTime, setCurrentTime] = useState(0);
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -305,6 +331,10 @@ export function VideoDetail({ videoId, onBack }: Props) {
           К проектам
         </button>
       }
+      running={running}
+      // Что именно сейчас в полосе слева. Полоса одна на все вкладки, и без
+      // подписи непонятно, кадр это записи, момент или готовый ролик.
+      previewTitle={tab === "shorts" ? OWNER_TITLES[previewOwner] : PREVIEW_TITLES[tab]}
       stages={
       <div className="stages-panel">
         <h3>Ход работы</h3>
@@ -512,12 +542,34 @@ export function VideoDetail({ videoId, onBack }: Props) {
             open={(shorts?.files.length ?? 0) === 0}
           >
             <summary>Настройки ролика: кадр, субтитры, звук</summary>
-            <div className="section-body settings-column">
-              {/* Предпросмотр рядом с настройками: их правят, глядя на
-                  результат, а не вслепую с переходом туда-обратно. */}
-              <FramingPanel videoId={videoId} busy={running} onSaved={() => void load()} />
+            {/* Полоса предпросмотра одна, а панелей с ним на этой вкладке
+                три. Занимает полосу та, с которой человек работает: касание
+                панели делает её хозяином. Решает это страница — только она
+                видит их все сразу. */}
+            <div
+              className="section-body settings-column"
+              onPointerDownCapture={(e) => {
+                const panel = (e.target as HTMLElement).closest("[data-preview]");
+                const owner = panel?.getAttribute("data-preview");
+                if (owner) setPreviewOwner(owner as PreviewOwner);
+              }}
+            >
+              <div data-preview="framing">
+                <FramingPanel
+                  videoId={videoId}
+                  busy={running}
+                  onSaved={() => void load()}
+                  preview={previewOwner === "framing"}
+                />
+              </div>
               {framing?.subtitles_enabled && (
-                <SubtitlesPanel videoId={videoId} disabled={running} />
+                <div data-preview="subtitles">
+                  <SubtitlesPanel
+                    videoId={videoId}
+                    disabled={running}
+                    preview={previewOwner === "subtitles"}
+                  />
+                </div>
               )}
               {framing && (
                 <div className="panel">
@@ -536,12 +588,15 @@ export function VideoDetail({ videoId, onBack }: Props) {
           </details>
 
           {shorts && shorts.files.length > 0 && (
-            <ShortsView
-              videoId={videoId}
-              shorts={shorts}
-              busy={running}
-              onQueued={() => void load()}
-            />
+            <div data-preview="shorts" onPointerDownCapture={() => setPreviewOwner("shorts")}>
+              <ShortsView
+                videoId={videoId}
+                shorts={shorts}
+                busy={running}
+                onQueued={() => void load()}
+                preview={previewOwner === "shorts"}
+              />
+            </div>
           )}
         </>
       )}

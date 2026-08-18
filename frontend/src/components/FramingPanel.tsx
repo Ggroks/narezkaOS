@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { PreviewSlot } from "./PreviewSlot";
 import { api, type Framing, type FramingState } from "../api";
 
 type Props = {
@@ -8,6 +9,8 @@ type Props = {
   /** Настройки сохранены — обновить остальной экран. Сборку запускает
       кнопка вкладки, а не эта панель. */
   onSaved: () => void;
+  /** Занимать ли полосу предпросмотра: она одна на экран. */
+  preview?: boolean;
 };
 
 const ANCHORS: { value: Framing["anchor"]; label: string }[] = [
@@ -86,7 +89,7 @@ function Option({ label, checked, disabled, contentShare, sideCrop, onChange }: 
  * варианта подписаны оба числа, а рядом всегда висит настоящий кадр из этого
  * же видео: настраивать рамку по описанию словами невозможно.
  */
-export function FramingPanel({ videoId, busy, onSaved }: Props) {
+export function FramingPanel({ videoId, busy, onSaved, preview = true }: Props) {
   const [state, setState] = useState<FramingState | null>(null);
   const [draft, setDraft] = useState<Framing | null>(null);
   const [saving, setSaving] = useState(false);
@@ -198,21 +201,23 @@ export function FramingPanel({ videoId, busy, onSaved }: Props) {
       )}
 
       <div className="framing">
-        <div className="framing-preview">
-          {previewUrl && (
-            <img
-              src={previewUrl}
-              alt="Предпросмотр кадра с текущими настройками"
-              onLoad={() => setPreviewLoading(false)}
-              onError={() => setPreviewLoading(false)}
-            />
-          )}
-          {previewLoading && (
-            <span className="framing-preview-note small dim" role="status">
-              обновляется…
-            </span>
-          )}
-        </div>
+        <PreviewSlot active={preview}>
+          <div className="framing-preview">
+            {previewUrl && (
+              <img
+                src={previewUrl}
+                alt="Предпросмотр кадра с текущими настройками"
+                onLoad={() => setPreviewLoading(false)}
+                onError={() => setPreviewLoading(false)}
+              />
+            )}
+            {previewLoading && (
+              <span className="preview-note small dim" role="status">
+                обновляется…
+              </span>
+            )}
+          </div>
+        </PreviewSlot>
 
         <div className="framing-controls">
           <fieldset>

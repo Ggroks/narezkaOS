@@ -262,14 +262,32 @@ video {
    увидит зритель, включая положение субтитров относительно интерфейса. */
 .shorts-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
   gap: var(--pad);
 }
 .short { margin: 0; }
-.short video {
-  aspect-ratio: 9 / 16;
-  object-fit: contain;
+
+/* Карточка ролика: открывает его в полосе слева. Раньше в каждой ячейке
+   стоял свой плеер — тридцать штук на записи, и все тянули метаданные. */
+.short-open {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--gap-sm);
+  inline-size: 100%;
+  padding: 12px 14px;
+  text-align: start;
+  background: var(--surface-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-inner);
 }
+.short-open:hover { background: var(--surface-3); }
+.short.current .short-open {
+  background: var(--surface-3);
+  border-color: var(--accent);
+}
+.short-number { font-size: 15px; font-weight: 600; }
+.short-duration { font-size: 13px; color: var(--text-dim); }
 .short figcaption {
   display: flex;
   flex-wrap: wrap;
@@ -336,30 +354,19 @@ a.sr-only:focus-visible {
   margin: -4px 0 16px;
 }
 
+/* Кадр уехал в полосу предпросмотра слева — здесь только ручки. */
 .framing {
   display: grid;
-  grid-template-columns: 288px minmax(0, 440px);
+  grid-template-columns: minmax(0, 440px);
   gap: 24px;
   align-items: start;
 }
 
-.framing-preview {
-  position: relative;
-  aspect-ratio: 9 / 16;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-inner);
-  overflow: hidden;
-}
+.framing-preview { position: relative; inline-size: 100%; block-size: 100%; }
 
-.framing-preview img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-}
-
-.framing-preview-note {
+/* Пометка «обновляется» лежит поверх кадра, а не под ним: строка под
+   картинкой сдвигала бы всё, что ниже, на каждый шаг ползунка. */
+.preview-note {
   position: absolute;
   inset-block-end: 8px;
   inset-inline-start: 8px;
@@ -578,11 +585,8 @@ a.sr-only:focus-visible {
   min-width: 0;
 }
 
-/* На узком экране кадр уходит наверх: он важнее, чем ползунки. */
-@media (max-width: 700px) {
-  .framing { grid-template-columns: minmax(0, 1fr); }
-  .framing-preview { max-inline-size: 200px; }
-}
+/* Кадр живёт в полосе предпросмотра, здесь остаются только ползунки —
+   их и на узком экране раскладывать не во что. */
 
 /* --- обзор моментов -------------------------------------------------------
    Экран, на котором оценивают качество отбора. Всё подчинено одному: пройти

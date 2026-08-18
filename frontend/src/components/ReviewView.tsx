@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { PreviewSlot } from "./PreviewSlot";
 import { api, formatDuration, type Review, type ReviewClip, type Verdict } from "../api";
 
 /** Оценка красится по смыслу, а не градиентом: три ступени читаются быстрее. */
@@ -265,16 +266,21 @@ export function ReviewView({ videoId, durationSeconds }: Props) {
       )}
 
       <div className="review-player">
-        <video
-          ref={videoRef}
-          src={clip ? api.reviewMediaUrl(videoId, clip.index, clip.start, clip.end) : undefined}
-          preload="metadata"
-          onPlay={() => setPlaying(true)}
-          onPause={() => setPlaying(false)}
-          onLoadedMetadata={() => clip && seekTo(clip.start)}
-          // Позиция во времени записи, а не куска: по ней правятся границы.
-          onTimeUpdate={(e) => setPlayhead(offset + e.currentTarget.currentTime)}
-        />
+        {/* Плеер переезжает в полосу предпросмотра слева, а управление
+            остаётся здесь: это тот же самый элемент, по которому двигают
+            границы момента, и разрывать его с кнопками нельзя. */}
+        <PreviewSlot>
+          <video
+            ref={videoRef}
+            src={clip ? api.reviewMediaUrl(videoId, clip.index, clip.start, clip.end) : undefined}
+            preload="metadata"
+            onPlay={() => setPlaying(true)}
+            onPause={() => setPlaying(false)}
+            onLoadedMetadata={() => clip && seekTo(clip.start)}
+            // Позиция во времени записи, а не куска: по ней правятся границы.
+            onTimeUpdate={(e) => setPlayhead(offset + e.currentTarget.currentTime)}
+          />
+        </PreviewSlot>
 
         {clip && (
           <>

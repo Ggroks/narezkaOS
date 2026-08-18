@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Hint } from "./Hint";
+import { PreviewSlot } from "./PreviewSlot";
 import { api, formatDuration, type PublishEntry, type ShortsIndex } from "../api";
 
 type Props = {
@@ -9,6 +10,8 @@ type Props = {
   busy?: boolean;
   /** Пересборка встала в очередь: наверху пора показать ход работы. */
   onQueued?: () => void;
+  /** Занимать ли полосу предпросмотра: она одна на экран. */
+  preview?: boolean;
 };
 
 const BACKGROUND_LABEL: Record<string, string> = {
@@ -25,7 +28,7 @@ const BACKGROUND_LABEL: Record<string, string> = {
  * показываются в реальной пропорции 9:16 — так же, как их увидит зритель,
  * включая то, не залезли ли субтитры в зону интерфейса платформы (§60).
  */
-export function ShortsView({ videoId, shorts, busy, onQueued }: Props) {
+export function ShortsView({ videoId, shorts, busy, onQueued, preview = true }: Props) {
   /**
    * Пересборка одного ролика.
    *
@@ -34,6 +37,9 @@ export function ShortsView({ videoId, shorts, busy, onQueued }: Props) {
    * Остальные при этом остаются прежними — об этом сказано в подсказке,
    * потому что молчаливый разнобой хуже долгого ожидания.
    */
+  // Какой ролик открыт в полосе предпросмотра. Первый — чтобы полоса не
+  // пустовала: человек пришёл на эту вкладку смотреть, а не выбирать.
+  const [playing, setPlaying] = useState(0);
   const [queued, setQueued] = useState<number | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
 
@@ -93,15 +99,39 @@ export function ShortsView({ videoId, shorts, busy, onQueued }: Props) {
         )}
       </div>
 
+      {/* Смотреть — в полосе слева, одним плеером. Тридцать плееров в сетке
+          браузер держал одновременно: каждый тянул свои метаданные, и на
+          записи с тридцатью роликами это заметно и по памяти, и по сети.
+          А вертикальный ролик в ячейке сетки всё равно выходил крошечным. */}
+      <PreviewSlot active={preview}>
+        <video
+          controls
+          preload="metadata"
+          key={playing}
+          aria-label={`Ролик ${playing + 1}`}
+          // «#t=0.1» — чтобы в полосе стоял первый кадр, а не чёрный
+          // прямоугольник: без метки времени браузер не рисует ничего,
+          // пока ролик не запустят.
+          src={`/api/videos/${videoId}/shorts/${playing}/media#t=0.1`}
+        />
+      </PreviewSlot>
+
       <div className="shorts-grid">
         {shorts.files.map((file) => (
-          <figure key={file.index} className="short">
-            <video
-              controls
-              preload="metadata"
-              aria-label={`Ролик ${file.index + 1}`}
-              src={`/api/videos/${videoId}/shorts/${file.index}/media`}
-            />
+          <figure
+            key={file.index}
+            className={`short${file.index === playing ? " current" : ""}`}
+          >
+            <button
+              type="button"
+              className="short-open"
+              aria-label={`Смотреть ролик ${file.index + 1}`}
+              aria-pressed={file.index === playing}
+              onClick={() => setPlaying(file.index)}
+            >
+              <span className="short-number tnum">{file.index + 1}</span>
+              <span className="short-duration tnum">{file.duration.toFixed(0)} с</span>
+            </button>
             <figcaption className="small dim">
               {texts[file.index] ? (
                 <span className="short-title">{texts[file.index].title}</span>
@@ -112,7 +142,6 @@ export function ShortsView({ videoId, shorts, busy, onQueued }: Props) {
                   под каждым роликом превращают сетку в таблицу, а нужны они
                   редко — когда выбирают между двумя похожими. */}
               <span className="short-facts">
-                <b className="tnum">{file.duration.toFixed(0)} с</b>
                 {file.interest_score != null && (
                   <span className="tnum">оценка {file.interest_score.toFixed(2)}</span>
                 )}

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { PreviewSlot } from "./PreviewSlot";
 import {
   api,
   type SubtitleOptions,
@@ -20,7 +21,12 @@ import { Hint } from "./Hint";
  * кому это подходит.
  */
 
-type Props = { videoId: string; disabled?: boolean };
+type Props = {
+  videoId: string;
+  disabled?: boolean;
+  /** Занимать ли полосу предпросмотра: она одна на экран. */
+  preview?: boolean;
+};
 
 /**
  * Пауза перед отправкой правки. Ползунок за одно движение выдаёт десятки
@@ -30,7 +36,7 @@ type Props = { videoId: string; disabled?: boolean };
  */
 const SAVE_DELAY_MS = 350;
 
-export function SubtitlesPanel({ videoId, disabled }: Props) {
+export function SubtitlesPanel({ videoId, disabled, preview = true }: Props) {
   const [options, setOptions] = useState<SubtitleOptions | null>(null);
   const [state, setState] = useState<SubtitlesState | null>(null);
   const [version, setVersion] = useState("0");
@@ -139,18 +145,20 @@ export function SubtitlesPanel({ videoId, disabled }: Props) {
       </div>
 
       <div className="subs-layout">
-        <figure className="subs-preview">
-          {/* Кадр перерисовывается после каждой правки: адрес тот же,
-              поэтому в нём меняется метка версии — иначе браузер показал
-              бы прежний из кэша. */}
-          <img
-            src={api.subtitlePreviewUrl(videoId, version)}
-            alt="Кадр записи с субтитрами"
-            onLoad={() => setLoading(false)}
-            onError={() => setLoading(false)}
-          />
-          {loading && <figcaption className="small dim">Готовим кадр…</figcaption>}
-        </figure>
+        <PreviewSlot active={preview}>
+          <figure className="subs-preview">
+            {/* Кадр перерисовывается после каждой правки: адрес тот же,
+                поэтому в нём меняется метка версии — иначе браузер показал
+                бы прежний из кэша. */}
+            <img
+              src={api.subtitlePreviewUrl(videoId, version)}
+              alt="Кадр записи с субтитрами"
+              onLoad={() => setLoading(false)}
+              onError={() => setLoading(false)}
+            />
+            {loading && <figcaption className="preview-note small dim">Готовим кадр…</figcaption>}
+          </figure>
+        </PreviewSlot>
 
         <div className="subs-controls">
           <h4 className="group-title">Готовые наборы</h4>

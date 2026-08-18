@@ -538,3 +538,22 @@ def test_same_job_pressed_twice_is_not_an_error(client, video) -> None:
     second = client.post(f"/api/videos/{VIDEO}/run", json={"group": "analysis"})
     assert first.status_code == second.status_code == 200
     assert second.json()["started"] is False
+
+
+def test_model_catalogue_is_not_fetched_on_every_open(client, monkeypatch) -> None:
+    """Каталог моделей лежит у поставщика и меняется раз в дни.
+
+    Экран настроек спрашивал его при каждом открытии записи, а пока работа
+    ждала очереди — каждые три секунды: запрос на чужой сервер за списком,
+    который не менялся.
+    """
+    from narezka.core import llm  # noqa: PLC0415
+
+    api_app._MODEL_CATALOGUE.clear()
+    calls = []
+    monkeypatch.setattr(llm, "fetch_models", lambda *a, **kw: calls.append(1) or [])
+
+    assert client.get("/api/settings/models").status_code == 200
+    assert client.get("/api/settings/models").status_code == 200
+
+    assert len(calls) == 1, "каталог запрашивается заново на каждое открытие"

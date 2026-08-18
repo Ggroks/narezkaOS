@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import time
 import uuid
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
@@ -2049,6 +2050,25 @@ def media(
     return serve_file(source, range_header)
 
 
+#: Насколько держим каталог моделей. У поставщика он меняется раз в дни, а
+#: экран настроек спрашивает его при каждом открытии записи — и раз в три
+#: секунды, пока работа ждёт очереди. Каждый такой запрос уходил на сторону.
+MODELS_TTL_SECONDS = 300.0
+
+#: Поставщик → когда получен и что получено. Гонка двух запросов приводит
+#: к лишнему походу за каталогом и только — записывается тот же список.
+_MODEL_CATALOGUE: dict[str, tuple[float, list[Any]]] = {}
+
+
+def _catalogue(provider: str, key: str | None) -> list[Any]:
+    cached = _MODEL_CATALOGUE.get(provider)
+    if cached is not None and time.monotonic() - cached[0] < MODELS_TTL_SECONDS:
+        return cached[1]
+    fetched = llm.fetch_models(key, provider_name=provider)
+    _MODEL_CATALOGUE[provider] = (time.monotonic(), fetched)
+    return fetched
+
+
 @app.get("/api/settings/models")
 def available_models(free_only: bool = True) -> dict[str, Any]:
     """Модели, из которых можно выбирать, и та, что выбрана сейчас."""
@@ -2060,7 +2080,7 @@ def available_models(free_only: bool = True) -> dict[str, Any]:
 
     key = llm.api_key(provider_name=config.llm.provider)
     try:
-        catalogue = llm.fetch_models(key, provider_name=config.llm.provider)
+        catalogue = _catalogue(config.llm.provider, key)
     except llm.LlmError as exc:
         # Каталог недоступен — это не повод ронять экран настроек: выбранная
         # модель известна и без него.

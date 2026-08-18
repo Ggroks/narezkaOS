@@ -80,7 +80,11 @@ export function VideoDetail({ videoId, onBack }: Props) {
   const [currentTime, setCurrentTime] = useState(0);
   const videoRef = useRef<HTMLVideoElement>(null);
 
-  const load = useCallback(async () => {
+  // Лёгкое обновление: место в очереди и состояние работы. Ровно это меняется
+  // само по себе, пока человек ждёт. Полная загрузка тянет транскрипт (на
+  // пятичасовой записи — почти четыре мегабайта) и каталог моделей с чужого
+  // сервера; повторять их каждые три секунды значит гонять это впустую.
+  const refresh = useCallback(async () => {
     try {
       const data = await api.video(videoId);
       setDetail(data);
@@ -88,6 +92,16 @@ export function VideoDetail({ videoId, onBack }: Props) {
       // его как идущую обработку значит врать про то, что происходит.
       setRunning(data.job?.status === "running");
       if (data.job?.events?.length) setEvents(data.job.events);
+      return data;
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : String(exc));
+      return null;
+    }
+  }, [videoId]);
+
+  const load = useCallback(async () => {
+    try {
+      if ((await refresh()) === null) return;
       try {
         setTranscript(await api.transcript(videoId));
       } catch {
@@ -122,7 +136,7 @@ export function VideoDetail({ videoId, onBack }: Props) {
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : String(exc));
     }
-  }, [videoId]);
+  }, [refresh, videoId]);
 
   useEffect(() => {
     void load();
@@ -132,9 +146,9 @@ export function VideoDetail({ videoId, onBack }: Props) {
   // место в очереди меняется от чужой работы. Раз в три секунды хватает.
   useEffect(() => {
     if (!detail?.queue_position) return;
-    const timer = setInterval(() => void load(), 3000);
+    const timer = setInterval(() => void refresh(), 3000);
     return () => clearInterval(timer);
-  }, [detail?.queue_position, load]);
+  }, [detail?.queue_position, refresh]);
 
   // Живой поток событий, пока задача активна (§69).
   useEffect(() => {

@@ -39,6 +39,25 @@ def spans_within(edl: Edl, start: float, end: float) -> list[tuple[float, float]
     return pieces
 
 
+def moment_in_clip(edl: Edl, start: float, end: float, offset: float) -> float:
+    """Время записи, которое видно на `offset` секунде готового ролика.
+
+    Ролик собран с вырезками, поэтому его собственное время короче исходного
+    отрезка и течёт неравномерно: на пятнадцатой секунде ролика может быть
+    двадцать вторая секунда записи. Складывать `start + offset` значит
+    показывать не тот кадр — и тем сильнее, чем больше вырезано.
+    """
+    left = max(offset, 0.0)
+    for piece_start, piece_end in spans_within(edl, start, end):
+        length = piece_end - piece_start
+        # Строго меньше: ровно на стыке кадр берётся из следующего куска —
+        # предыдущий к этому моменту уже доигран.
+        if left < length:
+            return start + piece_start + left
+        left -= length
+    return end
+
+
 def build_select(pieces: list[tuple[float, float]], total: float) -> tuple[str, str]:
     """Фильтры отбора кадров и звука. Пустая пара — вырезать нечего.
 

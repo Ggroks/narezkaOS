@@ -103,6 +103,10 @@ export function VideoDetail({ videoId, onBack }: Props) {
   // готовый ролик: на эту вкладку приходят смотреть. Стоит тронуть настройки,
   // и полоса показывает их.
   const [previewOwner, setPreviewOwner] = useState<PreviewOwner>("shorts");
+  // Где остановлен просмотр готового ролика. По этому кадру настраивается
+  // рамка: человек ставит паузу на нужном месте и правит настройки, глядя
+  // именно на него.
+  const [frame, setFrame] = useState<{ index: number; offset: number } | null>(null);
   // Качество предпросмотра — личная привычка, а не настройка проекта:
   // на слабой машине берут «быстро», на большом экране — «чётко».
   const [quality, setQuality] = useState(
@@ -582,9 +586,12 @@ export function VideoDetail({ videoId, onBack }: Props) {
                   // и моменты — из них они и выйдут.
                   moments={
                     shorts?.files.length
-                      ? shorts.files.map((f) => ({ index: f.index, start: f.start, end: f.end }))
+                      ? shorts.files.map((f) => ({
+                          index: f.index, start: f.start, end: f.end, duration: f.duration,
+                        }))
                       : reviewClips.map((c) => ({ index: c.index, start: c.start, end: c.end }))
                   }
+                  frame={frame}
                   quality={quality}
                 />
               </div>
@@ -622,6 +629,7 @@ export function VideoDetail({ videoId, onBack }: Props) {
                 busy={running}
                 onQueued={() => void load()}
                 preview={previewOwner === "shorts"}
+                onFrame={(index, offset) => setFrame({ index, offset })}
               />
             </div>
           )}

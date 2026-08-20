@@ -12,6 +12,12 @@ type Props = {
   onQueued?: () => void;
   /** Занимать ли полосу предпросмотра: она одна на экран. */
   preview?: boolean;
+  /**
+   * Где сейчас остановлен ролик: номер и секунда от его начала. По этому
+   * месту настраивается кадр — человек ставит паузу на нужном кадре и правит
+   * рамку, глядя именно на него.
+   */
+  onFrame?: (index: number, offset: number) => void;
 };
 
 const BACKGROUND_LABEL: Record<string, string> = {
@@ -28,7 +34,9 @@ const BACKGROUND_LABEL: Record<string, string> = {
  * показываются в реальной пропорции 9:16 — так же, как их увидит зритель,
  * включая то, не залезли ли субтитры в зону интерфейса платформы (§60).
  */
-export function ShortsView({ videoId, shorts, busy, onQueued, preview = true }: Props) {
+export function ShortsView({
+  videoId, shorts, busy, onQueued, preview = true, onFrame,
+}: Props) {
   /**
    * Пересборка одного ролика.
    *
@@ -109,6 +117,11 @@ export function ShortsView({ videoId, shorts, busy, onQueued, preview = true }: 
           preload="metadata"
           key={playing}
           aria-label={`Ролик ${playing + 1}`}
+          // Пауза и перемотка задают кадр для настроек. На каждом кадре
+          // воспроизведения — не нужно: настраивают по остановленному.
+          onPause={(e) => onFrame?.(playing, e.currentTarget.currentTime)}
+          onSeeked={(e) => onFrame?.(playing, e.currentTarget.currentTime)}
+          onLoadedMetadata={() => onFrame?.(playing, 0)}
           // «#t=0.1» — чтобы в полосе стоял первый кадр, а не чёрный
           // прямоугольник: без метки времени браузер не рисует ничего,
           // пока ролик не запустят.

@@ -16,7 +16,13 @@ type Props = {
    * Отрезки, из которых выйдут ролики: по ним выбирается момент для кадра.
    * Пусто — сервер сам возьмёт первый кандидат.
    */
-  moments?: { index: number; start: number; end: number }[];
+  moments?: { index: number; start: number; end: number; duration?: number }[];
+  /**
+   * Место в готовом ролике, на котором человек остановил просмотр: номер
+   * и секунда от начала ролика. Именно этот кадр и показывается — ради
+   * этого пауза и ставится.
+   */
+  frame?: { index: number; offset: number } | null;
   /** Высота кадра предпросмотра: меньше — быстрее. */
   quality?: number;
 };
@@ -98,7 +104,7 @@ function Option({ label, checked, disabled, contentShare, sideCrop, onChange }: 
  * же видео: настраивать рамку по описанию словами невозможно.
  */
 export function FramingPanel({
-  videoId, busy, onSaved, preview = true, moments = [], quality,
+  videoId, busy, onSaved, preview = true, moments = [], quality, frame = null,
 }: Props) {
   const [state, setState] = useState<FramingState | null>(null);
   const [draft, setDraft] = useState<Framing | null>(null);
@@ -106,18 +112,29 @@ export function FramingPanel({
   const [error, setError] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
-  // Какой отрезок и какое место в нём показывать. Раньше кадр всегда был
+  // Какой ролик и какое место в нём показывать. Раньше кадр всегда был
   // один и тот же — первый найденный кандидат, — и проверить рамку на своём
   // ролике было нельзя.
   const [pick, setPick] = useState(0);
-  const [at, setAt] = useState<number | null>(null);
+  const [offset, setOffset] = useState<number | null>(null);
 
-  const moment = moments[Math.min(pick, Math.max(moments.length - 1, 0))];
-  // Середина отрезка: в начале ролика часто ещё титры или тишина.
-  const position = at ?? (moment ? moment.start + (moment.end - moment.start) / 2 : null);
+  // Остановленный кадр главнее выбранного здесь: человек нажал паузу именно
+  // ради него. Своим выбором он перебивается обратно — тем же движением по
+  // дорожке.
+  useEffect(() => {
+    if (!frame) return;
+    setPick(frame.index);
+    setOffset(frame.offset);
+  }, [frame?.index, frame?.offset]);
 
-  // Сменили отрезок — место внутри прежнего больше не значит ничего.
-  useEffect(() => setAt(null), [pick]);
+  const spot = moments.findIndex((item) => item.index === pick);
+  const moment = moments[spot >= 0 ? spot : 0];
+  const length = moment ? (moment.duration ?? moment.end - moment.start) : 0;
+  // Середина ролика: в начале часто ещё тишина перед первой фразой.
+  const position = offset ?? length / 2;
+
+  // Сменили ролик — место внутри прежнего больше не значит ничего.
+  useEffect(() => setOffset(null), [pick]);
 
   useEffect(() => {
     let alive = true;
@@ -142,13 +159,14 @@ export function FramingPanel({
       setPreviewLoading(true);
       setPreviewUrl(
         api.framingPreviewUrl(videoId, draft, {
-          at: position ?? undefined,
+          short: moment ? moment.index : undefined,
+          offset: moment ? position : undefined,
           height: quality,
         }),
       );
     }, PREVIEW_DELAY_MS);
     return () => window.clearTimeout(timer);
-  }, [videoId, draft, position, quality]);
+  }, [videoId, draft, moment?.index, position, quality]);
 
   const chosen = useMemo(() => {
     if (!state || !draft) return null;
@@ -247,35 +265,39 @@ export function FramingPanel({
             {/* Выбор места, по которому судить о рамке. Кадр из середины
                 записи ничего не говорит о ролике на пятнадцатой минуте:
                 там другой свет, другая раскладка и вебка в другом углу. */}
-            {moment && position != null && (
+            {moment && (
               <div className="preview-pick" onPointerDown={(e) => e.stopPropagation()}>
                 <div className="row">
                   <button
                     className="icon"
-                    aria-label="Предыдущий момент"
-                    disabled={pick <= 0}
-                    onClick={() => setPick((was) => Math.max(was - 1, 0))}
+                    aria-label="Предыдущий ролик"
+                    disabled={spot <= 0}
+                    onClick={() => setPick(moments[Math.max(spot - 1, 0)].index)}
                   >
                     <span aria-hidden="true">‹</span>
                   </button>
                   <span className="small dim grow tnum">
-                    момент {pick + 1} из {moments.length} · {formatDuration(position)}
+                    ролик {moment.index + 1} · {formatDuration(position)}
                   </span>
                   <button
                     className="icon"
-                    aria-label="Следующий момент"
-                    disabled={pick >= moments.length - 1}
-                    onClick={() => setPick((was) => Math.min(was + 1, moments.length - 1))}
+                    aria-label="Следующий ролик"
+                    disabled={spot >= moments.length - 1}
+                    onClick={() =>
+                      setPick(moments[Math.min(spot + 1, moments.length - 1)].index)
+                    }
                   >
                     <span aria-hidden="true">›</span>
                   </button>
                 </div>
+                {/* Время ролика, а не записи: столько же, сколько показывает
+                    плеер, — по нему человек и ставит паузу. */}
                 <Timeline
-                  from={moment.start}
-                  to={moment.end}
+                  from={0}
+                  to={Math.max(length, 1)}
                   position={position}
-                  onSeek={setAt}
-                  label="Место в моменте, по которому показан кадр"
+                  onSeek={setOffset}
+                  label="Место в ролике, по которому показан кадр"
                 />
               </div>
             )}

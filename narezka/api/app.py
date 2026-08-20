@@ -27,6 +27,8 @@ from narezka.api import auth, jobs, worker
 from narezka.api.media import serve_file
 from narezka.core import env
 from narezka.core.clips import load_clips
+from narezka.core.cuts import moment_in_clip
+from narezka.core.edl import Edl
 from narezka.core.artifacts import Artifact
 from narezka.core.config import FramingConfig, load_config
 from narezka.core.device import detect_device
@@ -1451,6 +1453,8 @@ def framing_preview(
         default=PREVIEW_HEIGHT, ge=PREVIEW_MIN_HEIGHT, le=PREVIEW_MAX_HEIGHT,
         description="Высота кадра: меньше — быстрее",
     ),
+    short: int | None = Query(default=None, ge=0, description="Номер готового ролика"),
+    offset: float | None = Query(default=None, ge=0, description="Секунда внутри ролика"),
 ):
     """Один кадр в готовой рамке — чтобы настраивать глазами, а не наугад.
 
@@ -1487,9 +1491,15 @@ def framing_preview(
     if not metadata.get("has_video", True):
         raise HTTPException(status_code=409, detail="в источнике нет картинки")
 
-    position = at if at is not None else _preview_position(paths, metadata)
-    short = ctx.config.output.short
-    plan = plan_frame(src_w, src_h, short.width, short.height, requested)
+    # Место в готовом ролике важнее прямого времени записи: человек ставит
+    # паузу на нужном кадре и правит настройки, глядя именно на него.
+    position = None
+    if short is not None and offset is not None:
+        position = _short_moment(paths, short, offset)
+    if position is None:
+        position = at if at is not None else _preview_position(paths, metadata)
+    output = ctx.config.output.short
+    plan = plan_frame(src_w, src_h, output.width, output.height, requested)
 
     # Имя от параметров: несколько вкладок с разными настройками не затрут
     # предпросмотр друг друга.
@@ -1505,8 +1515,8 @@ def framing_preview(
     # 1080x1920 тут не нужен. Уменьшение встраивается в саму цепочку: -vf
     # нельзя применить к потоку, который уже пришёл из -filter_complex.
     chain = build_layout_filter(
-        requested, plan, short.width, short.height,
-        **_preview_layout(paths, requested, src_w, src_h, short, at=position),
+        requested, plan, output.width, output.height,
+        **_preview_layout(paths, requested, src_w, src_h, output, at=position),
     )
     chain = chain.removesuffix("[v]") + f",scale=-2:{height}[v]"
 
@@ -1812,6 +1822,41 @@ def _trim_previews(paths) -> None:
     )
     for stale in files[PREVIEW_KEEP:]:
         stale.unlink(missing_ok=True)
+
+
+def _short_moment(paths, index: int, offset: float) -> float | None:
+    """Момент записи, который виден на `offset` секунде готового ролика.
+
+    Нужно для настройки по остановленному кадру: человек смотрит ролик,
+    ставит паузу на нужном месте и правит рамку — предпросмотр обязан
+    показывать то же самое место, а не середину отрезка.
+
+    Складывать начало отрезка с секундой ролика нельзя: ролик собран с
+    вырезанными паузами, его время короче исходного и течёт неравномерно.
+    """
+    shorts = Artifact(paths.shorts / "index.json")
+    if not shorts.exists():
+        return None
+    try:
+        files = shorts.read_json().get("files", [])
+        entry = next((item for item in files if item.get("index") == index), None)
+    except (ValueError, TypeError):
+        return None
+    if entry is None:
+        return None
+
+    timeline = Artifact(paths.analysis / "timeline.json")
+    edl = Edl.identity()
+    if timeline.exists():
+        try:
+            edl = Edl.from_dict(timeline.read_json().get("edl", {}))
+        except (ValueError, KeyError, TypeError):
+            edl = Edl.identity()
+    # Границы в готовом ролике записаны в выходном времени, а вырезки
+    # считаются во времени исходника — отсюда обратный пересчёт.
+    start = float(entry.get("source_start", entry["start"]))
+    end = float(entry.get("source_end", entry["end"]))
+    return moment_in_clip(edl, start, end, offset)
 
 
 def _preview_position(paths, metadata: dict[str, Any]) -> float:

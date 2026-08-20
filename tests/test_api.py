@@ -655,3 +655,49 @@ def test_preview_quality_is_bounded(client, video) -> None:
     """Нулевая высота — не кадр, а тысяча пятьсот — время без разницы на глаз."""
     assert client.get(f"/api/videos/{VIDEO}/framing/preview?height=10").status_code == 422
     assert client.get(f"/api/videos/{VIDEO}/framing/preview?height=4000").status_code == 422
+
+
+def test_preview_follows_the_paused_short(client, video, monkeypatch) -> None:
+    """Пауза на готовом ролике задаёт кадр предпросмотра.
+
+    Человек смотрит ролик, останавливает на нужном месте и правит рамку —
+    показывать в этот момент середину отрезка значит настраивать вслепую.
+    Пересчёт делает сервер: ролик собран с вырезанными паузами, и его время
+    короче исходного отрезка.
+    """
+    positions: list[float] = []
+
+    def fake_run(args, **kwargs):
+        positions.append(float(args[args.index("-ss") + 1]))
+        Path(args[-1]).write_bytes(b"\xff\xd8\xff")
+        return ""
+
+    monkeypatch.setattr(api_app, "run_tool", fake_run)
+    (video / "source" / "source.mp4").write_bytes(b"\x00" * 16)
+    write(video, "shorts/index.json", {
+        "files": [{"index": 0, "file": "00.mp4", "start": 100.0, "end": 130.0, "duration": 20.0}],
+    })
+    write(video, "analysis/timeline.json", {
+        "edl": {"spans": [{"start": 0.0, "end": 105.0}, {"start": 115.0, "end": 200.0}]},
+    })
+
+    assert client.get(
+        f"/api/videos/{VIDEO}/framing/preview?short=0&offset=7"
+    ).status_code == 200
+
+    # Седьмая секунда ролика — 117-я секунда записи: между ними вырезана
+    # десятисекундная пауза. Наивное сложение дало бы 107 — кадр из неё.
+    assert positions == [pytest.approx(117.0)]
+
+
+def test_preview_ignores_a_short_that_is_not_there(client, video, monkeypatch) -> None:
+    """Номер несуществующего ролика — не ошибка: кадр берётся как обычно."""
+    monkeypatch.setattr(
+        api_app, "run_tool",
+        lambda args, **kw: Path(args[-1]).write_bytes(b"\xff\xd8\xff") or "",
+    )
+    (video / "source" / "source.mp4").write_bytes(b"\x00" * 16)
+
+    assert client.get(
+        f"/api/videos/{VIDEO}/framing/preview?short=77&offset=3"
+    ).status_code == 200

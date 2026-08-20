@@ -666,12 +666,20 @@ export const api = {
   framingPreviewUrl: (
     id: string,
     framing: Framing,
-    options: { at?: number; height?: number } = {},
+    options: { at?: number; height?: number; short?: number; offset?: number } = {},
   ) => {
     const query = new URLSearchParams(
       Object.entries(framing).map(([key, value]) => [key, String(value)]),
     );
-    if (options.at != null) query.set("at", options.at.toFixed(2));
+    // Ролик и секунда внутри него важнее прямого времени записи: ролик
+    // собран с вырезанными паузами, и его время короче исходного отрезка.
+    // Пересчёт делает сервер — вырезки известны ему, а не интерфейсу.
+    if (options.short != null && options.offset != null) {
+      query.set("short", String(options.short));
+      query.set("offset", options.offset.toFixed(2));
+    } else if (options.at != null) {
+      query.set("at", options.at.toFixed(2));
+    }
     if (options.height) query.set("height", String(options.height));
     return `/api/videos/${id}/framing/preview?${query}`;
   },

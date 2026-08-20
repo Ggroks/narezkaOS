@@ -94,3 +94,41 @@ def test_pieces_are_relative_to_clip_start():
 
 def test_empty_pieces_give_empty_filters():
     assert build_select([], 10.0) == ("", "")
+
+
+# --- место в готовом ролике ------------------------------------------------
+
+
+def test_moment_in_clip_without_cuts_is_plain_addition():
+    """Без вырезок время ролика и время записи расходятся только на начало."""
+    from narezka.core.cuts import moment_in_clip
+
+    assert moment_in_clip(Edl.identity(), 100.0, 130.0, 5.0) == 105.0
+
+
+def test_moment_in_clip_accounts_for_removed_pauses():
+    """Ролик собран с вырезками: его время короче и течёт неравномерно.
+
+    Человек останавливает ролик на нужном кадре и правит рамку — предпросмотр
+    обязан показать то же место. Сложение «начало плюс секунда ролика» дало бы
+    кадр тем дальше от нужного, чем больше вырезано.
+    """
+    from narezka.core.cuts import moment_in_clip
+
+    # Из отрезка 100–130 вырезано 105–115.
+    edl = Edl.cut(200.0, [(105.0, 115.0)])
+
+    assert moment_in_clip(edl, 100.0, 130.0, 0.0) == 100.0
+    assert moment_in_clip(edl, 100.0, 130.0, 4.9) == pytest.approx(104.9)
+    # На стыке кадр берётся из следующего куска: предыдущий уже доигран.
+    assert moment_in_clip(edl, 100.0, 130.0, 5.0) == 115.0
+    assert moment_in_clip(edl, 100.0, 130.0, 7.0) == 117.0
+    # Наивное сложение дало бы 107 — то есть кадр из вырезанной паузы.
+    assert moment_in_clip(edl, 100.0, 130.0, 7.0) != 107.0
+
+
+def test_moment_beyond_the_end_stops_at_the_end():
+    """Секунда за концом ролика — конец отрезка, а не выход за него."""
+    from narezka.core.cuts import moment_in_clip
+
+    assert moment_in_clip(Edl.cut(200.0, [(105.0, 115.0)]), 100.0, 130.0, 99.0) == 130.0

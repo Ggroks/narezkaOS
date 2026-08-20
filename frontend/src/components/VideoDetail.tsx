@@ -50,7 +50,7 @@ const OUTCOME_LABEL: Record<string, string> = {
  * Что показывает полоса предпросмотра на каждой вкладке. Полоса одна, и
  * содержимое в неё кладёт та панель, которая сейчас открыта.
  */
-type PreviewOwner = "framing" | "subtitles" | "shorts";
+type PreviewOwner = "settings" | "shorts";
 
 /** Подпись над полосой: что именно в ней сейчас. */
 const PREVIEW_TITLES: Record<TabId, string> = {
@@ -63,8 +63,7 @@ const PREVIEW_TITLES: Record<TabId, string> = {
 
 /** На вкладке роликов полосу занимает то, с чем человек работает. */
 const OWNER_TITLES: Record<PreviewOwner, string> = {
-  framing: "Кадр ролика",
-  subtitles: "Субтитры",
+  settings: "Кадр с настройками",
   shorts: "Готовый ролик",
 };
 
@@ -107,6 +106,9 @@ export function VideoDetail({ videoId, onBack }: Props) {
   // рамка: человек ставит паузу на нужном месте и правит настройки, глядя
   // именно на него.
   const [frame, setFrame] = useState<{ index: number; offset: number } | null>(null);
+  // Метка последней правки субтитров. Кадр предпросмотра общий: правку
+  // оформления он обязан показать так же, как правку рамки.
+  const [previewVersion, setPreviewVersion] = useState(0);
   // Качество предпросмотра — личная привычка, а не настройка проекта:
   // на слабой машине берут «быстро», на большом экране — «чётко».
   const [quality, setQuality] = useState(
@@ -354,7 +356,7 @@ export function VideoDetail({ videoId, onBack }: Props) {
       // просьбе. Момент и готовый ролик — обычное видео, и переключатель над
       // ними обещал бы то, чего не делает.
       onQuality={
-        tab === "shorts" && previewOwner !== "shorts" ? setQuality : undefined
+        tab === "shorts" && previewOwner === "settings" ? setQuality : undefined
       }
       stages={
       <div className="stages-panel">
@@ -569,18 +571,14 @@ export function VideoDetail({ videoId, onBack }: Props) {
                 видит их все сразу. */}
             <div
               className="section-body settings-column"
-              onPointerDownCapture={(e) => {
-                const panel = (e.target as HTMLElement).closest("[data-preview]");
-                const owner = panel?.getAttribute("data-preview");
-                if (owner) setPreviewOwner(owner as PreviewOwner);
-              }}
+              onPointerDownCapture={() => setPreviewOwner("settings")}
             >
-              <div data-preview="framing">
+              <div>
                 <FramingPanel
                   videoId={videoId}
                   busy={running}
                   onSaved={() => void load()}
-                  preview={previewOwner === "framing"}
+                  preview={previewOwner === "settings"}
                   // Готовые ролики точнее моментов: человек правит рамку,
                   // глядя на то, что уже собралось. Пока роликов нет, годятся
                   // и моменты — из них они и выйдут.
@@ -593,15 +591,18 @@ export function VideoDetail({ videoId, onBack }: Props) {
                   }
                   frame={frame}
                   quality={quality}
+                  version={previewVersion}
+                  // Раскладку и приближение лица правит соседняя панель —
+                  // предпросмотр обязан их учитывать.
+                  current={framing}
                 />
               </div>
               {framing?.subtitles_enabled && (
-                <div data-preview="subtitles">
+                <div>
                   <SubtitlesPanel
                     videoId={videoId}
                     disabled={running}
-                    preview={previewOwner === "subtitles"}
-                    quality={quality}
+                    onChanged={() => setPreviewVersion(Date.now())}
                   />
                 </div>
               )}

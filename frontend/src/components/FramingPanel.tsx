@@ -25,6 +25,15 @@ type Props = {
   frame?: { index: number; offset: number } | null;
   /** Высота кадра предпросмотра: меньше — быстрее. */
   quality?: number;
+  /** Метка последней правки субтитров: кадр общий, и он должен обновиться. */
+  version?: number;
+  /**
+   * Настройки ролика, какими их видит страница. Часть из них — раскладку,
+   * приближение лица, врезку — правит соседняя панель, и предпросмотр обязан
+   * их учитывать: пока он строился по своему черновику, эти правки в кадре
+   * не появлялись вовсе.
+   */
+  current?: Framing | null;
 };
 
 const ANCHORS: { value: Framing["anchor"]; label: string }[] = [
@@ -104,10 +113,16 @@ function Option({ label, checked, disabled, contentShare, sideCrop, onChange }: 
  * же видео: настраивать рамку по описанию словами невозможно.
  */
 export function FramingPanel({
-  videoId, busy, onSaved, preview = true, moments = [], quality, frame = null,
+  videoId, busy, onSaved, preview = true, moments = [], quality, frame = null, version,
+  current = null,
 }: Props) {
   const [state, setState] = useState<FramingState | null>(null);
-  const [draft, setDraft] = useState<Framing | null>(null);
+  /**
+   * Что человек поправил здесь и ещё не сохранил. Только правки, а не весь
+   * набор: остальное берётся у страницы, поэтому соседняя панель может менять
+   * раскладку, и кадр это сразу покажет.
+   */
+  const [edits, setEdits] = useState<Partial<Framing>>({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -143,13 +158,18 @@ export function FramingPanel({
       .then((data) => {
         if (!alive) return;
         setState(data);
-        setDraft(data.current);
       })
       .catch((exc) => alive && setError(exc instanceof Error ? exc.message : String(exc)));
     return () => {
       alive = false;
     };
   }, [videoId]);
+
+  // Черновик собирается заново на каждый проход: страница могла поменять
+  // раскладку соседней панелью, и кадр обязан это показать. Здешние правки
+  // ложатся поверх — они новее.
+  const base = current ?? state?.current ?? null;
+  const draft = base ? { ...base, ...edits } : null;
 
   // Предпросмотр обновляется с задержкой — иначе каждый шаг ползунка
   // запускал бы отдельный вызов ffmpeg.
@@ -162,11 +182,12 @@ export function FramingPanel({
           short: moment ? moment.index : undefined,
           offset: moment ? position : undefined,
           height: quality,
+          version,
         }),
       );
     }, PREVIEW_DELAY_MS);
     return () => window.clearTimeout(timer);
-  }, [videoId, draft, moment?.index, position, quality]);
+  }, [videoId, draft, moment?.index, position, quality, version]);
 
   const chosen = useMemo(() => {
     if (!state || !draft) return null;
@@ -194,13 +215,13 @@ export function FramingPanel({
     );
   }
 
-  const update = (patch: Partial<Framing>) => setDraft({ ...draft, ...patch });
+  const update = (patch: Partial<Framing>) => setEdits((was) => ({ ...was, ...patch }));
 
   // При custom доля обрезки задаётся вручную, иначе берётся у пресета.
   const sideCrop = draft.preset === "custom" ? draft.side_crop : (chosen?.side_crop ?? 0);
   const fullBleed = draft.preset === "custom" ? false : (chosen?.full_bleed ?? false);
   const customShare = contentShare(state.source, state.output, draft.side_crop);
-  const changed = JSON.stringify(draft) !== JSON.stringify(state.current);
+  const changed = Object.keys(edits).length > 0;
 
   async function save() {
     if (!draft) return;
@@ -208,6 +229,7 @@ export function FramingPanel({
     setError(null);
     try {
       setState(await api.setFraming(videoId, draft));
+      setEdits({});
       onSaved();
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : String(exc));
@@ -222,7 +244,8 @@ export function FramingPanel({
     try {
       const data = await api.resetFraming(videoId);
       setState(data);
-      setDraft(data.current);
+      setEdits({});
+      onSaved();
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : String(exc));
     } finally {

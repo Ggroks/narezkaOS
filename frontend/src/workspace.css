@@ -485,12 +485,12 @@ button.ghost:hover:not(:disabled) { color: var(--text); background: var(--surfac
 
 /* ── Оформление субтитров ──────────────────────────────────────────────── */
 
-/* Кадр показывается в полосе слева — здесь остаются только ручки.
-   Пока кадр жил внутри панели, он делил её ширину с настройками и на
-   вертикальном ролике выходил маленьким. */
+/* Своего кадра у панели субтитров нет: они рисуются в общем предпросмотре
+   вместе с рамкой. Двумя картинками одно и то же показывалось как два
+   разных ролика. */
 .subs-layout { display: grid; gap: var(--gap-lg); align-items: start; }
 
-.subs-preview { position: relative; inline-size: 100%; block-size: 100%; }
+.subs-note { margin-block: 0 var(--gap-sm); }
 
 .subs-controls { display: flex; flex-direction: column; min-width: 0; }
 

@@ -644,9 +644,6 @@ export const api = {
     request<SubtitlesState>(`/api/videos/${id}/subtitles`, { method: "DELETE" }),
   /** Кадр с вшитыми субтитрами. `v` заставляет браузер перезапросить его
    *  после правки — адрес иначе тот же, и показался бы прежний. */
-  subtitlePreviewUrl: (id: string, version: string, height?: number) =>
-    `/api/videos/${id}/subtitles/preview?v=${encodeURIComponent(version)}` +
-    (height ? `&height=${height}` : ""),
   framing: (id: string) => request<FramingState>(`/api/videos/${id}/framing`),
   setFraming: (id: string, payload: Framing) =>
     request<FramingState>(`/api/videos/${id}/framing`, {
@@ -666,7 +663,15 @@ export const api = {
   framingPreviewUrl: (
     id: string,
     framing: Framing,
-    options: { at?: number; height?: number; short?: number; offset?: number } = {},
+    options: {
+      at?: number;
+      height?: number;
+      short?: number;
+      offset?: number;
+      /** Метка правки субтитров: адрес обязан меняться, иначе браузер
+       *  покажет прежний кадр из своего кэша. */
+      version?: number;
+    } = {},
   ) => {
     const query = new URLSearchParams(
       Object.entries(framing).map(([key, value]) => [key, String(value)]),
@@ -681,6 +686,7 @@ export const api = {
       query.set("at", options.at.toFixed(2));
     }
     if (options.height) query.set("height", String(options.height));
+    if (options.version) query.set("v", String(options.version));
     return `/api/videos/${id}/framing/preview?${query}`;
   },
 };

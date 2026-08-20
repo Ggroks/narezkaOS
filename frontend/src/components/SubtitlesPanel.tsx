@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { PreviewSlot } from "./PreviewSlot";
 import {
   api,
   type SubtitleOptions,
@@ -24,10 +23,11 @@ import { Hint } from "./Hint";
 type Props = {
   videoId: string;
   disabled?: boolean;
-  /** Занимать ли полосу предпросмотра: она одна на экран. */
-  preview?: boolean;
-  /** Высота кадра предпросмотра: меньше — быстрее. */
-  quality?: number;
+  /**
+   * Оформление сохранено — общий предпросмотр пора перерисовать. Своего
+   * кадра у панели нет: субтитры видны в том же кадре, что и рамка.
+   */
+  onChanged?: () => void;
 };
 
 /**
@@ -38,12 +38,10 @@ type Props = {
  */
 const SAVE_DELAY_MS = 350;
 
-export function SubtitlesPanel({ videoId, disabled, preview = true, quality }: Props) {
+export function SubtitlesPanel({ videoId, disabled, onChanged }: Props) {
   const [options, setOptions] = useState<SubtitleOptions | null>(null);
   const [state, setState] = useState<SubtitlesState | null>(null);
-  const [version, setVersion] = useState("0");
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
   //: Отложенная отправка: ползунок двигают, а не щёлкают.
   const timer = useRef<number | null>(null);
 
@@ -76,7 +74,6 @@ export function SubtitlesPanel({ videoId, disabled, preview = true, quality }: P
 
         if (timer.current) window.clearTimeout(timer.current);
         timer.current = window.setTimeout(() => {
-          setLoading(true);
           api
             .setSubtitles(videoId, {
               preset: next.preset,
@@ -94,7 +91,7 @@ export function SubtitlesPanel({ videoId, disabled, preview = true, quality }: P
             })
             .then((saved) => {
               setState(saved);
-              setVersion(String(Date.now()));
+              onChanged?.();
               setError(null);
             })
             .catch((exc) => setError(exc instanceof Error ? exc.message : String(exc)));
@@ -114,10 +111,9 @@ export function SubtitlesPanel({ videoId, disabled, preview = true, quality }: P
    *  готовое оформление, а не готовое поверх своего. */
   async function choose(preset: string) {
     if (timer.current) window.clearTimeout(timer.current);
-    setLoading(true);
     try {
       setState(await api.setSubtitles(videoId, { preset }));
-      setVersion(String(Date.now()));
+      onChanged?.();
       setError(null);
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : String(exc));
@@ -147,20 +143,14 @@ export function SubtitlesPanel({ videoId, disabled, preview = true, quality }: P
       </div>
 
       <div className="subs-layout">
-        <PreviewSlot active={preview}>
-          <figure className="subs-preview">
-            {/* Кадр перерисовывается после каждой правки: адрес тот же,
-                поэтому в нём меняется метка версии — иначе браузер показал
-                бы прежний из кэша. */}
-            <img
-              src={api.subtitlePreviewUrl(videoId, version, quality)}
-              alt="Кадр записи с субтитрами"
-              onLoad={() => setLoading(false)}
-              onError={() => setLoading(false)}
-            />
-            {loading && <figcaption className="preview-note small dim">Готовим кадр…</figcaption>}
-          </figure>
-        </PreviewSlot>
+        {/* Своего кадра у панели нет намеренно: субтитры ложатся в тот же
+            кадр, что и рамка, — в сплите на нижнюю полосу, во врезке рядом
+            с окошком. Двумя картинками это показывали как два разных
+            ролика. */}
+        <p className="small dim subs-note">
+          Субтитры видны в общем предпросмотре слева. Если в кадре тишина,
+          текста в нём не будет — отмотайте дорожку под кадром к речи.
+        </p>
 
         <div className="subs-controls">
           <h4 className="group-title">Готовые наборы</h4>

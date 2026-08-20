@@ -701,3 +701,80 @@ def test_preview_ignores_a_short_that_is_not_there(client, video, monkeypatch) -
     assert client.get(
         f"/api/videos/{VIDEO}/framing/preview?short=77&offset=3"
     ).status_code == 200
+
+
+def test_every_framing_field_shows_up_before_saving(client, video, monkeypatch) -> None:
+    """Любая настройка кадра видна в предпросмотре до «Запомнить кадр».
+
+    Сервер принимал правкой шесть полей из двадцати, а список был переписан
+    рядом с ручкой. Раскладка, приближение лица и врезка на кадр не влияли —
+    увидеть их можно было только после сохранения и обновления страницы.
+    """
+    from narezka.core.config import FramingConfig
+
+    chains: dict[str, str] = {}
+
+    def fake_run(args, **kwargs):
+        chains[args[args.index("-ss") + 1]] = args[args.index("-filter_complex") + 1]
+        Path(args[-1]).write_bytes(b"\xff\xd8\xff")
+        return ""
+
+    monkeypatch.setattr(api_app, "run_tool", fake_run)
+    (video / "source" / "source.mp4").write_bytes(b"\x00" * 16)
+
+    # Вебка нужна раскладкам вокруг лица: без неё они неприменимы.
+    write(video, "analysis/facecam.json", {
+        "clips": {"0": {
+            "x": 768, "y": 336, "width": 512, "height": 384,
+            "face": {"x": 1059, "y": 336, "width": 110, "height": 110},
+        }},
+    })
+
+    plain = client.get(f"/api/videos/{VIDEO}/framing/preview?at=5")
+    assert plain.status_code == 200
+    before = next(iter(chains.values()))
+
+    # Раскладка, приближение лица и размытие: первые два сервер молча
+    # игнорировал, потому что список правок был переписан рядом с ручкой.
+    for query in ("layout=camera", "layout=camera&face_zoom=1.6", "blur_sigma=3"):
+        for field in (item.split("=")[0] for item in query.split("&")):
+            assert field in FramingConfig.model_fields
+        chains.clear()
+        answer = client.get(f"/api/videos/{VIDEO}/framing/preview?at=5&{query}")
+        assert answer.status_code == 200, answer.text
+        assert next(iter(chains.values())) != before, f"правка «{query}» не дошла до кадра"
+
+
+def test_one_preview_draws_subtitles_too(client, video, monkeypatch) -> None:
+    """Кадр один: и рамка, и субтитры. Двух предпросмотров быть не должно.
+
+    Субтитры ложатся в тот же кадр, что и рамка — в сплите на нижнюю полосу,
+    — и порознь это показывало два разных ролика.
+    """
+    chains: list[str] = []
+
+    def fake_run(args, **kwargs):
+        chains.append(args[args.index("-filter_complex") + 1])
+        Path(args[-1]).write_bytes(b"\xff\xd8\xff")
+        return ""
+
+    monkeypatch.setattr(api_app, "run_tool", fake_run)
+    (video / "source" / "source.mp4").write_bytes(b"\x00" * 16)
+    write(video, "transcript/transcript.json", {
+        "segments": [{
+            "start": 4.0, "end": 6.0, "text": "привет",
+            "words": [{"start": 4.8, "end": 5.2, "word": "привет"}],
+        }],
+    })
+
+    assert client.get(f"/api/videos/{VIDEO}/framing/preview?at=5").status_code == 200
+    assert "subtitles=" in chains[-1], "субтитры не попали в общий кадр"
+
+    # Отдельного предпросмотра субтитров больше нет — он и был вторым кадром.
+    assert client.get(f"/api/videos/{VIDEO}/subtitles/preview").status_code == 404
+
+    # Снятая галочка убирает текст из того же кадра.
+    assert client.get(
+        f"/api/videos/{VIDEO}/framing/preview?at=5&subtitles_enabled=false"
+    ).status_code == 200
+    assert "subtitles=" not in chains[-1]

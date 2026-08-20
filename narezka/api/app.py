@@ -1440,15 +1440,10 @@ def reset_framing(video_id: str, project: str = "default") -> dict[str, Any]:
 
 @app.get("/api/videos/{video_id}/framing/preview")
 def framing_preview(
+    request: Request,
     video_id: str,
     project: str = "default",
     at: float | None = Query(default=None, ge=0),
-    preset: str | None = None,
-    side_crop: float | None = Query(default=None, ge=0, le=0.95),
-    anchor: str | None = None,
-    background: str | None = None,
-    blur_sigma: float | None = Query(default=None, ge=0, le=200),
-    color: str | None = None,
     height: int = Query(
         default=PREVIEW_HEIGHT, ge=PREVIEW_MIN_HEIGHT, le=PREVIEW_MAX_HEIGHT,
         description="Высота кадра: меньше — быстрее",
@@ -1456,25 +1451,26 @@ def framing_preview(
     short: int | None = Query(default=None, ge=0, description="Номер готового ролика"),
     offset: float | None = Query(default=None, ge=0, description="Секунда внутри ролика"),
 ):
-    """Один кадр в готовой рамке — чтобы настраивать глазами, а не наугад.
+    """Кадр ролика с текущими настройками — чтобы настраивать глазами.
 
-    Параметры перекрывают сохранённые: интерфейс показывает результат ещё до
-    того, как пользователь нажал «Сохранить». Полный рендер ради проверки
-    геометрии занимает минуты, один кадр — доли секунды.
+    Один на всё: рамка, раскладка, субтитры. Двух предпросмотров быть не
+    должно — человек настраивает один кадр, а не два разных.
+
+    Любое поле кадрирования принимается правкой прямо в запросе, поэтому
+    результат виден до нажатия «Запомнить кадр». Список полей берётся из
+    самого конфига, а не переписывается здесь: пока он был переписан,
+    половина настроек — раскладка, приближение лица, врезка — на кадр
+    не влияла, и увидеть их можно было только после сохранения.
+
+    Полный рендер ради проверки геометрии занимает минуты, один кадр —
+    доли секунды.
     """
     paths, ctx, current, src_w, src_h = _framing_state(video_id, project)
 
     overrides = {
         key: value
-        for key, value in {
-            "preset": preset,
-            "side_crop": side_crop,
-            "anchor": anchor,
-            "background": background,
-            "blur_sigma": blur_sigma,
-            "color": color,
-        }.items()
-        if value is not None
+        for key, value in request.query_params.items()
+        if key in FramingConfig.model_fields and value != ""
     }
     try:
         requested = Framing(**FramingConfig(**{**current.__dict__, **overrides}).model_dump())
@@ -1501,12 +1497,48 @@ def framing_preview(
     output = ctx.config.output.short
     plan = plan_frame(src_w, src_h, output.width, output.height, requested)
 
+    # Субтитры рисуются в этом же кадре, а не в своём отдельном. Их
+    # оформление зависит от раскладки — в сплите строка ложится на нижнюю
+    # полосу, — а раскладка от них не зависит вовсе, и разглядывать это
+    # порознь было нечестно: два кадра показывали два разных ролика.
+    style = settings.subtitles(ctx.config, paths)
+    # Переключатель субтитров живёт не в кадрировании, а рядом с ним — в том
+    # же наборе настроек ролика. Правка из запроса учитывается так же, как
+    # для рамки: снял галочку — кадр сразу без текста.
+    asked = request.query_params.get("subtitles_enabled")
+    wants_subtitles = (
+        asked.lower() not in ("false", "0", "")
+        if asked is not None
+        else load_options(ctx)["subtitles_enabled"]
+    )
+    words = _preview_words(paths, position) if wants_subtitles else []
+    ass_file = None
+    if words:
+        ass = subs.build_ass(
+            words, style=style, width=output.width, height=output.height,
+            time_offset=position,
+        )
+        ass_slug = hashlib.sha256(
+            json.dumps(
+                {**style.__dict__, "at": round(position, 2)},
+                sort_keys=True, ensure_ascii=False,
+            ).encode()
+        ).hexdigest()[:12]
+        ass_file = (paths.base / "meta" / f"preview-{ass_slug}.ass").resolve()
+        ass_file.write_text(ass, encoding="utf-8")
+
     # Имя от параметров: несколько вкладок с разными настройками не затрут
-    # предпросмотр друг друга.
+    # предпросмотр друг друга. Оформление субтитров входит наравне с рамкой —
+    # иначе смена цвета возвращала бы прежний кадр из кэша.
     slug = hashlib.sha256(
         json.dumps(
-            {**requested.__dict__, "at": round(position, 2), "height": height},
-            sort_keys=True,
+            {
+                **requested.__dict__,
+                **({"subtitles": style.__dict__} if ass_file else {}),
+                "at": round(position, 2),
+                "height": height,
+            },
+            sort_keys=True, ensure_ascii=False,
         ).encode()
     ).hexdigest()[:12]
     target = paths.base / "meta" / f"preview-{slug}.jpg"
@@ -1517,6 +1549,8 @@ def framing_preview(
     chain = build_layout_filter(
         requested, plan, output.width, output.height,
         **_preview_layout(paths, requested, src_w, src_h, output, at=position),
+        subtitle_name=fonts.escape_for_filter(ass_file) if ass_file else None,
+        fonts_dir=fonts.escape_for_filter(fonts.fonts_dir()) if ass_file else None,
     )
     chain = chain.removesuffix("[v]") + f",scale=-2:{height}[v]"
 
@@ -1540,6 +1574,7 @@ def framing_preview(
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     _trim_previews(paths)
+    _trim_previews_of(paths, "preview-*.ass", PREVIEW_KEEP)
     return serve_file(target, None)
 
 
@@ -1557,138 +1592,6 @@ def _preview_words(paths, at: float, span: float = 6.0) -> list[dict[str, Any]]:
     except ValueError:
         return []
     return subs.words_in_range(segments, at - span, at + span)
-
-
-def _speaking_moment(words: list[dict[str, Any]], at: float) -> float | None:
-    """Мгновение, когда слово действительно звучит.
-
-    Кадр из тишины между фразами выглядит как «субтитры не работают»:
-    первая же попытка предпросмотра пришлась ровно в паузу, и картинка
-    вышла пустой. Берётся середина ближайшего слова — там текст на экране
-    есть наверняка.
-    """
-    if not words:
-        return None
-    nearest = min(words, key=lambda w: abs((w["start"] + w["end"]) / 2 - at))
-    return (nearest["start"] + nearest["end"]) / 2
-
-
-@app.get("/api/videos/{video_id}/subtitles/preview")
-def subtitles_preview(
-    video_id: str,
-    project: str = "default",
-    at: float | None = Query(default=None, ge=0),
-    height: int = Query(
-        default=PREVIEW_HEIGHT, ge=PREVIEW_MIN_HEIGHT, le=PREVIEW_MAX_HEIGHT,
-        description="Высота кадра: меньше — быстрее",
-    ),
-):
-    """Кадр с вшитыми субтитрами — как будет в готовом ролике.
-
-    Настраивать шрифт и цвет по описанию словами невозможно, а полный рендер
-    ради проверки занимает минуты. Тот же приём, что у предпросмотра рамки:
-    один кадр за доли секунды.
-
-    Раскладка берётся настоящая, включая сплит с вебкой: в нём субтитры
-    ложатся на нижнюю полосу, и в одиночной раскладке этого не увидеть.
-    """
-    paths, ctx, current, src_w, src_h = _framing_state(video_id, project)
-    short = ctx.config.output.short
-
-    metadata_artifact = Artifact(paths.metadata)
-    metadata = metadata_artifact.read_json() if metadata_artifact.exists() else {}
-    if not metadata.get("has_video", True):
-        raise HTTPException(status_code=409, detail="в источнике нет картинки")
-
-    try:
-        source = find_source(paths.source)
-    except MediaError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-    asked = at
-    if asked is None and current.layout == "split":
-        asked = _split_moment(paths)
-    if asked is None:
-        asked = _preview_position(paths, metadata)
-    style = settings.subtitles(ctx.config, paths)
-
-    position = _speaking_moment(_preview_words(paths, asked), asked)
-    if position is None:
-        raise HTTPException(
-            status_code=409,
-            detail="рядом нет распознанных слов — покажите момент с речью",
-        )
-    # Слова берутся вокруг найденного мгновения, а не вокруг запрошенного:
-    # реплика должна попасть в кадр целиком, а не обрезанной по краю окна.
-    words = _preview_words(paths, position, span=4.0)
-
-    # Смещение равно самому моменту: кадр вырезается по нему, и в выходной
-    # дорожке он оказывается в нуле.
-    ass = subs.build_ass(
-        words, style=style, width=short.width, height=short.height, time_offset=position
-    )
-    # В ключ идёт вся рамка целиком, а не одна раскладка: приближение лица
-    # и высота полосы меняют картинку так же, как цвет субтитров. Замер это
-    # и показал — три разных приближения вернули один и тот же кадр из кэша.
-    slug = hashlib.sha256(
-        json.dumps(
-            {**style.__dict__, **current.__dict__, "at": round(position, 2), "height": height},
-            sort_keys=True, ensure_ascii=False,
-        ).encode()
-    ).hexdigest()[:12]
-
-    ass_file = paths.base / "meta" / f"preview-{slug}.ass"
-    ass_file.write_text(ass, encoding="utf-8")
-    target = paths.base / "meta" / f"preview-subs-{slug}.jpg"
-
-    if not target.exists():
-        chain = _preview_chain(
-            paths, ctx, current, src_w, src_h, ass_file, at=position, height=height
-        )
-        try:
-            run_tool(
-                [
-                    "ffmpeg", "-nostdin", "-v", "error", "-y",
-                    "-ss", f"{position:.3f}",
-                    "-i", str(source.resolve()),
-                    "-frames:v", "1",
-                    "-filter_complex", chain,
-                    "-map", "[v]",
-                    "-q:v", "4",
-                    "-f", "mjpeg",
-                    str(target),
-                ],
-                timeout=60,
-            )
-        except Exception as exc:  # noqa: BLE001
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-    _trim_previews_of(paths, "preview-subs-*.jpg", PREVIEW_KEEP)
-    _trim_previews_of(paths, "preview-*.ass", PREVIEW_KEEP)
-    return serve_file(target, None)
-
-
-def _preview_chain(
-    paths, ctx, current, src_w, src_h, ass_file,
-    at: float | None = None, height: int = PREVIEW_HEIGHT,
-) -> str:
-    """Цепочка фильтров предпросмотра — та же, что у рендера.
-
-    Собирается из тех же функций, что и настоящая сборка: если предпросмотр
-    строить отдельно, он однажды разойдётся с результатом, и настраивать
-    будут по картинке, которой не будет в ролике.
-    """
-    short = ctx.config.output.short
-    fonts_arg = fonts.escape_for_filter(fonts.fonts_dir())
-    name = fonts.escape_for_filter(ass_file)
-
-    plan = plan_frame(src_w, src_h, short.width, short.height, current)
-    chain = build_layout_filter(
-        current, plan, short.width, short.height,
-        **_preview_layout(paths, current, src_w, src_h, short, at=at),
-        subtitle_name=name, fonts_dir=fonts_arg,
-    )
-    return chain.removesuffix("[v]") + f",scale=-2:{height}[v]"
 
 
 def _facecam_clips(paths) -> dict[str, Any]:

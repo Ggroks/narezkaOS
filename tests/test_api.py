@@ -621,3 +621,37 @@ def test_new_framing_settings_round_trip(client, video) -> None:
 
     # И доходят до конфига, с которым работает стадия.
     assert api_app._context(VIDEO, "default").config.output.framing.pip_corner == "bottom_right"
+
+
+def test_preview_quality_changes_the_picture(client, video, monkeypatch) -> None:
+    """Качество предпросмотра — это скорость: мелкий кадр считается быстрее.
+
+    Высота обязана попасть и в цепочку фильтров, и в ключ кэша: иначе после
+    переключения вернётся прежняя картинка из кэша, и настройка будет
+    выглядеть сломанной.
+    """
+    calls: list[list[str]] = []
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        # Файл создаёт ffmpeg; здесь его подделываем, чтобы ручка дошла до конца.
+        Path(args[-1]).write_bytes(b"\xff\xd8\xff")
+        return ""
+
+    monkeypatch.setattr(api_app, "run_tool", fake_run)
+    (video / "source" / "source.mp4").write_bytes(b"\x00" * 16)
+
+    assert client.get(f"/api/videos/{VIDEO}/framing/preview?height=480").status_code == 200
+    assert client.get(f"/api/videos/{VIDEO}/framing/preview?height=1440").status_code == 200
+
+    chains = [args[args.index("-filter_complex") + 1] for args in calls]
+    assert "scale=-2:480" in chains[0]
+    assert "scale=-2:1440" in chains[1]
+    # Разные файлы, а не один: ключ учитывает высоту.
+    assert calls[0][-1] != calls[1][-1], "кадры разной высоты легли в один файл"
+
+
+def test_preview_quality_is_bounded(client, video) -> None:
+    """Нулевая высота — не кадр, а тысяча пятьсот — время без разницы на глаз."""
+    assert client.get(f"/api/videos/{VIDEO}/framing/preview?height=10").status_code == 422
+    assert client.get(f"/api/videos/{VIDEO}/framing/preview?height=4000").status_code == 422

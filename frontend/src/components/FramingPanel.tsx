@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { PreviewSlot } from "./PreviewSlot";
-import { api, type Framing, type FramingState } from "../api";
+import { Timeline } from "./Timeline";
+import { api, formatDuration, type Framing, type FramingState } from "../api";
 
 type Props = {
   videoId: string;
@@ -11,6 +12,13 @@ type Props = {
   onSaved: () => void;
   /** Занимать ли полосу предпросмотра: она одна на экран. */
   preview?: boolean;
+  /**
+   * Отрезки, из которых выйдут ролики: по ним выбирается момент для кадра.
+   * Пусто — сервер сам возьмёт первый кандидат.
+   */
+  moments?: { index: number; start: number; end: number }[];
+  /** Высота кадра предпросмотра: меньше — быстрее. */
+  quality?: number;
 };
 
 const ANCHORS: { value: Framing["anchor"]; label: string }[] = [
@@ -89,13 +97,27 @@ function Option({ label, checked, disabled, contentShare, sideCrop, onChange }: 
  * варианта подписаны оба числа, а рядом всегда висит настоящий кадр из этого
  * же видео: настраивать рамку по описанию словами невозможно.
  */
-export function FramingPanel({ videoId, busy, onSaved, preview = true }: Props) {
+export function FramingPanel({
+  videoId, busy, onSaved, preview = true, moments = [], quality,
+}: Props) {
   const [state, setState] = useState<FramingState | null>(null);
   const [draft, setDraft] = useState<Framing | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  // Какой отрезок и какое место в нём показывать. Раньше кадр всегда был
+  // один и тот же — первый найденный кандидат, — и проверить рамку на своём
+  // ролике было нельзя.
+  const [pick, setPick] = useState(0);
+  const [at, setAt] = useState<number | null>(null);
+
+  const moment = moments[Math.min(pick, Math.max(moments.length - 1, 0))];
+  // Середина отрезка: в начале ролика часто ещё титры или тишина.
+  const position = at ?? (moment ? moment.start + (moment.end - moment.start) / 2 : null);
+
+  // Сменили отрезок — место внутри прежнего больше не значит ничего.
+  useEffect(() => setAt(null), [pick]);
 
   useEffect(() => {
     let alive = true;
@@ -118,10 +140,15 @@ export function FramingPanel({ videoId, busy, onSaved, preview = true }: Props) 
     if (!draft) return;
     const timer = window.setTimeout(() => {
       setPreviewLoading(true);
-      setPreviewUrl(api.framingPreviewUrl(videoId, draft));
+      setPreviewUrl(
+        api.framingPreviewUrl(videoId, draft, {
+          at: position ?? undefined,
+          height: quality,
+        }),
+      );
     }, PREVIEW_DELAY_MS);
     return () => window.clearTimeout(timer);
-  }, [videoId, draft]);
+  }, [videoId, draft, position, quality]);
 
   const chosen = useMemo(() => {
     if (!state || !draft) return null;
@@ -215,6 +242,42 @@ export function FramingPanel({ videoId, busy, onSaved, preview = true }: Props) 
               <span className="preview-note small dim" role="status">
                 обновляется…
               </span>
+            )}
+
+            {/* Выбор места, по которому судить о рамке. Кадр из середины
+                записи ничего не говорит о ролике на пятнадцатой минуте:
+                там другой свет, другая раскладка и вебка в другом углу. */}
+            {moment && position != null && (
+              <div className="preview-pick" onPointerDown={(e) => e.stopPropagation()}>
+                <div className="row">
+                  <button
+                    className="icon"
+                    aria-label="Предыдущий момент"
+                    disabled={pick <= 0}
+                    onClick={() => setPick((was) => Math.max(was - 1, 0))}
+                  >
+                    <span aria-hidden="true">‹</span>
+                  </button>
+                  <span className="small dim grow tnum">
+                    момент {pick + 1} из {moments.length} · {formatDuration(position)}
+                  </span>
+                  <button
+                    className="icon"
+                    aria-label="Следующий момент"
+                    disabled={pick >= moments.length - 1}
+                    onClick={() => setPick((was) => Math.min(was + 1, moments.length - 1))}
+                  >
+                    <span aria-hidden="true">›</span>
+                  </button>
+                </div>
+                <Timeline
+                  from={moment.start}
+                  to={moment.end}
+                  position={position}
+                  onSeek={setAt}
+                  label="Место в моменте, по которому показан кадр"
+                />
+              </div>
             )}
           </div>
         </PreviewSlot>

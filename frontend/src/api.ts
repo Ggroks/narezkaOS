@@ -644,8 +644,9 @@ export const api = {
     request<SubtitlesState>(`/api/videos/${id}/subtitles`, { method: "DELETE" }),
   /** Кадр с вшитыми субтитрами. `v` заставляет браузер перезапросить его
    *  после правки — адрес иначе тот же, и показался бы прежний. */
-  subtitlePreviewUrl: (id: string, version: string) =>
-    `/api/videos/${id}/subtitles/preview?v=${encodeURIComponent(version)}`,
+  subtitlePreviewUrl: (id: string, version: string, height?: number) =>
+    `/api/videos/${id}/subtitles/preview?v=${encodeURIComponent(version)}` +
+    (height ? `&height=${height}` : ""),
   framing: (id: string) => request<FramingState>(`/api/videos/${id}/framing`),
   setFraming: (id: string, payload: Framing) =>
     request<FramingState>(`/api/videos/${id}/framing`, {
@@ -654,11 +655,24 @@ export const api = {
     }),
   resetFraming: (id: string) =>
     request<FramingState>(`/api/videos/${id}/framing`, { method: "DELETE" }),
-  /** Кадр в готовой рамке — предпросмотр до полного рендера. */
-  framingPreviewUrl: (id: string, framing: Framing) => {
+  /**
+   * Кадр в готовой рамке — предпросмотр до полного рендера.
+   *
+   * `at` — момент записи, который показывать. Без него сервер берёт первый
+   * найденный кандидат: настраивать кадр по случайному месту записи можно
+   * только вслепую, и человек хочет видеть именно тот ролик, который правит.
+   * `height` — качество: мелкий кадр считается заметно быстрее.
+   */
+  framingPreviewUrl: (
+    id: string,
+    framing: Framing,
+    options: { at?: number; height?: number } = {},
+  ) => {
     const query = new URLSearchParams(
       Object.entries(framing).map(([key, value]) => [key, String(value)]),
     );
+    if (options.at != null) query.set("at", options.at.toFixed(2));
+    if (options.height) query.set("height", String(options.height));
     return `/api/videos/${id}/framing/preview?${query}`;
   },
 };

@@ -26,6 +26,8 @@ type Props = {
   disabled?: boolean;
   /** Занимать ли полосу предпросмотра: она одна на экран. */
   preview?: boolean;
+  /** Высота кадра предпросмотра: меньше — быстрее. */
+  quality?: number;
 };
 
 /**
@@ -36,7 +38,7 @@ type Props = {
  */
 const SAVE_DELAY_MS = 350;
 
-export function SubtitlesPanel({ videoId, disabled, preview = true }: Props) {
+export function SubtitlesPanel({ videoId, disabled, preview = true, quality }: Props) {
   const [options, setOptions] = useState<SubtitleOptions | null>(null);
   const [state, setState] = useState<SubtitlesState | null>(null);
   const [version, setVersion] = useState("0");
@@ -151,7 +153,7 @@ export function SubtitlesPanel({ videoId, disabled, preview = true }: Props) {
                 поэтому в нём меняется метка версии — иначе браузер показал
                 бы прежний из кэша. */}
             <img
-              src={api.subtitlePreviewUrl(videoId, version)}
+              src={api.subtitlePreviewUrl(videoId, version, quality)}
               alt="Кадр записи с субтитрами"
               onLoad={() => setLoading(false)}
               onError={() => setLoading(false)}

@@ -123,11 +123,50 @@
   inline-size: clamp(230px, 22vw, 300px);
 }
 .preview-head {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-xs);
   padding-inline: 2px;
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
+
+/* Качество предпросмотра — рядом с самим предпросмотром: это про него,
+   а не про проект, и в общих настройках его искали бы долго. */
+.preview-quality { display: flex; gap: 2px; }
+.preview-quality button {
+  padding: 2px 7px;
+  font-size: 11px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-dim);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-inner);
+}
+.preview-quality button:hover { color: var(--text); background: var(--surface-2); }
+.preview-quality button.current { color: var(--text); background: var(--surface-3); }
+
+/* Выбор момента живёт поверх нижней части кадра: отдельной строкой под
+   полосой он отъедал бы её высоту, а она и есть главное. */
+.preview-pick {
+  position: absolute;
+  inset-inline: 8px;
+  inset-block-end: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px 10px;
+  border-radius: var(--radius-inner);
+  background: color-mix(in oklch, var(--bg) 72%, transparent);
+  backdrop-filter: blur(8px);
+}
+/* `flex: 1` у дорожки рассчитан на строку управления, а здесь колонка:
+   в ней основа 0 обнуляет высоту, и дорожка схлопывалась в невидимую
+   полоску — кликнуть по ней было нельзя. */
+.preview-pick .timeline { flex: none; block-size: 22px; }
+.preview-pick .icon { inline-size: 24px; block-size: 24px; padding: 0; }
 /* Пропорция ролика: 9:16. Полоса держит её всегда — и когда внутри кадр,
    и когда пусто, — иначе колонка дёргается при каждой смене предпросмотра. */
 .preview-frame {

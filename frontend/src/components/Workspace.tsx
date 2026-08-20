@@ -62,11 +62,27 @@ type Props = {
   running?: boolean;
   /** Заголовок над предпросмотром — что именно в нём сейчас показано. */
   previewTitle?: string;
+  /** Качество предпросмотра: высота кадра в пикселях. */
+  quality?: number;
+  onQuality?: (height: number) => void;
   children: React.ReactNode;
 };
 
+/**
+ * Качество предпросмотра. Кадр считается настоящим ffmpeg на настоящей
+ * записи, и его размер — это время: на слабой машине мелкий появляется
+ * втрое быстрее. Кому важна скорость подбора, тот берёт «быстро»; кто
+ * смотрит, как легли субтитры, — «чётко».
+ */
+const QUALITY = [
+  { height: 480, title: "Быстро" },
+  { height: 960, title: "Обычно" },
+  { height: 1440, title: "Чётко" },
+];
+
 export function Workspace({
-  tabs, active, onSelect, title, subtitle, actions, stages, running, previewTitle, children,
+  tabs, active, onSelect, title, subtitle, actions, stages, running, previewTitle,
+  quality, onQuality, children,
 }: Props) {
   const [openStages, setOpenStages] = useState(
     () => localStorage.getItem("stages-open") !== "0",
@@ -112,7 +128,24 @@ export function Workspace({
         {/* Полоса стоит всегда, даже пустой: если она то появляется, то
             исчезает, соседняя колонка прыгает при каждом переключении. */}
         <aside className="workspace-preview" aria-label="Предпросмотр">
-          <div className="preview-head small dim">{previewTitle ?? "Предпросмотр"}</div>
+          <div className="preview-head small dim">
+            <span className="grow">{previewTitle ?? "Предпросмотр"}</span>
+            {onQuality && (
+              <span className="preview-quality" role="group" aria-label="Качество предпросмотра">
+                {QUALITY.map((item) => (
+                  <button
+                    key={item.height}
+                    type="button"
+                    className={quality === item.height ? "current" : ""}
+                    title={`Высота кадра ${item.height} px`}
+                    onClick={() => onQuality(item.height)}
+                  >
+                    {item.title}
+                  </button>
+                ))}
+              </span>
+            )}
+          </div>
           <div id={PREVIEW_SLOT_ID} className="preview-frame" />
         </aside>
 

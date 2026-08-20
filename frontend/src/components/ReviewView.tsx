@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { PreviewSlot } from "./PreviewSlot";
+import { Timeline } from "./Timeline";
 import { api, formatDuration, type Review, type ReviewClip, type Verdict } from "../api";
 
 /** Оценка красится по смыслу, а не градиентом: три ступени читаются быстрее. */
@@ -75,7 +76,35 @@ export function ReviewView({ videoId, durationSeconds }: Props) {
    * в другое. Запас должен совпадать с серверным `PREVIEW_LEAD`.
    */
   const lead = 4;
-  const offset = clip ? Math.max(clip.start - lead, 0) : 0;
+
+  /**
+   * Границы куска, который загружен в плеер. Берутся один раз на момент и
+   * не следуют за подрезкой.
+   *
+   * Иначе каждая правка перезагружала кусок, а вместе с ним ехала и шкала:
+   * ручка после тяги возвращалась на прежнее место, потому что дорожка
+   * отсчитывалась от новой границы. Выглядело это как «подрезка не
+   * сработала», хотя границы менялись.
+   */
+  const [base, setBase] = useState<{ index: number; start: number; end: number } | null>(null);
+
+  useEffect(() => {
+    if (!clip) return;
+    setBase((was) =>
+      was && was.index === clip.index
+        ? was
+        : {
+            index: clip.index,
+            // С запасом на обе стороны от того, что предлагала автоматика:
+            // подрезать можно и внутрь, и наружу.
+            start: Math.min(clip.start, clip.original?.start ?? clip.start),
+            end: Math.max(clip.end, clip.original?.end ?? clip.end),
+          },
+    );
+  }, [clip]);
+
+  const span = base && base.index === clip?.index ? base : clip;
+  const offset = span ? Math.max(span.start - lead, 0) : 0;
 
   const seekTo = useCallback(
     (seconds: number, play = false) => {
@@ -132,16 +161,20 @@ export function ReviewView({ videoId, durationSeconds }: Props) {
   );
 
   const setBound = useCallback(
-    async (edge: "start" | "end") => {
+    async (edge: "start" | "end", moment?: number) => {
       if (!clip || !videoRef.current) return;
-      const at = Number(videoRef.current.currentTime.toFixed(2));
+      // Время записи, а не время внутри вырезанного куска: плеер играет
+      // фрагмент, начинающийся с `offset`, а границы хранятся в секундах
+      // записи. Без слагаемого начало момента на 15-й минуте уезжало
+      // на четвёртую секунду записи.
+      const at = Number((moment ?? offset + videoRef.current.currentTime).toFixed(2));
       try {
         setReview(await api.setReview(videoId, clip.index, { [edge]: at }));
       } catch (exc) {
         setError(exc instanceof Error ? exc.message : String(exc));
       }
     },
-    [videoId, clip],
+    [videoId, clip, offset],
   );
 
   const clearVerdict = useCallback(async () => {
@@ -200,13 +233,6 @@ export function ReviewView({ videoId, durationSeconds }: Props) {
     root.addEventListener("keydown", onKey);
     return () => root.removeEventListener("keydown", onKey);
   }, [active, select, seekTo, togglePlay, setBound, decide, clearVerdict]);
-
-  const progress = useMemo(() => {
-    if (!clip) return 0;
-    const span = clip.end - clip.start;
-    if (span <= 0) return 0;
-    return Math.min(Math.max((playhead - clip.start) / span, 0), 1);
-  }, [clip, playhead]);
 
   if (error && !review) {
     return (
@@ -272,7 +298,7 @@ export function ReviewView({ videoId, durationSeconds }: Props) {
         <PreviewSlot>
           <video
             ref={videoRef}
-            src={clip ? api.reviewMediaUrl(videoId, clip.index, clip.start, clip.end) : undefined}
+            src={span ? api.reviewMediaUrl(videoId, span.index, span.start, span.end) : undefined}
             preload="metadata"
             onPlay={() => setPlaying(true)}
             onPause={() => setPlaying(false)}
@@ -284,30 +310,36 @@ export function ReviewView({ videoId, durationSeconds }: Props) {
 
         {clip && (
           <>
-            {/* Полоса отрезка: где идёт воспроизведение внутри клипа, а не
-                внутри всей записи — судить приходится именно об отрезке. */}
-            <div
-              className="review-track"
-              role="img"
-              aria-label={`Позиция внутри момента: ${Math.round(progress * 100)}%`}
-            >
-              <div className="review-track-fill" style={{ inlineSize: `${progress * 100}%` }} />
-            </div>
-
-            <div className="row wrap review-controls">
-              <button onClick={togglePlay} aria-label={playing ? "Пауза" : "Играть"}>
-                {playing ? "Пауза" : "Играть"}
+            {/* Перемотка и подрезка — тягой по дорожке, как в любом
+                видеоредакторе. Рядом кнопок «Начало здесь» и «Конец здесь»
+                не было видно ни где ты находишься, ни куда двигаешь
+                границу: чтобы подрезать начало, приходилось сперва доиграть
+                до нужного кадра. */}
+            <div className="transport">
+              <button
+                className="transport-play"
+                onClick={togglePlay}
+                aria-label={playing ? "Пауза" : "Играть"}
+                title="Пробел"
+              >
+                <span aria-hidden="true">{playing ? "❚❚" : "▶"}</span>
               </button>
-              <button onClick={() => seekTo(clip.start, true)}>С начала момента</button>
-              <span className="small dim tnum grow">
-                {formatDuration(playhead)} из {formatDuration(clip.end)}
+              <span className="small dim tnum transport-time">
+                {formatDuration(playhead)} <span className="dim">/ {formatDuration(clip.end)}</span>
               </span>
-              <button onClick={() => void setBound("start")} title="Клавиша [">
-                Начало здесь
-              </button>
-              <button onClick={() => void setBound("end")} title="Клавиша ]">
-                Конец здесь
-              </button>
+              <Timeline
+                from={offset}
+                to={Math.max((span?.end ?? clip.end) + lead, offset + 1)}
+                position={playhead}
+                onSeek={(at) => seekTo(at)}
+                clipStart={clip.start}
+                clipEnd={clip.end}
+                onTrim={(edge, at) => void setBound(edge, at)}
+                label="Момент: положение и границы"
+              />
+              <span className="small dim tnum transport-length">
+                {(clip.end - clip.start).toFixed(0)} с
+              </span>
             </div>
 
             <div className="row wrap review-verdict">
@@ -325,8 +357,15 @@ export function ReviewView({ videoId, durationSeconds }: Props) {
               >
                 Не годится
               </button>
-              <button onClick={() => void clearVerdict()} disabled={clip.verdict === null}>
-                Снять оценку
+              {/* Одна кнопка снимает всё решение целиком — и оценку, и
+                  подрезанные границы. Пока она смотрела только на оценку,
+                  вернуть сдвинутую границу было нечем: подрезал — и живи
+                  с этим. Название говорит, что именно снимется. */}
+              <button
+                onClick={() => void clearVerdict()}
+                disabled={clip.verdict === null && !clip.edited}
+              >
+                {clip.verdict === null ? "Вернуть границы" : "Снять оценку"}
               </button>
               {clip.edited && clip.original && (
                 <span className="small dim tnum">

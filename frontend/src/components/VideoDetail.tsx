@@ -103,6 +103,16 @@ export function VideoDetail({ videoId, onBack }: Props) {
   // готовый ролик: на эту вкладку приходят смотреть. Стоит тронуть настройки,
   // и полоса показывает их.
   const [previewOwner, setPreviewOwner] = useState<PreviewOwner>("shorts");
+  // Качество предпросмотра — личная привычка, а не настройка проекта:
+  // на слабой машине берут «быстро», на большом экране — «чётко».
+  const [quality, setQuality] = useState(
+    () => Number(localStorage.getItem("preview-quality")) || 960,
+  );
+
+  useEffect(() => {
+    localStorage.setItem("preview-quality", String(quality));
+  }, [quality]);
+
   const [currentTime, setCurrentTime] = useState(0);
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -335,6 +345,13 @@ export function VideoDetail({ videoId, onBack }: Props) {
       // Что именно сейчас в полосе слева. Полоса одна на все вкладки, и без
       // подписи непонятно, кадр это записи, момент или готовый ролик.
       previewTitle={tab === "shorts" ? OWNER_TITLES[previewOwner] : PREVIEW_TITLES[tab]}
+      quality={quality}
+      // Качество имеет смысл только там, где кадр считается ffmpeg по нашей
+      // просьбе. Момент и готовый ролик — обычное видео, и переключатель над
+      // ними обещал бы то, чего не делает.
+      onQuality={
+        tab === "shorts" && previewOwner !== "shorts" ? setQuality : undefined
+      }
       stages={
       <div className="stages-panel">
         <h3>Ход работы</h3>
@@ -560,6 +577,15 @@ export function VideoDetail({ videoId, onBack }: Props) {
                   busy={running}
                   onSaved={() => void load()}
                   preview={previewOwner === "framing"}
+                  // Готовые ролики точнее моментов: человек правит рамку,
+                  // глядя на то, что уже собралось. Пока роликов нет, годятся
+                  // и моменты — из них они и выйдут.
+                  moments={
+                    shorts?.files.length
+                      ? shorts.files.map((f) => ({ index: f.index, start: f.start, end: f.end }))
+                      : reviewClips.map((c) => ({ index: c.index, start: c.start, end: c.end }))
+                  }
+                  quality={quality}
                 />
               </div>
               {framing?.subtitles_enabled && (
@@ -568,6 +594,7 @@ export function VideoDetail({ videoId, onBack }: Props) {
                     videoId={videoId}
                     disabled={running}
                     preview={previewOwner === "subtitles"}
+                    quality={quality}
                   />
                 </div>
               )}

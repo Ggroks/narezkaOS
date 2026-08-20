@@ -1300,9 +1300,16 @@ def short_media(
     return serve_file(paths.shorts / f"{index:02d}.mp4", range_header)
 
 
-#: Высота картинки предпросмотра. С запасом под экраны с двойной плотностью:
-#: карточка в интерфейсе около 400 px, и кадр ровно в её размер выглядит мылом.
+#: Высота картинки предпросмотра по умолчанию. С запасом под экраны с двойной
+#: плотностью: карточка в интерфейсе около 400 px, и кадр ровно в её размер
+#: выглядит мылом.
 PREVIEW_HEIGHT = 960
+
+#: Пределы высоты. Ниже 240 разобрать оформление уже нельзя, выше 1440 кадр
+#: считается заметно дольше, а разницы на экране нет. Высота — это скорость:
+#: на слабой машине мелкий кадр появляется втрое быстрее.
+PREVIEW_MIN_HEIGHT = 240
+PREVIEW_MAX_HEIGHT = 1440
 
 
 class FramingPayload(FramingConfig):
@@ -1440,6 +1447,10 @@ def framing_preview(
     background: str | None = None,
     blur_sigma: float | None = Query(default=None, ge=0, le=200),
     color: str | None = None,
+    height: int = Query(
+        default=PREVIEW_HEIGHT, ge=PREVIEW_MIN_HEIGHT, le=PREVIEW_MAX_HEIGHT,
+        description="Высота кадра: меньше — быстрее",
+    ),
 ):
     """Один кадр в готовой рамке — чтобы настраивать глазами, а не наугад.
 
@@ -1483,7 +1494,10 @@ def framing_preview(
     # Имя от параметров: несколько вкладок с разными настройками не затрут
     # предпросмотр друг друга.
     slug = hashlib.sha256(
-        json.dumps({**requested.__dict__, "at": round(position, 2)}, sort_keys=True).encode()
+        json.dumps(
+            {**requested.__dict__, "at": round(position, 2), "height": height},
+            sort_keys=True,
+        ).encode()
     ).hexdigest()[:12]
     target = paths.base / "meta" / f"preview-{slug}.jpg"
 
@@ -1494,7 +1508,7 @@ def framing_preview(
         requested, plan, short.width, short.height,
         **_preview_layout(paths, requested, src_w, src_h, short, at=position),
     )
-    chain = chain.removesuffix("[v]") + f",scale=-2:{PREVIEW_HEIGHT}[v]"
+    chain = chain.removesuffix("[v]") + f",scale=-2:{height}[v]"
 
     if not target.exists():
         try:
@@ -1554,6 +1568,10 @@ def subtitles_preview(
     video_id: str,
     project: str = "default",
     at: float | None = Query(default=None, ge=0),
+    height: int = Query(
+        default=PREVIEW_HEIGHT, ge=PREVIEW_MIN_HEIGHT, le=PREVIEW_MAX_HEIGHT,
+        description="Высота кадра: меньше — быстрее",
+    ),
 ):
     """Кадр с вшитыми субтитрами — как будет в готовом ролике.
 
@@ -1604,7 +1622,7 @@ def subtitles_preview(
     # и показал — три разных приближения вернули один и тот же кадр из кэша.
     slug = hashlib.sha256(
         json.dumps(
-            {**style.__dict__, **current.__dict__, "at": round(position, 2)},
+            {**style.__dict__, **current.__dict__, "at": round(position, 2), "height": height},
             sort_keys=True, ensure_ascii=False,
         ).encode()
     ).hexdigest()[:12]
@@ -1614,7 +1632,9 @@ def subtitles_preview(
     target = paths.base / "meta" / f"preview-subs-{slug}.jpg"
 
     if not target.exists():
-        chain = _preview_chain(paths, ctx, current, src_w, src_h, ass_file, at=position)
+        chain = _preview_chain(
+            paths, ctx, current, src_w, src_h, ass_file, at=position, height=height
+        )
         try:
             run_tool(
                 [
@@ -1638,7 +1658,10 @@ def subtitles_preview(
     return serve_file(target, None)
 
 
-def _preview_chain(paths, ctx, current, src_w, src_h, ass_file, at: float | None = None) -> str:
+def _preview_chain(
+    paths, ctx, current, src_w, src_h, ass_file,
+    at: float | None = None, height: int = PREVIEW_HEIGHT,
+) -> str:
     """Цепочка фильтров предпросмотра — та же, что у рендера.
 
     Собирается из тех же функций, что и настоящая сборка: если предпросмотр
@@ -1655,7 +1678,7 @@ def _preview_chain(paths, ctx, current, src_w, src_h, ass_file, at: float | None
         **_preview_layout(paths, current, src_w, src_h, short, at=at),
         subtitle_name=name, fonts_dir=fonts_arg,
     )
-    return chain.removesuffix("[v]") + f",scale=-2:{PREVIEW_HEIGHT}[v]"
+    return chain.removesuffix("[v]") + f",scale=-2:{height}[v]"
 
 
 def _facecam_clips(paths) -> dict[str, Any]:
